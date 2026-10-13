@@ -263,6 +263,27 @@ function runtimeArguments() {
   return args.concat(settings.extra.split(/\s+/).filter(Boolean));
 }
 
+// Logs the page's memory use every 20 s: phone browsers close tabs that use too much, without
+// an error, so the last line before a silent stop shows how close it was.
+function watchMemory() {
+  const mib = (b) => `${(b / 2 ** 20).toFixed(0)} MiB`;
+  let measuring = false;
+  const report = () => {
+    const wasm = window.Module?.HEAPU8?.buffer.byteLength;
+    const heap = performance.memory ? `, JS heap ${mib(performance.memory.usedJSHeapSize)}` : '';
+    log(`memory: wasm ${wasm ? mib(wasm) : '?'}${heap}`);
+    // The whole page's use (Chromium; resolves after a garbage collection, which may take a while).
+    if (performance.measureUserAgentSpecificMemory && !measuring) {
+      measuring = true;
+      performance.measureUserAgentSpecificMemory()
+        .then((m) => log(`memory: page total ${mib(m.bytes)}`))
+        .catch(() => {})
+        .finally(() => { measuring = false; });
+    }
+  };
+  setInterval(report, 20000);
+}
+
 // Fullscreen shows the game (and the touch controls) alone, in landscape on phones.
 // Without the Fullscreen API for elements (iPhone Safari) the stage fills the viewport instead.
 function setFilled(on) {
@@ -319,6 +340,8 @@ $('boot').onclick = async () => {
   }
   const args = runtimeArguments();
   log(`Booting with: ${args.join(' ')}`);
+  log(`Browser: ${navigator.userAgent}; device memory ${navigator.deviceMemory ?? '?'} GiB; ${navigator.hardwareConcurrency} threads`);
+  watchMemory();
   window.Module = {
     // Handed to the renderer thread as an OffscreenCanvas.
     canvas: $('canvas'),

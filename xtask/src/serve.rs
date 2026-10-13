@@ -10,6 +10,10 @@
 //! `GET /saves/` lists what's there (one path per line) for "Import saves", which then fetches
 //! each with `GET /saves/PATH`.
 //!
+//! Static files carry an ETag (size and modification time) and conditional requests are
+//! answered with 304, so browsers keep the large module cached; a `.gz` copy next to a file (made
+//! by `build-web`) is sent instead to clients that accept gzip.
+//!
 //! With `--game-dir DIR`, the game files are offered for streaming (the page's "stream from the
 //! server" game source, for devices that can't hold a copy): `GET /game/manifest` lists every
 //! file below DIR as `size<TAB>path` lines, and `GET /game/files/PATH` serves one, honouring
@@ -227,6 +231,8 @@ fn handle(mut stream: TcpStream, root: &Path, game: Option<&Path>) -> std::io::R
     reader.read_line(&mut request)?;
     let mut content_length = 0usize;
     let mut range = None;
+    let mut if_none_match = None;
+    let mut accepts_gzip = false;
     let mut line = String::new();
     while reader.read_line(&mut line)? > 2 {
         if let Some((name, value)) = line.split_once(':') {
@@ -234,6 +240,10 @@ fn handle(mut stream: TcpStream, root: &Path, game: Option<&Path>) -> std::io::R
                 content_length = value.trim().parse().unwrap_or(0);
             } else if name.trim().eq_ignore_ascii_case("range") {
                 range = Some(value.trim().to_string());
+            } else if name.trim().eq_ignore_ascii_case("if-none-match") {
+                if_none_match = Some(value.trim().to_string());
+            } else if name.trim().eq_ignore_ascii_case("accept-encoding") {
+                accepts_gzip = value.split(',').any(|e| e.trim().starts_with("gzip"));
             }
         }
         line.clear();
@@ -295,10 +305,49 @@ fn handle(mut stream: TcpStream, root: &Path, game: Option<&Path>) -> std::io::R
             None => respond(&mut stream, "200 OK", "text/plain; charset=utf-8", game_manifest(game).as_bytes(), head),
         };
     }
-    match resolve(root, target).and_then(|p| std::fs::read(&p).ok().map(|b| (p, b))) {
-        Some((path, body)) => respond(&mut stream, "200 OK", mime(&path), &body, head),
-        None => respond(&mut stream, "404 Not Found", "text/plain", b"not found", head),
+    let Some(path) = resolve(root, target).filter(|p| p.is_file()) else {
+        return respond(&mut stream, "404 Not Found", "text/plain", b"not found", head);
+    };
+    serve_static(&mut stream, &path, if_none_match.as_deref(), accepts_gzip, head)
+}
+
+/// A static file, with an ETag, 304 for a matching `If-None-Match`, and the `.gz` copy when the
+/// client accepts gzip and the copy is at least as new.
+fn serve_static(
+    stream: &mut TcpStream,
+    path: &Path,
+    if_none_match: Option<&str>,
+    accepts_gzip: bool,
+    head: bool,
+) -> std::io::Result<()> {
+    let meta = std::fs::metadata(path)?;
+    let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+    let etag = format!("\"{:x}-{:x}\"", meta.len(), modified.map_or(0, |d| d.as_nanos()));
+    let common = "Cross-Origin-Opener-Policy: same-origin\r\n\
+                  Cross-Origin-Embedder-Policy: require-corp\r\n\
+                  Cross-Origin-Resource-Policy: same-origin\r\n\
+                  Cache-Control: no-cache\r\n\
+                  Vary: Accept-Encoding\r\n\
+                  Connection: close\r\n";
+    if if_none_match.is_some_and(|v| v.split(',').any(|t| t.trim() == etag)) {
+        let header = format!("HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\n{common}\r\n");
+        return stream.write_all(header.as_bytes());
     }
+    let gz = path.with_file_name(format!("{}.gz", path.file_name().unwrap_or_default().to_string_lossy()));
+    let gz_fresh = accepts_gzip
+        && std::fs::metadata(&gz).ok().and_then(|g| g.modified().ok()).zip(meta.modified().ok()).is_some_and(|(g, m)| g >= m);
+    let (file_path, encoding) = if gz_fresh { (gz.as_path(), "Content-Encoding: gzip\r\n") } else { (path, "") };
+    let mut file = std::fs::File::open(file_path)?;
+    let len = file.metadata()?.len();
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {len}\r\nETag: {etag}\r\n{encoding}{common}\r\n",
+        mime(path)
+    );
+    stream.write_all(header.as_bytes())?;
+    if !head {
+        std::io::copy(&mut file, stream)?;
+    }
+    Ok(())
 }
 
 pub fn serve(root: &Path, port: u16, game: Option<&Path>) -> Result<(), String> {

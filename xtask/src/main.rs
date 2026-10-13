@@ -310,6 +310,9 @@ fn build_web_with(release: bool, e2e: Option<&Recompiled>) -> Result<PathBuf> {
         let entry = entry.map_err(|e| e.to_string())?;
         fs::copy(entry.path(), dist.join(entry.file_name())).map_err(|e| e.to_string())?;
     }
+    // A gzip copy of the (very large) module for `serve` to send to browsers that accept it.
+    let wasm = dist.join("host_web.wasm");
+    run_tool(Command::new("gzip").args(["-kf6"]).arg(&wasm), "compressing host_web.wasm")?;
     println!("web build in {}", dist.display());
     Ok(dist)
 }

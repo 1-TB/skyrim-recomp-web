@@ -23,8 +23,20 @@ impl RangeReader for HttpRanges {
         let path = CString::new(path).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
         // Each request is capped; the tree asks again for the rest. Offsets fit an f64 exactly.
         let len = buf.len().min(MAX_REQUEST) as u32;
+        let started = std::time::Instant::now();
         // SAFETY: valid C strings; `buf` has at least `len` writable bytes.
         let n = unsafe { skyrt_http_read(self.files.as_ptr(), path.as_ptr(), offset as f64, buf.as_mut_ptr(), len) };
+        let took = started.elapsed();
+        if took >= SLOW_REQUEST {
+            // Slow links (a phone on mobile data) otherwise look like a hang.
+            log::info!(
+                "streaming: {} bytes of {} took {:.1} s ({:.1} MiB/s)",
+                len,
+                path.to_string_lossy(),
+                took.as_secs_f64(),
+                f64::from(len) / took.as_secs_f64() / f64::from(1u32 << 20)
+            );
+        }
         if n < 0 {
             return Err(io::Error::other(format!("streaming {}: request failed", path.to_string_lossy())));
         }
@@ -32,12 +44,16 @@ impl RangeReader for HttpRanges {
     }
 }
 
+/// Requests taking at least this long are logged.
+const SLOW_REQUEST: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Largest single range request.
 const MAX_REQUEST: usize = 16 << 20;
 
 /// Fetches `<base>manifest` and returns the tree it describes.
 pub fn open(base: &str) -> Result<Arc<RemoteTree>, String> {
     let base = if base.ends_with('/') { base.to_string() } else { format!("{base}/") };
+    log::info!("streaming: fetching the game file list from {base}manifest");
     let url = CString::new(format!("{base}manifest")).map_err(|e| e.to_string())?;
     // SAFETY: a valid C string; the result is a malloc'd C string (or null) that we free.
     let manifest = unsafe {
@@ -51,8 +67,13 @@ pub fn open(base: &str) -> Result<Arc<RemoteTree>, String> {
     };
     let files = CString::new(format!("{base}files/")).map_err(|e| e.to_string())?;
     let tree = RemoteTree::from_manifest(&manifest, Arc::new(HttpRanges { files }), DEFAULT_CACHE_CHUNKS);
-    if tree.lookup("default.xex").is_none() {
+    let Some((vfs::remote::RemoteKind::File { size }, _)) = tree.lookup("default.xex") else {
         return Err(format!("the streamed game at {base} has no default.xex"));
-    }
+    };
+    log::info!(
+        "streaming the game from {base}: {} files listed; reading default.xex ({:.1} MiB) first",
+        manifest.lines().count(),
+        size as f64 / f64::from(1u32 << 20)
+    );
     Ok(Arc::new(tree))
 }

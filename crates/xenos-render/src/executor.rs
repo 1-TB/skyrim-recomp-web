@@ -1298,6 +1298,40 @@ impl Executor {
                 textures.push(format!("tf{} {}", b.fetch_constant, words.join(" ")));
             }
         }
+        // Blend state, the first pixel shader constants, and each vertex stream's fetch constant
+        // with its first bytes.
+        let regs = &self.regs;
+        let blend = format!(
+            "blend {:08x} colorcontrol {:08x} mask {:08x}",
+            regs.reg(xenos_state::registers::RB_BLENDCONTROL0),
+            regs.reg(xenos_state::registers::RB_COLORCONTROL),
+            regs.reg(xenos_state::registers::RB_COLOR_MASK)
+        );
+        let mut ps_consts = Vec::new();
+        regs.float_constants_window(256, 8, &mut ps_consts);
+        let ps_consts: Vec<String> = ps_consts
+            .chunks(16)
+            .map(|c| {
+                let v: Vec<String> =
+                    c.chunks(4).map(|f| format!("{}", f32::from_le_bytes(f.try_into().unwrap()))).collect();
+                format!("({})", v.join(","))
+            })
+            .collect();
+        let mut streams = Vec::new();
+        for b in &vs.translation.vertex_bindings {
+            let f = VertexFetchConstant::read(regs, b.fetch_constant);
+            let mut head = [0u8; 16];
+            self.memory.read(f.address_bytes(), &mut head);
+            let hex: String = head.iter().map(|b| format!("{b:02x}")).collect();
+            streams.push(format!("vf{} @{:#x} {:?}: {hex}", b.fetch_constant, f.address_bytes(), f.endian));
+        }
+        log::info!(
+            "trace frame {} draw {}: {blend}; ps c0-7 {}; vertices [{}]",
+            self.frame,
+            self.stats.draws,
+            ps_consts.join(" "),
+            streams.join(", ")
+        );
         log::info!(
             "trace frame {} draw {}: vs {:016x} ps {:?} targets [{}] flags {:#x} textures [{}]",
             self.frame,
