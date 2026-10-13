@@ -6,11 +6,13 @@
 //! host filesystem is not.
 //!
 //! In the browser the host directory is an OPFS mount provided by Emscripten's
-//! WasmFS (see [`opfs`]), so the same `std::fs` code serves both builds.
+//! WasmFS (see [`opfs`]), so the same `std::fs` code serves both builds. A device
+//! can instead be a [`remote::RemoteTree`] (game files streamed over HTTP).
 
 #[cfg(target_os = "emscripten")]
 pub mod opfs;
 pub mod path;
+pub mod remote;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -138,6 +140,15 @@ pub struct Metadata {
 }
 
 impl Metadata {
+    fn remote(kind: remote::RemoteKind) -> Self {
+        let t = SystemTime::UNIX_EPOCH;
+        let (is_dir, size) = match kind {
+            remote::RemoteKind::File { size } => (false, size),
+            remote::RemoteKind::Dir => (true, 0),
+        };
+        Metadata { is_dir, size, read_only: true, created: t, accessed: t, modified: t }
+    }
+
     fn from_fs(m: &fs::Metadata, device_read_only: bool) -> Self {
         let modified = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         Metadata {
@@ -157,11 +168,49 @@ pub struct DirEntry {
     pub metadata: Metadata,
 }
 
-#[derive(Debug)]
 pub struct Device {
     pub name: String,
     pub root: PathBuf,
     pub read_only: bool,
+    /// Files come from this tree instead of `root` (which is then unused).
+    pub remote: Option<Arc<remote::RemoteTree>>,
+}
+
+impl fmt::Debug for Device {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Device")
+            .field("name", &self.name)
+            .field("root", &self.root)
+            .field("read_only", &self.read_only)
+            .field("remote", &self.remote.is_some())
+            .finish()
+    }
+}
+
+/// Where the title's files come from.
+#[derive(Clone)]
+pub enum GameRoot {
+    Dir(PathBuf),
+    Remote(Arc<remote::RemoteTree>),
+}
+
+impl GameRoot {
+    /// Reads a whole file below the root (`/`-separated relative path).
+    pub fn read(&self, rel: &str) -> io::Result<Vec<u8>> {
+        match self {
+            GameRoot::Dir(root) => fs::read(resolve_case_insensitive(root, &rel.split('/').collect::<Vec<_>>())),
+            GameRoot::Remote(tree) => tree.read_file(rel),
+        }
+    }
+}
+
+impl fmt::Display for GameRoot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GameRoot::Dir(root) => write!(f, "{}", root.display()),
+            GameRoot::Remote(_) => f.write_str("(streamed from the server)"),
+        }
+    }
 }
 
 /// A resolved guest path.
@@ -179,8 +228,13 @@ pub enum Node {
     Directory(VfsDirectory),
 }
 
+enum FileImpl {
+    Host(File),
+    Remote { tree: Arc<remote::RemoteTree>, path: String, size: u64 },
+}
+
 pub struct VfsFile {
-    file: File,
+    file: FileImpl,
     pub guest_path: String,
     pub host_path: PathBuf,
     pub read_only: bool,
@@ -188,9 +242,13 @@ pub struct VfsFile {
 
 impl VfsFile {
     pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        let file = match &self.file {
+            FileImpl::Host(f) => f,
+            FileImpl::Remote { tree, path, size } => return tree.read_at(path, *size, offset, buf),
+        };
         let mut done = 0;
         while done < buf.len() {
-            match self.file.read_at(&mut buf[done..], offset + done as u64) {
+            match file.read_at(&mut buf[done..], offset + done as u64) {
                 Ok(0) => break,
                 Ok(n) => done += n,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -204,12 +262,18 @@ impl VfsFile {
         if self.read_only {
             return Err(io::Error::from(io::ErrorKind::PermissionDenied));
         }
-        self.file.write_all_at(buf, offset)?;
+        match &self.file {
+            FileImpl::Host(f) => f.write_all_at(buf, offset)?,
+            FileImpl::Remote { .. } => return Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+        }
         Ok(buf.len())
     }
 
     pub fn len(&self) -> io::Result<u64> {
-        Ok(self.file.metadata()?.len())
+        match &self.file {
+            FileImpl::Host(f) => Ok(f.metadata()?.len()),
+            FileImpl::Remote { size, .. } => Ok(*size),
+        }
     }
 
     pub fn is_empty(&self) -> io::Result<bool> {
@@ -220,15 +284,24 @@ impl VfsFile {
         if self.read_only {
             return Err(io::Error::from(io::ErrorKind::PermissionDenied));
         }
-        self.file.set_len(len)
+        match &self.file {
+            FileImpl::Host(f) => f.set_len(len),
+            FileImpl::Remote { .. } => Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+        }
     }
 
     pub fn flush(&self) -> io::Result<()> {
-        if self.read_only { Ok(()) } else { self.file.sync_data() }
+        match &self.file {
+            FileImpl::Host(f) if !self.read_only => f.sync_data(),
+            _ => Ok(()),
+        }
     }
 
     pub fn metadata(&self) -> io::Result<Metadata> {
-        Ok(Metadata::from_fs(&self.file.metadata()?, self.read_only))
+        match &self.file {
+            FileImpl::Host(f) => Ok(Metadata::from_fs(&f.metadata()?, self.read_only)),
+            FileImpl::Remote { size, .. } => Ok(Metadata::remote(remote::RemoteKind::File { size: *size })),
+        }
     }
 }
 
@@ -236,12 +309,19 @@ pub struct VfsDirectory {
     pub guest_path: String,
     pub host_path: PathBuf,
     pub read_only: bool,
+    remote: Option<Arc<remote::RemoteTree>>,
 }
 
 impl VfsDirectory {
     /// Entries sorted case-insensitively (stable enumeration order across hosts).
     pub fn entries(&self) -> io::Result<Vec<DirEntry>> {
         let mut out = Vec::new();
+        if let Some(tree) = &self.remote {
+            let listed = tree.list(&remote_path(&self.host_path)).ok_or(io::ErrorKind::NotFound)?;
+            out.extend(listed.into_iter().map(|(name, kind)| DirEntry { name, metadata: Metadata::remote(kind) }));
+            out.sort_by_key(|a| a.name.to_ascii_lowercase());
+            return Ok(out);
+        }
         for e in fs::read_dir(&self.host_path)? {
             let e = e?;
             let Ok(name) = e.file_name().into_string() else { continue };
@@ -253,8 +333,16 @@ impl VfsDirectory {
     }
 
     pub fn metadata(&self) -> io::Result<Metadata> {
+        if self.remote.is_some() {
+            return Ok(Metadata::remote(remote::RemoteKind::Dir));
+        }
         Ok(Metadata::from_fs(&fs::metadata(&self.host_path)?, self.read_only))
     }
+}
+
+/// A remote device's paths are stored as `/`-separated relative paths in `host_path`.
+fn remote_path(host_path: &Path) -> String {
+    host_path.to_string_lossy().replace('\\', "/")
 }
 
 #[derive(Default)]
@@ -272,16 +360,42 @@ impl Vfs {
     /// The standard title layout: the disc device at `root`, reachable as
     /// `game:` and `d:`, read-only like the physical disc.
     pub fn with_game_root(root: impl Into<PathBuf>) -> Self {
+        Self::with_game(&GameRoot::Dir(root.into()))
+    }
+
+    /// [`Vfs::with_game_root`] for either kind of game root.
+    pub fn with_game(game: &GameRoot) -> Self {
         let vfs = Vfs::new();
-        vfs.mount(CDROM_DEVICE, root, true);
+        match game {
+            GameRoot::Dir(root) => vfs.mount(CDROM_DEVICE, root.clone(), true),
+            GameRoot::Remote(tree) => vfs.mount_remote(CDROM_DEVICE, tree.clone()),
+        }
         vfs.add_symlink("game:", CDROM_DEVICE);
         vfs.add_symlink("d:", CDROM_DEVICE);
         vfs
     }
 
     pub fn mount(&self, device: &str, root: impl Into<PathBuf>, read_only: bool) {
-        let dev =
-            Arc::new(Device { name: device.trim_end_matches(['\\', '/']).to_string(), root: root.into(), read_only });
+        self.add_device(Device {
+            name: device.trim_end_matches(['\\', '/']).to_string(),
+            root: root.into(),
+            read_only,
+            remote: None,
+        });
+    }
+
+    /// Mounts `device` read-only onto a remote tree.
+    pub fn mount_remote(&self, device: &str, tree: Arc<remote::RemoteTree>) {
+        self.add_device(Device {
+            name: device.trim_end_matches(['\\', '/']).to_string(),
+            root: PathBuf::new(),
+            read_only: true,
+            remote: Some(tree),
+        });
+    }
+
+    fn add_device(&self, dev: Device) {
+        let dev = Arc::new(dev);
         let mut devices = self.devices.write().unwrap();
         devices.retain(|d| !d.name.eq_ignore_ascii_case(&dev.name));
         devices.push(dev);
@@ -354,7 +468,14 @@ impl Vfs {
                 guest_path.push('\\');
                 guest_path.push_str(c);
             }
-            let host_path = resolve_case_insensitive(&dev.root, rest);
+            let host_path = match &dev.remote {
+                // The listed spelling where the path exists, else the request's.
+                Some(tree) => {
+                    let joined = rest.join("/");
+                    PathBuf::from(tree.lookup(&joined).map_or(joined, |(_, listed)| listed))
+                }
+                None => resolve_case_insensitive(&dev.root, rest),
+            };
             return Ok(Resolved { device: dev.clone(), guest_path, host_path });
         }
         Err(VfsError::NoSuchDevice(guest.to_string()))
@@ -362,6 +483,13 @@ impl Vfs {
 
     pub fn metadata(&self, guest: &str) -> Result<Metadata> {
         let r = self.resolve(guest)?;
+        if let Some(tree) = &r.device.remote {
+            let path = remote_path(&r.host_path);
+            return match tree.lookup(&path) {
+                Some((kind, _)) => Ok(Metadata::remote(kind)),
+                None => Err(remote_missing(tree, &path)),
+            };
+        }
         match fs::metadata(&r.host_path) {
             Ok(m) => Ok(Metadata::from_fs(&m, r.device.read_only)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Err(missing_kind(&r.host_path)),
@@ -372,6 +500,9 @@ impl Vfs {
     /// NtCreateFile semantics.
     pub fn open(&self, guest: &str, req: OpenRequest) -> Result<(Node, CreateAction)> {
         let r = self.resolve(guest)?;
+        if let Some(tree) = r.device.remote.clone() {
+            return open_remote(tree, r, req);
+        }
         let read_only = r.device.read_only;
         let existing = fs::metadata(&r.host_path).ok();
         let creates = !matches!(req.disposition, Disposition::Open | Disposition::Overwrite);
@@ -390,7 +521,12 @@ impl Vfs {
                     return Err(VfsError::IsADirectory);
                 }
                 Ok((
-                    Node::Directory(VfsDirectory { guest_path: r.guest_path, host_path: r.host_path, read_only }),
+                    Node::Directory(VfsDirectory {
+                        guest_path: r.guest_path,
+                        host_path: r.host_path,
+                        read_only,
+                        remote: None,
+                    }),
                     CreateAction::Opened,
                 ))
             }
@@ -416,7 +552,7 @@ impl Vfs {
                 };
                 Ok((
                     Node::File(VfsFile {
-                        file,
+                        file: FileImpl::Host(file),
                         guest_path: r.guest_path,
                         host_path: r.host_path,
                         read_only: read_only || (!req.write && !truncates),
@@ -438,17 +574,82 @@ impl Vfs {
                 if req.kind == Kind::Directory {
                     fs::create_dir(&r.host_path)?;
                     return Ok((
-                        Node::Directory(VfsDirectory { guest_path: r.guest_path, host_path: r.host_path, read_only }),
+                        Node::Directory(VfsDirectory {
+                            guest_path: r.guest_path,
+                            host_path: r.host_path,
+                            read_only,
+                            remote: None,
+                        }),
                         CreateAction::Created,
                     ));
                 }
                 let file = OpenOptions::new().read(true).write(true).create_new(true).open(&r.host_path)?;
                 Ok((
-                    Node::File(VfsFile { file, guest_path: r.guest_path, host_path: r.host_path, read_only: false }),
+                    Node::File(VfsFile {
+                        file: FileImpl::Host(file),
+                        guest_path: r.guest_path,
+                        host_path: r.host_path,
+                        read_only: false,
+                    }),
                     CreateAction::Created,
                 ))
             }
         }
+    }
+}
+
+/// NtCreateFile on a remote (read-only) device.
+fn open_remote(tree: Arc<remote::RemoteTree>, r: Resolved, req: OpenRequest) -> Result<(Node, CreateAction)> {
+    let path = remote_path(&r.host_path);
+    let truncates =
+        matches!(req.disposition, Disposition::Supersede | Disposition::Overwrite | Disposition::OverwriteIf);
+    match tree.lookup(&path) {
+        None if matches!(req.disposition, Disposition::Open | Disposition::Overwrite) => {
+            Err(remote_missing(&tree, &path))
+        }
+        None => Err(VfsError::AccessDenied),
+        Some(_) if req.disposition == Disposition::Create => Err(VfsError::AlreadyExists),
+        Some((remote::RemoteKind::Dir, _)) => {
+            if req.kind == Kind::NonDirectory || truncates {
+                return Err(VfsError::IsADirectory);
+            }
+            Ok((
+                Node::Directory(VfsDirectory {
+                    guest_path: r.guest_path,
+                    host_path: r.host_path,
+                    read_only: true,
+                    remote: Some(tree),
+                }),
+                CreateAction::Opened,
+            ))
+        }
+        Some((remote::RemoteKind::File { size }, listed)) => {
+            if req.kind == Kind::Directory {
+                return Err(VfsError::NotADirectory);
+            }
+            if req.write || truncates {
+                return Err(VfsError::AccessDenied);
+            }
+            Ok((
+                Node::File(VfsFile {
+                    file: FileImpl::Remote { tree, path: listed, size },
+                    guest_path: r.guest_path,
+                    host_path: r.host_path,
+                    read_only: true,
+                }),
+                CreateAction::Opened,
+            ))
+        }
+    }
+}
+
+/// [`missing_kind`] for a remote path.
+fn remote_missing(tree: &remote::RemoteTree, path: &str) -> VfsError {
+    let parent = path.rsplit_once('/').map_or("", |(p, _)| p);
+    if matches!(tree.lookup(parent), Some((remote::RemoteKind::Dir, _))) {
+        VfsError::NotFound
+    } else {
+        VfsError::PathNotFound
     }
 }
 

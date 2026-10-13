@@ -27,7 +27,6 @@ fn main() {
         eprintln!("--game-dir is required\n{}", boot::USAGE);
         std::process::exit(2);
     };
-    let xex = opts.xex.clone().unwrap_or_else(|| game_root.join("default.xex"));
     crash::install();
     runtime_core::thread::set_thread_start_hook(crash::install_alt_stack);
     let content = game_root.parent().unwrap_or(std::path::Path::new(".")).join("content");
@@ -67,7 +66,7 @@ fn main() {
             Err(e) => log::error!("starting the renderer: {e}"),
         }
     };
-    match boot::run(&opts, &game_root, &xex, &content, on_kernel) {
+    match boot::run(&opts, &vfs::GameRoot::Dir(game_root), &content, on_kernel) {
         Ok(code) => std::process::exit(code),
         Err(e) => {
             log::error!("{e}");

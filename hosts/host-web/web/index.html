@@ -2,57 +2,135 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Skyrim Runtime</title>
 <style>
   :root { color-scheme: light dark; --bg: #f6f6f4; --fg: #1c1c1a; --muted: #6b6b66; --panel: #ffffff; --line: #d9d9d3; --accent: #2f5d8a; }
   @media (prefers-color-scheme: dark) { :root { --bg: #151514; --fg: #e8e8e3; --muted: #9a9a93; --panel: #1f1f1d; --line: #34342f; --accent: #7fa8d1; } }
+  [hidden] { display: none !important; }
   body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
   main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
   p { color: var(--muted); margin: 0 0 16px; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  button, input { font: inherit; }
-  button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; }
+  .row + .row { margin-top: 10px; }
+  button, input, select { font: inherit; }
+  button, select { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button:disabled { opacity: .5; cursor: default; }
   input[type=text] { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); min-width: 0; flex: 1 1 200px; }
-  #status { color: var(--muted); }
-  canvas { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 4px; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+  #status, .hint { color: var(--muted); }
+  details summary { cursor: pointer; font-weight: 600; }
+  .settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 20px; margin-top: 12px; }
+  .settings > label { justify-content: space-between; }
+  .settings input[type=range] { flex: 1; max-width: 140px; }
+  #stage { position: relative; background: #000; border-radius: 4px; overflow: hidden; }
+  #stage canvas { display: block; width: 100%; aspect-ratio: 16 / 9; }
+  #stage:fullscreen { border-radius: 0; display: flex; align-items: center; justify-content: center; }
+  #stage:fullscreen canvas { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+  /* Browsers without the Fullscreen API for elements (iPhone Safari): fill the viewport instead. */
+  #stage.filled { position: fixed; inset: 0; z-index: 10; border-radius: 0; display: flex; align-items: center; justify-content: center; }
+  #stage.filled canvas { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+  #exit-fill { position: absolute; right: 8px; bottom: 6px; z-index: 3; padding: 2px 8px; font-size: 12px; opacity: .7; }
+  #perf { position: absolute; left: 8px; bottom: 6px; z-index: 3; padding: 2px 6px; border-radius: 4px;
+          background: rgba(0,0,0,.55); color: #e8e8e3; font: 12px/1.3 ui-monospace, monospace; pointer-events: none; }
   pre { margin: 0; max-height: 60vh; overflow: auto; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
 </style>
 </head>
 <body>
 <main>
   <h1>Skyrim Runtime</h1>
-  <p>Boots your own dumped title, renders it with WebGPU and logs every kernel import it calls. Game files and saves stay in this browser's private storage.</p>
+  <p>Boots your own dumped title, renders it with WebGPU and logs every kernel import it calls. Saves stay in this
+    browser's private storage.</p>
 
   <section>
+    <h2>Game files</h2>
     <div class="row">
+      <label>Source
+        <select id="source">
+          <option value="local">Imported into this browser</option>
+          <option value="stream">Streamed from the server</option>
+        </select>
+      </label>
+      <span id="source-status" class="hint"></span>
+    </div>
+    <div class="row" id="local-controls">
       <button id="pick">Import game folder…</button>
+      <button id="pick-zip">Import .zip…</button>
+      <input id="zip-file" type="file" accept=".zip,application/zip" hidden>
       <button id="clear">Clear imported files</button>
       <span id="status"></span>
     </div>
   </section>
 
   <section>
+    <details id="settings-box">
+      <summary>Settings</summary>
+      <div class="settings">
+        <label>Frame rate cap
+          <select id="s-fps">
+            <option value="30">30 fps (original)</option>
+            <option value="60">60 fps</option>
+            <option value="unlimited">Unlimited</option>
+          </select>
+        </label>
+        <label>Log level
+          <select id="s-log">
+            <option value="warn">Warnings</option>
+            <option value="info">Info</option>
+            <option value="debug">Debug</option>
+          </select>
+        </label>
+        <label>Touch controls
+          <select id="s-touch">
+            <option value="auto">On touch screens</option>
+            <option value="on">Always</option>
+            <option value="off">Never</option>
+          </select>
+        </label>
+        <label>Look sensitivity <input id="s-sens" type="range" min="0.25" max="3" step="0.05"></label>
+        <label>Volume <input id="s-volume" type="range" min="0" max="1" step="0.01"></label>
+        <label><input id="s-perf" type="checkbox"> Performance overlay</label>
+        <label><input id="s-upload" type="checkbox"> Send the log to the server</label>
+      </div>
+      <div class="row" style="margin-top: 12px">
+        <span class="hint">Renderer diagnostics:</span>
+        <label><input type="checkbox" data-debug="nopool"> no texture reuse</label>
+        <label><input type="checkbox" data-debug="nomemo"> rebind textures per draw</label>
+        <label><input type="checkbox" data-debug="cpu-resolve"> CPU resolves</label>
+        <label><input type="checkbox" data-debug="cpu-texture"> CPU textures</label>
+      </div>
+      <div class="row">
+        <input id="s-extra" type="text" placeholder="Extra runtime arguments" aria-label="Extra runtime arguments">
+      </div>
+      <p class="hint" style="margin: 8px 0 0">Frame rate, log level, diagnostics and extra arguments apply at the next boot.</p>
+    </details>
+  </section>
+
+  <section>
     <div class="row">
-      <input id="args" type="text" value="--log info" aria-label="Runtime arguments">
       <button id="boot" class="primary">Boot</button>
+      <button id="fullscreen">Fullscreen</button>
       <button id="export-saves">Export saves</button>
       <button id="import-saves">Import saves</button>
     </div>
   </section>
 
   <section>
-    <canvas id="canvas" width="1280" height="720"></canvas>
+    <div id="stage">
+      <canvas id="canvas" width="1280" height="720"></canvas>
+      <div id="perf" hidden></div>
+      <button id="exit-fill" hidden>Exit full view</button>
+    </div>
   </section>
 
   <section>
-    <p>Controller: the first connected gamepad, or keyboard and mouse — WASD move, mouse (click the game
-      to capture it, Esc to release) or arrows look, left/right click or C/Z right/left triggers, Space A,
-      Tab or Esc B, R X, F Y, Q/E bumpers, Enter Start, Backspace Back, 1–4 D-pad.</p>
+    <p>Controller: the first connected gamepad, the on-screen controls on touch screens, or keyboard and mouse —
+      WASD move, mouse (click the game to capture it, Esc to release) or arrows look, left/right click or C/Z
+      right/left triggers, Space A, Tab or Esc B, R X, F Y, Q/E bumpers, Enter Start, Backspace Back, 1–4 D-pad.</p>
     <div class="row"><button id="copy-log">Copy log</button></div>
     <pre id="log"></pre>
   </section>

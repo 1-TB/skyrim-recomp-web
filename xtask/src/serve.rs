@@ -9,8 +9,14 @@
 //! `POST /saves/PATH` stores the body as `target/web-saves/PATH` (the page's "Export saves"), and
 //! `GET /saves/` lists what's there (one path per line) for "Import saves", which then fetches
 //! each with `GET /saves/PATH`.
+//!
+//! With `--game-dir DIR`, the game files are offered for streaming (the page's "stream from the
+//! server" game source, for devices that can't hold a copy): `GET /game/manifest` lists every
+//! file below DIR as `size<TAB>path` lines, and `GET /game/files/PATH` serves one, honouring
+//! single `Range: bytes=` requests. The server only listens on the loopback interface; it is
+//! reached from other devices through a private tunnel (e.g. `tailscale serve`), never directly.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 
@@ -118,6 +124,89 @@ fn percent_decode(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+/// `GET /game/manifest`: every file below the game directory with its size.
+fn game_manifest(game: &Path) -> String {
+    let mut files = Vec::new();
+    list_files(game, "", &mut files);
+    files.sort();
+    let mut out = String::new();
+    for f in files {
+        if let Ok(m) = std::fs::metadata(game.join(&f)) {
+            out.push_str(&format!("{}\t{f}\n", m.len()));
+        }
+    }
+    out
+}
+
+/// A `bytes=START-END` / `bytes=START-` / `bytes=-SUFFIX` range of a `len`-byte file, as a
+/// half-open interval; `None` if unsatisfiable or not a single range.
+fn parse_range(value: &str, len: u64) -> Option<(u64, u64)> {
+    let spec = value.trim().strip_prefix("bytes=")?;
+    if spec.contains(',') {
+        return None;
+    }
+    let (a, b) = spec.split_once('-')?;
+    let (start, end) = match (a.trim(), b.trim()) {
+        ("", suffix) => {
+            let n: u64 = suffix.parse().ok()?;
+            (len.saturating_sub(n), len)
+        }
+        (a, "") => (a.parse().ok()?, len),
+        (a, b) => (a.parse().ok()?, b.parse::<u64>().ok()?.saturating_add(1).min(len)),
+    };
+    (start < end).then_some((start, end))
+}
+
+/// `GET /game/files/PATH`, streamed from disk (game archives are gigabytes).
+fn serve_game_file(stream: &mut TcpStream, game: &Path, rel: &str, range: Option<&str>, head: bool) -> std::io::Result<()> {
+    let mut path = game.to_path_buf();
+    for part in rel.split('/').filter(|p| !p.is_empty()) {
+        match percent_decode(part) {
+            Some(p) if p != "." && p != ".." && !p.contains(['\\', '\0']) => path.push(p),
+            _ => return respond(stream, "400 Bad Request", "text/plain", b"bad path", false),
+        }
+    }
+    let Ok(mut file) = std::fs::File::open(&path) else {
+        return respond(stream, "404 Not Found", "text/plain", b"not found", head);
+    };
+    let len = file.metadata()?.len();
+    let (status, start, end) = match range {
+        None => ("200 OK", 0, len),
+        Some(r) => match parse_range(r, len) {
+            Some((s, e)) => ("206 Partial Content", s, e),
+            None => {
+                let header = format!(
+                    "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{len}\r\nContent-Length: 0\r\n\
+                     Cross-Origin-Resource-Policy: same-origin\r\nConnection: close\r\n\r\n"
+                );
+                return stream.write_all(header.as_bytes());
+            }
+        },
+    };
+    let content_range =
+        if range.is_some() { format!("Content-Range: bytes {start}-{}/{len}\r\n", end - 1) } else { String::new() };
+    let header = format!(
+        "HTTP/1.1 {status}\r\n\
+         Content-Type: application/octet-stream\r\n\
+         Content-Length: {}\r\n\
+         {content_range}\
+         Accept-Ranges: bytes\r\n\
+         Cross-Origin-Opener-Policy: same-origin\r\n\
+         Cross-Origin-Embedder-Policy: require-corp\r\n\
+         Cross-Origin-Resource-Policy: same-origin\r\n\
+         Cache-Control: no-cache\r\n\
+         Connection: close\r\n\r\n",
+        end - start
+    );
+    stream.write_all(header.as_bytes())?;
+    if head {
+        return Ok(());
+    }
+    file.seek(SeekFrom::Start(start))?;
+    std::io::copy(&mut file.take(end - start), stream)?;
+    Ok(())
+}
+
 /// Every file below `dir`, as paths relative to it with `/` separators.
 fn list_files(dir: &Path, prefix: &str, out: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -132,17 +221,20 @@ fn list_files(dir: &Path, prefix: &str, out: &mut Vec<String>) {
     }
 }
 
-fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
+fn handle(mut stream: TcpStream, root: &Path, game: Option<&Path>) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request = String::new();
     reader.read_line(&mut request)?;
     let mut content_length = 0usize;
+    let mut range = None;
     let mut line = String::new();
     while reader.read_line(&mut line)? > 2 {
-        if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("content-length")
-        {
-            content_length = value.trim().parse().unwrap_or(0);
+        if let Some((name, value)) = line.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("content-length") {
+                content_length = value.trim().parse().unwrap_or(0);
+            } else if name.trim().eq_ignore_ascii_case("range") {
+                range = Some(value.trim().to_string());
+            }
         }
         line.clear();
     }
@@ -193,24 +285,54 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
         return respond(&mut stream, "405 Method Not Allowed", "text/plain", b"method not allowed", false);
     }
     let head = method == "HEAD";
+    let url_path = target.split(['?', '#']).next().unwrap_or("/");
+    if url_path == "/game/manifest" || url_path.starts_with("/game/files/") {
+        let Some(game) = game else {
+            return respond(&mut stream, "404 Not Found", "text/plain", b"no --game-dir given to the server", head);
+        };
+        return match url_path.strip_prefix("/game/files/") {
+            Some(rel) => serve_game_file(&mut stream, game, rel, range.as_deref(), head),
+            None => respond(&mut stream, "200 OK", "text/plain; charset=utf-8", game_manifest(game).as_bytes(), head),
+        };
+    }
     match resolve(root, target).and_then(|p| std::fs::read(&p).ok().map(|b| (p, b))) {
         Some((path, body)) => respond(&mut stream, "200 OK", mime(&path), &body, head),
         None => respond(&mut stream, "404 Not Found", "text/plain", b"not found", head),
     }
 }
 
-pub fn serve(root: &Path, port: u16) -> Result<(), String> {
+pub fn serve(root: &Path, port: u16, game: Option<&Path>) -> Result<(), String> {
     let root = root.canonicalize().map_err(|e| format!("{}: {e}", root.display()))?;
+    let game = game.map(|g| g.canonicalize().map_err(|e| format!("{}: {e}", g.display()))).transpose()?;
     let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| e.to_string())?;
     println!("serving {} at http://127.0.0.1:{port}/ (cross-origin isolated)", root.display());
+    if let Some(g) = &game {
+        println!("streaming game files from {}", g.display());
+    }
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
-        let root = root.clone();
+        let (root, game) = (root.clone(), game.clone());
         std::thread::spawn(move || {
-            if let Err(e) = handle(stream, &root) {
+            if let Err(e) = handle(stream, &root, game.as_deref()) {
                 eprintln!("serve: {e}");
             }
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_range;
+
+    #[test]
+    fn ranges() {
+        assert_eq!(parse_range("bytes=0-99", 1000), Some((0, 100)));
+        assert_eq!(parse_range("bytes=990-2000", 1000), Some((990, 1000)));
+        assert_eq!(parse_range("bytes=500-", 1000), Some((500, 1000)));
+        assert_eq!(parse_range("bytes=-10", 1000), Some((990, 1000)));
+        assert_eq!(parse_range("bytes=1000-", 1000), None);
+        assert_eq!(parse_range("bytes=0-1,5-6", 1000), None);
+        assert_eq!(parse_range("items=0-1", 1000), None);
+    }
 }

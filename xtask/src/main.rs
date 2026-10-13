@@ -8,7 +8,8 @@
 //!   synth --out DIR                write the synthetic test title
 //!   e2e [--web]                    synth -> recompile -> build -> run, checking output
 //!   build-web [--release]          build host-web for wasm32-unknown-emscripten into web-dist/
-//!   serve [--dir DIR] [--port N]   static server with COOP/COEP headers
+//!   serve [--dir DIR] [--port N] [--game-dir DIR]
+//!                                  static server with COOP/COEP headers (and game files to stream)
 //!
 //! Tool locations: XENON_RECOMP_DIR (XenonRecomp checkout, default
 //! ~/tools/XenonRecomp) and XENON_RECOMP_BIN (default <dir>/build/XenonRecomp/XenonRecomp).
@@ -80,7 +81,8 @@ fn main() -> ExitCode {
         Some("serve") => {
             let dir = flag_value(&args, "--dir").map(PathBuf::from).unwrap_or_else(|| repo_root().join("web-dist"));
             let port = flag_value(&args, "--port").and_then(|p| p.parse().ok()).unwrap_or(8080);
-            serve::serve(&dir, port)
+            let game = flag_value(&args, "--game-dir").map(PathBuf::from);
+            serve::serve(&dir, port, game.as_deref())
         }
         _ => {
             Err("usage: cargo xtask <setup-xenonrecomp|decrypt|scan|switches|recompile|synth|e2e|build-web|serve> ..."

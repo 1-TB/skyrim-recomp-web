@@ -6,7 +6,7 @@ use std::time::Duration;
 use kernel_hle::Kernel;
 use kernel_hle::dispatch::{StubConfig, parse_num};
 use runtime_core::Runtime;
-use vfs::Vfs;
+use vfs::{GameRoot, Vfs};
 
 pub const USAGE: &str = "\
 options:
@@ -34,7 +34,9 @@ options:
                            frames=N (let the renderer run N frames ahead of the GPU; default 2),
                            nopool (never reuse textures), nomemo (bind textures per draw),
                            cpu-resolve (read resolves back to guest memory), cpu-texture (convert
-                           textures on the CPU)";
+                           textures on the CPU), trace-frame=N (log frame N's draws and, natively,
+                           write their shaders to target/shader-dump/), trace-every=K (and every
+                           Kth frame after N)";
 
 #[derive(Default)]
 pub struct Options {
@@ -164,25 +166,28 @@ fn spawn_taps(kernel: &'static Kernel, taps: &[(u16, f64)]) {
     }
 }
 
-/// Loads the title, boots its main thread and waits for it. Returns the exit code.
-/// `on_kernel` sees the kernel before any guest code runs. Content goes to
-/// `--content`, else `default_content`.
+/// Loads the title (`--xex`, else the game root's `default.xex`), boots its main thread and
+/// waits for it. Returns the exit code. `on_kernel` sees the kernel before any guest code runs.
+/// Content goes to `--content`, else `default_content`.
 pub fn run(
     o: &Options,
-    game_root: &Path,
-    xex_path: &Path,
+    game: &GameRoot,
     default_content: &Path,
     on_kernel: impl FnOnce(&'static Kernel),
 ) -> Result<i32, String> {
-    log::info!("title {} (game root {})", xex_path.display(), game_root.display());
-    let data = std::fs::read(xex_path).map_err(|e| format!("{}: {e}", xex_path.display()))?;
-    let xex = xex::Xex::parse(&data).map_err(|e| format!("{}: {e}", xex_path.display()))?;
+    let (xex_name, data) = match &o.xex {
+        Some(path) => (path.display().to_string(), std::fs::read(path)),
+        None => ("default.xex".to_string(), game.read("default.xex")),
+    };
+    log::info!("title {xex_name} (game root {game})");
+    let data = data.map_err(|e| format!("{xex_name}: {e}"))?;
+    let xex = xex::Xex::parse(&data).map_err(|e| format!("{xex_name}: {e}"))?;
     if let Some(info) = xex.execution_info() {
         log::info!("title id {:08X}, version {:08X}", info.title_id, info.version);
     }
     let rt = Runtime::load(guest_sys::module(), xex).map_err(|e| e.to_string())?;
 
-    let vfs = Vfs::with_game_root(game_root);
+    let vfs = Vfs::with_game(game);
     for (device, dir, rw) in &o.mounts {
         vfs.mount(device, dir, !rw);
     }

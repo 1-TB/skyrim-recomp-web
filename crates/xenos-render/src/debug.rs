@@ -18,11 +18,35 @@ pub(crate) static CPU_RESOLVES: AtomicBool = AtomicBool::new(false);
 /// Textures in guest memory are converted on the CPU (not raw-copied and converted on the GPU).
 pub(crate) static CPU_TEXTURES: AtomicBool = AtomicBool::new(false);
 
+/// Frame (counted by the renderer from 0) whose draws are logged, with their shaders written to
+/// `target/shader-dump/` (native only); 0 = none.
+pub(crate) static TRACE_FRAME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// With [`TRACE_FRAME`], also every this many frames after it (0 = only that frame).
+pub(crate) static TRACE_EVERY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether frame `frame`'s draws are traced (`trace-frame=N`, `trace-every=K`).
+pub(crate) fn tracing(frame: u64) -> bool {
+    let first = TRACE_FRAME.load(Ordering::Relaxed);
+    let every = TRACE_EVERY.load(Ordering::Relaxed);
+    first != 0 && (frame == first || (every != 0 && frame > first && (frame - first).is_multiple_of(every)))
+}
+
 /// Frames the renderer may run ahead of the GPU (2 unless an experiment changes it).
 pub(crate) static MAX_FRAMES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(2);
 
 /// Turns on experiment `mode`: `scissor`, `nodraw` or `frames=N` (frames in flight).
 pub fn enable(mode: &str) -> Result<(), String> {
+    if let Some(n) = mode.strip_prefix("trace-frame=") {
+        let n: u64 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
+        TRACE_FRAME.store(n, Ordering::Relaxed);
+        return Ok(());
+    }
+    if let Some(n) = mode.strip_prefix("trace-every=") {
+        let n: u64 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
+        TRACE_EVERY.store(n, Ordering::Relaxed);
+        return Ok(());
+    }
     if let Some(n) = mode.strip_prefix("frames=") {
         let n: usize = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
         MAX_FRAMES_IN_FLIGHT.store(n.clamp(1, 16), Ordering::Relaxed);
@@ -38,7 +62,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "cpu-texture" => &CPU_TEXTURES,
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, frames=N)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, frames=N, trace-frame=N, trace-every=K)"
             ));
         }
     };

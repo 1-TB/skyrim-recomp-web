@@ -54,4 +54,8 @@ fn main() {
     let text_input = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib/text_input.js");
     println!("cargo:rerun-if-changed={}", text_input.display());
     println!("cargo:rustc-link-arg=--js-library={}", text_input.display());
+    // Streamed game files (src/stream.rs).
+    let http_files = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib/http_files.js");
+    println!("cargo:rerun-if-changed={}", http_files.display());
+    println!("cargo:rustc-link-arg=--js-library={}", http_files.display());
 }

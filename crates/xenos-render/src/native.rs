@@ -142,3 +142,79 @@ fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> std::io::Resu
     let mut w = enc.write_header().map_err(std::io::Error::other)?;
     w.write_image_data(rgba).map_err(std::io::Error::other)
 }
+
+const VIEW_DUMP: &str = r#"
+@group(0) @binding(0) var src: texture_2d<f32>;
+
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let c = textureLoad(src, vec2<i32>(pos.xy), 0);
+    return vec4<f32>(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+}
+"#;
+
+/// Debug aid (`--render-debug trace-frame`): writes the first `width` x `height` texels of a
+/// single-sampled color view as an opaque PNG (channels clamped to 0..1). Blocks until done.
+pub(crate) fn dump_view(device: &Device, view: &TextureView, width: u32, height: u32, path: &Path) -> Result<()> {
+    let module = device.create_shader_module_wgsl("view dump", VIEW_DUMP);
+    let layout = device.create_bind_group_layout(
+        "view dump",
+        &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStage::Fragment,
+            ty: BindingType::Texture {
+                sample_type: TextureSampleType::UnfilterableFloat,
+                view_dimension: TextureViewDimension::D2,
+                multisampled: false,
+            },
+        }],
+    );
+    let pipeline_layout = device.create_pipeline_layout("view dump", &[&layout]);
+    let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: "view dump",
+        layout: Some(&pipeline_layout),
+        vertex: ProgrammableStage::new(&module, "vs"),
+        vertex_buffers: &[],
+        primitive: PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: MultisampleState::default(),
+        fragment: Some(FragmentState {
+            stage: ProgrammableStage::new(&module, "fs"),
+            targets: &[ColorTargetState::new(TextureFormat::RGBA8Unorm)],
+        }),
+    });
+    let group = device.create_bind_group(
+        "view dump",
+        &layout,
+        &[BindGroupEntry { binding: 0, resource: BindingResource::TextureView(view) }],
+    );
+    let target = Offscreen::new(device, width, height);
+    let mut encoder = device.create_command_encoder("view dump");
+    let mut pass = encoder.begin_render_pass(
+        "view dump",
+        &[Some(RenderPassColorAttachment::clear(&target.view, Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }))],
+        None,
+    );
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &group, &[]);
+    pass.draw(3, 1, 0, 0);
+    pass.end();
+    encoder.copy_texture_to_buffer(
+        &TexelCopyTextureInfo::whole(&target.texture),
+        &TexelCopyBufferInfo { buffer: &target.readback, offset: 0, bytes_per_row: target.row, rows_per_image: None },
+        extent(width, height, 1),
+    );
+    device.queue().submit([encoder.finish("view dump")]);
+    device.block_on(target.readback.map_async(MapMode::Read, 0, None))?;
+    let mut padded = vec![0u8; (target.row * height) as usize];
+    target.readback.read_mapped(0, &mut padded)?;
+    target.readback.unmap();
+    let rgba: Vec<u8> = padded.chunks(target.row as usize).flat_map(|r| &r[..width as usize * 4]).copied().collect();
+    write_png(path, width, height, &rgba).map_err(|e| Error::Invalid(e.to_string()))
+}

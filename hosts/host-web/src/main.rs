@@ -2,8 +2,10 @@
 //! the origin-private file system under `game/`; this binary mounts OPFS and
 //! boots `game/default.xex` from it.
 //!
-//! Extra option: `--node-dir DIR` mounts a host directory through the WasmFS
-//! Node backend instead of OPFS (headless runs under Node.js).
+//! Extra options: `--node-dir DIR` mounts a host directory through the WasmFS
+//! Node backend instead of OPFS (headless runs under Node.js); `--stream-game URL`
+//! reads the game files from the server instead (`URL` + `manifest`, `files/...`;
+//! see `cargo xtask serve --game-dir`), keeping only content in OPFS.
 
 #[cfg(target_os = "emscripten")]
 #[path = "../../common/audio.rs"]
@@ -15,16 +17,21 @@ mod boot;
 #[path = "../../common/gpu.rs"]
 mod gpu;
 #[cfg(target_os = "emscripten")]
+mod stream;
+#[cfg(target_os = "emscripten")]
 mod text_input;
 
 #[cfg(target_os = "emscripten")]
 fn main() {
     use std::path::PathBuf;
 
-    let opts = match boot::parse(std::env::args().skip(1), &["--node-dir"]) {
+    let opts = match boot::parse(std::env::args().skip(1), &["--node-dir", "--stream-game"]) {
         Ok(o) => o,
         Err(msg) => {
-            eprintln!("host-web options:\n  --node-dir DIR           (Node.js only) use DIR instead of OPFS\n{msg}");
+            eprintln!(
+                "host-web options:\n  --node-dir DIR           (Node.js only) use DIR instead of OPFS\n  \
+                 --stream-game URL        read the game files from the server at URL\n{msg}"
+            );
             std::process::exit(2);
         }
     };
@@ -32,7 +39,9 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(2);
     }
-    let node_dir = opts.extra.iter().find(|(k, _)| k == "--node-dir").map(|(_, v)| v.clone());
+    let extra = |flag: &str| opts.extra.iter().find(|(k, _)| k == flag).map(|(_, v)| v.clone());
+    let node_dir = extra("--node-dir");
+    let stream_url = extra("--stream-game");
     // Node.js has no canvas or WebGPU: headless runs only execute the title.
     let render = node_dir.is_none();
     let (game_root, content): (PathBuf, PathBuf) = match node_dir {
@@ -51,7 +60,16 @@ fn main() {
             }
         },
     };
-    let xex = opts.xex.clone().unwrap_or_else(|| game_root.join("default.xex"));
+    let game = match stream_url {
+        Some(url) => match stream::open(&url) {
+            Ok(tree) => vfs::GameRoot::Remote(tree),
+            Err(e) => {
+                log::error!("{e}");
+                std::process::exit(1);
+            }
+        },
+        None => vfs::GameRoot::Dir(game_root),
+    };
     let on_kernel = move |kernel| {
         text_input::install();
         if !render {
@@ -64,7 +82,7 @@ fn main() {
             Err(e) => log::error!("starting the renderer: {e}"),
         }
     };
-    match boot::run(&opts, &game_root, &xex, &content, on_kernel) {
+    match boot::run(&opts, &game, &content, on_kernel) {
         Ok(code) => std::process::exit(code),
         Err(e) => {
             log::error!("{e}");

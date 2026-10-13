@@ -8,7 +8,11 @@
 // usage: PW_DIR=<dir with node_modules/playwright> xvfb-run -a node browser-run.mjs
 //          --dist web-dist --game <game dir> --profile <browser profile dir> --out <output dir>
 //          [--seconds 120] [--shot-every 10] [--args "--log info"] [--port 8091] [--reload-after S]
-//          [--stacks-at S[,S...]] [--audio] [--profile-at S:SECONDS]
+//          [--stacks-at S[,S...]] [--audio] [--profile-at S:SECONDS] [--stream]
+//
+// `--stream` skips the OPFS import and has the runtime stream the game from this server instead
+// (`--stream-game`), through the same /game/manifest and ranged /game/files/ endpoints as
+// `cargo xtask serve --game-dir`.
 //
 // `--audio` plays the runtime's audio through web/audio-worklet.js like the page does and logs
 // the ring positions (both advancing means audio flows). `--profile-at S:D` runs the sampling
@@ -43,10 +47,12 @@ const out = resolve(option('out'));
 const seconds = Number(option('seconds', '120'));
 const shotEvery = Number(option('shot-every', '10'));
 const runtimeArgs = option('args', '--log info').split(/\s+/).filter(Boolean);
+if (process.argv.includes('--stream')) runtimeArgs.push('--stream-game', `http://127.0.0.1:${option('port', '8091')}/game/`);
 // Fixed so the origin (and with it the imported game in OPFS) is the same on every run.
 const port = Number(option('port', '8091'));
 const reloadAfter = Number(option('reload-after', '0'));
 const audio = process.argv.includes('--audio');
+const stream = process.argv.includes('--stream');
 const [profileAt, profileFor] = option('profile-at', '0:0').split(':').map(Number);
 const stacksAt = option('stacks-at', '').split(',').filter(Boolean).map(Number);
 mkdirSync(out, { recursive: true });
@@ -77,6 +83,34 @@ const server = createServer((req, res) => {
   const path = decodeURIComponent(req.url.split('?')[0]);
   if (path === '/__game/manifest.json') {
     res.writeHead(200, { 'Content-Type': 'application/json', ...isolation }).end(JSON.stringify(listFiles(game)));
+    return;
+  }
+  if (path === '/game/manifest') {
+    const lines = listFiles(game).map((f) => `${f.size}\t${f.path}\n`).join('');
+    res.writeHead(200, { 'Content-Type': 'text/plain', ...isolation }).end(lines);
+    return;
+  }
+  if (path.startsWith('/game/files/')) {
+    const file = resolve(game, path.slice('/game/files/'.length));
+    if (!file.startsWith(game + sep) || !existsSync(file) || !statSync(file).isFile()) {
+      res.writeHead(404, isolation).end();
+      return;
+    }
+    const size = statSync(file).size;
+    const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '');
+    const start = range ? Number(range[1]) : 0;
+    const end = range && range[2] ? Math.min(Number(range[2]) + 1, size) : size;
+    if (start >= end) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}`, ...isolation }).end();
+      return;
+    }
+    res.writeHead(range ? 206 : 200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': end - start,
+      ...(range ? { 'Content-Range': `bytes ${start}-${end - 1}/${size}` } : {}),
+      ...isolation,
+    });
+    createReadStream(file, { start, end: end - 1 }).pipe(res);
     return;
   }
   const [root, name] = path.startsWith('/__game/') ? [game, path.slice(8)] : [dist, path.slice(1) || 'index.html'];
@@ -128,7 +162,7 @@ await page.goto(url);
 note(`crossOriginIsolated=${await page.evaluate(() => crossOriginIsolated)} webgpu=${await page.evaluate(() => !!navigator.gpu)}`);
 
 // Import (incremental).
-const imported = await page.evaluate(async () => {
+const imported = stream ? { files: 0, copied: 0 } : await page.evaluate(async () => {
   const manifest = await (await fetch('/__game/manifest.json')).json();
   const root = await navigator.storage.getDirectory();
   const gameDir = await root.getDirectoryHandle('game', { create: true });

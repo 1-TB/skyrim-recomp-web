@@ -1,0 +1,188 @@
+// On-screen controller for touch screens, drawn over the game: a floating left stick (touch
+// anywhere on the left side), drag on the right side to look, and the face, shoulder, trigger,
+// stick-click, D-pad, Start and Back buttons. input.js merges its state with the other inputs.
+'use strict';
+
+const BITS = {
+  UP: 0x0001, DOWN: 0x0002, LEFT: 0x0004, RIGHT: 0x0008, START: 0x0010, BACK: 0x0020,
+  LS: 0x0040, RS: 0x0080, LB: 0x0100, RB: 0x0200, A: 0x1000, B: 0x2000, X: 0x4000, Y: 0x8000,
+};
+
+// [label, bit or trigger name, CSS position]. Positions are relative to the game's frame.
+const BUTTONS = [
+  ['A', 'A', 'right: 9%; bottom: 8%'],
+  ['B', 'B', 'right: 3%; bottom: 20%'],
+  ['X', 'X', 'right: 15%; bottom: 20%'],
+  ['Y', 'Y', 'right: 9%; bottom: 32%'],
+  ['LB', 'LB', 'left: 3%; top: 16%'],
+  ['LT', 'lt', 'left: 3%; top: 3%'],
+  ['RB', 'RB', 'right: 3%; top: 16%'],
+  ['RT', 'rt', 'right: 3%; top: 3%'],
+  ['LS', 'LS', 'left: 14%; top: 16%'],
+  ['RS', 'RS', 'right: 14%; top: 16%'],
+  ['Back', 'BACK', 'left: 40%; top: 3%'],
+  ['Start', 'START', 'right: 40%; top: 3%'],
+  ['▲', 'UP', 'left: 9%; top: 34%'],
+  ['▼', 'DOWN', 'left: 9%; top: 54%'],
+  ['◀', 'LEFT', 'left: 3%; top: 44%'],
+  ['▶', 'RIGHT', 'left: 15%; top: 44%'],
+];
+
+const CSS = `
+.touchpad { position: absolute; inset: 0; touch-action: none; user-select: none; -webkit-user-select: none;
+  z-index: 2; }
+.touchpad .tbtn { position: absolute; min-width: 9%; aspect-ratio: 1; display: flex; align-items: center;
+  justify-content: center; border-radius: 50%; border: 2px solid rgba(255,255,255,.45);
+  background: rgba(0,0,0,.25); color: rgba(255,255,255,.85); font: 600 clamp(10px, 2.2vw, 18px) system-ui;
+  box-sizing: border-box; }
+.touchpad .tbtn.small { min-width: 7%; border-radius: 30%; }
+.touchpad .tbtn.on { background: rgba(255,255,255,.35); }
+.touchpad .stick { position: absolute; width: 18%; aspect-ratio: 1; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.35); transform: translate(-50%, -50%); pointer-events: none;
+  display: none; }
+.touchpad .knob { position: absolute; left: 50%; top: 50%; width: 42%; aspect-ratio: 1; border-radius: 50%;
+  background: rgba(255,255,255,.4); transform: translate(-50%, -50%); }
+`;
+
+// Fraction of the frame's height a stick deflects fully over.
+const STICK_RADIUS = 0.12;
+
+export function createTouch(stage) {
+  const style = document.createElement('style');
+  style.textContent = CSS;
+  document.head.appendChild(style);
+  const pad = document.createElement('div');
+  pad.className = 'touchpad';
+  pad.hidden = true;
+  stage.appendChild(pad);
+
+  const state = { buttons: 0, lt: 0, rt: 0, lx: 0, ly: 0, lookDx: 0, lookDy: 0 };
+  // Pointer id -> what it is doing: { kind: 'button', name } | { kind: 'stick', x, y } | { kind: 'look', x, y }.
+  const pointers = new Map();
+  const pressed = new Map(); // button name -> count of pointers holding it
+
+  const stick = document.createElement('div');
+  stick.className = 'stick';
+  const knob = document.createElement('div');
+  knob.className = 'knob';
+  stick.appendChild(knob);
+  pad.appendChild(stick);
+
+  const elements = new Map();
+  for (const [label, name, pos] of BUTTONS) {
+    const b = document.createElement('div');
+    b.className = 'tbtn' + (['A', 'B', 'X', 'Y'].includes(name) ? '' : ' small');
+    b.textContent = label;
+    b.style.cssText = pos;
+    b.dataset.name = name;
+    pad.appendChild(b);
+    elements.set(name, b);
+  }
+
+  function recompute() {
+    state.buttons = 0;
+    state.lt = 0;
+    state.rt = 0;
+    for (const [name, n] of pressed) {
+      if (n <= 0) continue;
+      if (name === 'lt') state.lt = 255;
+      else if (name === 'rt') state.rt = 255;
+      else state.buttons |= BITS[name];
+    }
+    for (const [name, el] of elements) el.classList.toggle('on', (pressed.get(name) ?? 0) > 0);
+  }
+
+  function press(name, delta) {
+    pressed.set(name, Math.max(0, (pressed.get(name) ?? 0) + delta));
+    recompute();
+  }
+
+  const rect = () => pad.getBoundingClientRect();
+
+  pad.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    pad.setPointerCapture?.(e.pointerId);
+    const button = e.target.closest?.('.tbtn');
+    if (button) {
+      pointers.set(e.pointerId, { kind: 'button', name: button.dataset.name });
+      press(button.dataset.name, 1);
+      navigator.vibrate?.(8);
+      return;
+    }
+    const r = rect();
+    if (e.clientX - r.left < r.width / 2) {
+      pointers.set(e.pointerId, { kind: 'stick', x: e.clientX, y: e.clientY });
+      stick.style.left = `${e.clientX - r.left}px`;
+      stick.style.top = `${e.clientY - r.top}px`;
+      knob.style.left = knob.style.top = '50%';
+      stick.style.display = 'block';
+    } else {
+      pointers.set(e.pointerId, { kind: 'look', x: e.clientX, y: e.clientY });
+    }
+  });
+
+  pad.addEventListener('pointermove', (e) => {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    e.preventDefault();
+    if (p.kind === 'stick') {
+      const radius = rect().height * STICK_RADIUS;
+      let dx = (e.clientX - p.x) / radius;
+      let dy = (e.clientY - p.y) / radius;
+      const len = Math.hypot(dx, dy);
+      if (len > 1) { dx /= len; dy /= len; }
+      state.lx = dx;
+      state.ly = -dy;
+      knob.style.left = `${50 + dx * 50}%`;
+      knob.style.top = `${50 + dy * 50}%`;
+    } else if (p.kind === 'look') {
+      state.lookDx += e.clientX - p.x;
+      state.lookDy += e.clientY - p.y;
+      p.x = e.clientX;
+      p.y = e.clientY;
+    } else if (p.kind === 'button') {
+      // Sliding off a button releases it; sliding onto another presses that one.
+      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.tbtn');
+      const name = el?.dataset.name;
+      if (name !== p.name) {
+        if (p.name) press(p.name, -1);
+        p.name = name;
+        if (name) press(name, 1);
+      }
+    }
+  });
+
+  function release(e) {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    pointers.delete(e.pointerId);
+    if (p.kind === 'button' && p.name) press(p.name, -1);
+    if (p.kind === 'stick') {
+      state.lx = state.ly = 0;
+      stick.style.display = 'none';
+    }
+  }
+  pad.addEventListener('pointerup', release);
+  pad.addEventListener('pointercancel', release);
+  pad.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  return {
+    get visible() { return !pad.hidden; },
+    set visible(v) {
+      pad.hidden = !v;
+      if (!v) {
+        pointers.clear();
+        pressed.clear();
+        recompute();
+        state.lx = state.ly = state.lookDx = state.lookDy = 0;
+        stick.style.display = 'none';
+      }
+    },
+    // Current state; look movement (pixels) is consumed.
+    take() {
+      const s = { ...state };
+      state.lookDx = state.lookDy = 0;
+      return s;
+    },
+  };
+}

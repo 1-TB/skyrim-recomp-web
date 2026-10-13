@@ -319,6 +319,8 @@ pub struct Executor {
     /// Completion of each submitted frame not yet known to be finished on the GPU.
     frames_in_flight: std::collections::VecDeque<Pending<gpu_webgpu::Result<()>>>,
     frame: u64,
+    /// Color targets of traced passes to write out after the next submit (name, size).
+    trace_dumps: Vec<(TextureView, u32, u32, String)>,
     textures: TextureCache,
     targets: Box<dyn RenderTargetCache>,
     encoder: Option<CommandEncoder>,
@@ -547,6 +549,7 @@ impl Executor {
             texture_groups: FxHashMap::default(),
             frames_in_flight: Default::default(),
             frame: 0,
+            trace_dumps: Vec::new(),
             textures: {
                 let config = xenos_texture_cache::CacheConfig {
                     reuse_textures: !crate::debug::NO_TEXTURE_POOL.load(std::sync::atomic::Ordering::Relaxed),
@@ -675,6 +678,13 @@ impl Executor {
             self.device.queue().submit([encoder.finish("xenos")]);
             self.stats.submissions += 1;
         }
+        #[cfg(not(target_os = "emscripten"))]
+        for (view, width, height, name) in std::mem::take(&mut self.trace_dumps) {
+            let path = std::path::Path::new("target/shader-dump").join(format!("{name}.png"));
+            if let Err(e) = crate::native::dump_view(&self.device, &view, width, height, &path) {
+                log::error!("trace: {}: {e}", path.display());
+            }
+        }
         self.constants.rewind();
         self.indices.rewind();
         self.shared.end_batch();
@@ -789,6 +799,13 @@ impl Executor {
             rp.draw_indexed(d.count, 1, (offset / index_size) as u32, 0, 0);
         }
         rp.end();
+        if crate::debug::tracing(self.frame) && pass.targets.sample_count == 1 {
+            for (slot, color) in pass.targets.colors.iter().enumerate() {
+                let Some((view, format)) = color else { continue };
+                let name = format!("f{}-d{}-rt{slot}-{format:?}", self.frame, self.stats.draws);
+                self.trace_dumps.push((view.clone(), pass.targets.width, pass.targets.height, name));
+            }
+        }
     }
 
     fn warn_once(&mut self, message: String) {
@@ -835,6 +852,9 @@ impl Executor {
         // by default). The destination pages are brought up to date first, so the bytes the copy
         // doesn't cover stay correct there.
         log::trace!("renderer: resolve {info:?}");
+        if crate::debug::tracing(self.frame) {
+            log::info!("trace frame {} resolve after draw {}: {info:?}", self.frame, self.stats.draws);
+        }
         let gpu_store = !crate::debug::CPU_RESOLVES.load(std::sync::atomic::Ordering::Relaxed);
         let shared = (gpu_store && self.shared.part() == SHARED_MEMORY_BUFFER_BYTES).then(|| {
             self.sync_shared(info.copy_dest_extent_start, info.copy_dest_extent_length);
@@ -1031,6 +1051,10 @@ impl Executor {
         let reuse = self.pass.as_ref().is_some_and(|p| p.setup == setup && p.targets.height >= min_height);
         if !reuse {
             self.encode_pass();
+            // A traced pass's targets are written out before later passes can change them.
+            if !self.trace_dumps.is_empty() {
+                self.flush();
+            }
             let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder("xenos"));
             let targets = self.targets.targets(&self.device, encoder, &setup, min_height).ok_or(Skip::NoTargets)?;
             self.pass = Some(Pass { setup: setup.clone(), targets, draws: Vec::new() });
@@ -1110,6 +1134,9 @@ impl Executor {
                 };
                 system.flags |= range << (flags::COLOR_RANGE_SHIFT + 2 * i as u32);
             }
+        }
+        if crate::debug::tracing(self.frame) {
+            self.trace_draw(&vs, ps.as_deref(), &setup, &system);
         }
         let float_reads = [
             vs.translation.info.float_constants_read(),
@@ -1245,6 +1272,60 @@ impl Executor {
         let system = ConstantBlock::push(&mut cache.system, ring, system.as_bytes(), SYSTEM_SIZE, &mut self.stats);
         cache.scratch = scratch;
         [float[0], bool_loop, fetch, system, float[1]]
+    }
+
+    /// `--render-debug trace-frame=N`: logs the draw and writes its shaders out (once each).
+    fn trace_draw(
+        &mut self,
+        vs: &CachedShader,
+        ps: Option<&CachedShader>,
+        setup: &RenderTargetSetup,
+        system: &SystemConstants,
+    ) {
+        let targets: Vec<String> = setup
+            .color
+            .iter()
+            .flatten()
+            .map(|b| format!("{:?}@{} bias {}", b.guest_color_format, b.key.base_tiles, b.exp_bias))
+            .collect();
+        // The fetch constants of the textures sampled (6 words each; the format is in word 1).
+        let fetch = self.regs.fetch_constants();
+        let mut textures = Vec::new();
+        for shader in [Some(vs), ps].into_iter().flatten() {
+            for b in &shader.translation.texture_bindings {
+                let first = b.fetch_constant as usize * 6;
+                let words: Vec<String> = fetch[first..first + 6].iter().map(|w| format!("{w:08x}")).collect();
+                textures.push(format!("tf{} {}", b.fetch_constant, words.join(" ")));
+            }
+        }
+        log::info!(
+            "trace frame {} draw {}: vs {:016x} ps {:?} targets [{}] flags {:#x} textures [{}]",
+            self.frame,
+            self.stats.draws,
+            vs.id,
+            ps.map(|p| format!("{:016x}", p.id)),
+            targets.join(", "),
+            system.flags,
+            textures.join(", ")
+        );
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let dir = std::path::Path::new("target/shader-dump");
+            let _ = std::fs::create_dir_all(dir);
+            let codes =
+                [(Stage::Vertex, vs, self.active.vertex.clone()), (Stage::Pixel, vs, self.active.pixel.clone())];
+            for (stage, _, code) in codes {
+                let shader = if stage == Stage::Vertex { Some(vs) } else { ps };
+                let (Some(shader), Some((code, _))) = (shader, code) else { continue };
+                let base = dir.join(format!("{}-{:016x}", if stage == Stage::Vertex { "vs" } else { "ps" }, shader.id));
+                if base.with_extension("wgsl").exists() {
+                    continue;
+                }
+                let _ = std::fs::write(base.with_extension("wgsl"), &shader.translation.wgsl);
+                let disasm = xenos_shader::disassemble(stage, &code).unwrap_or_else(|e| format!("{e:?}"));
+                let _ = std::fs::write(base.with_extension("txt"), disasm);
+            }
+        }
     }
 
     /// The textures the shaders' fetches bind under the current fetch constants. Draws mostly

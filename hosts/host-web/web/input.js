@@ -2,6 +2,7 @@
 // browser gamepad (standard mapping) if one is connected, else the keyboard and
 // mouse. Clicking the game canvas captures the mouse: moving it turns the camera
 // (right stick), left/right buttons are the right/left triggers; Esc releases it.
+// The on-screen touch controller (touch.js), when shown, adds to whichever is in use.
 'use strict';
 
 const XINPUT = {
@@ -51,15 +52,19 @@ function fromGamepad(pad) {
           axis(pad.axes[2] ?? 0), axis(-(pad.axes[3] ?? 0))];
 }
 
-function fromKeyboard() {
+// Right-stick deflection for `dx`, `dy` pixels of look movement this frame.
+function look(dx, dy, sensitivity) {
+  return [axis(dx * sensitivity / MOUSE_FULL_DEFLECTION), axis(-dy * sensitivity / MOUSE_FULL_DEFLECTION)];
+}
+
+function fromKeyboard(sensitivity) {
   let buttons = 0;
   for (const code of held) buttons |= KEY_BUTTONS[code] ?? 0;
   const dir = (neg, pos) => (held.has(pos) ? STICK : 0) - (held.has(neg) ? STICK : 0);
   let rx = dir('ArrowLeft', 'ArrowRight');
   let ry = dir('ArrowDown', 'ArrowUp');
   if (mouse.locked && (mouse.dx !== 0 || mouse.dy !== 0)) {
-    rx = axis(mouse.dx / MOUSE_FULL_DEFLECTION);
-    ry = axis(-mouse.dy / MOUSE_FULL_DEFLECTION);
+    [rx, ry] = look(mouse.dx, mouse.dy, sensitivity);
   }
   mouse.dx = 0;
   mouse.dy = 0;
@@ -89,7 +94,27 @@ function captureMouse(canvas) {
   });
 }
 
-export function startInput(module) {
+// Adds the touch controller's state to `state` ([buttons, lt, rt, lx, ly, rx, ry]).
+function withTouch(state, touch, sensitivity) {
+  const t = touch.take();
+  state[0] |= t.buttons;
+  state[1] = Math.max(state[1], t.lt);
+  state[2] = Math.max(state[2], t.rt);
+  if (t.lx !== 0 || t.ly !== 0) {
+    state[3] = axis(t.lx);
+    state[4] = axis(t.ly);
+  }
+  if (t.lookDx !== 0 || t.lookDy !== 0) {
+    // A finger moves further than a mouse for the same turn: half the deflection per pixel.
+    [state[5], state[6]] = look(t.lookDx / 2, t.lookDy / 2, sensitivity);
+  }
+  return state;
+}
+
+// `options.sensitivity()`: mouse/touch look multiplier (1 = default); `options.touch`: the
+// on-screen controller, if any.
+export function startInput(module, options = {}) {
+  const sensitivity = options.sensitivity ?? (() => 1);
   const set = module._skyrt_set_pad;
   if (typeof set !== 'function') return;
   addEventListener('keydown', (e) => {
@@ -105,7 +130,8 @@ export function startInput(module) {
   let last = '';
   const tick = () => {
     const pad = navigator.getGamepads?.().find((p) => p && p.mapping === 'standard');
-    const state = pad ? fromGamepad(pad) : fromKeyboard();
+    let state = pad ? fromGamepad(pad) : fromKeyboard(sensitivity());
+    if (options.touch?.visible) state = withTouch(state, options.touch, sensitivity());
     const key = state.join(',');
     if (key !== last) {
       last = key;
