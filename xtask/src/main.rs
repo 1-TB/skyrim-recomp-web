@@ -2,6 +2,8 @@
 //!
 //!   setup-xenonrecomp              clone XenonRecomp at the pinned commit, apply tools/xenonrecomp/skyrt.patch, build
 //!   decrypt --in IN.xex --out OUT.xex  write the decrypted, decompressed XEX the runtime loads
+//!   patch --xex BASE.xex --patch TU.xexp --out OUT.xex
+//!                                  apply a title update's delta patch to the decrypted XEX
 //!   switches --xex FILE.xex --out FILE.toml   find jump tables for XenonRecomp
 //!   scan --xex FILE.xex            find save/restore helper and longjmp candidates for the config
 //!   recompile --config FILE.toml   run XenonRecomp with cpp/ppc_context.h
@@ -62,6 +64,10 @@ fn main() -> ExitCode {
             (Some(i), Some(o)) => decrypt(Path::new(&i), Path::new(&o)),
             _ => Err("decrypt needs --in IN.xex --out OUT.xex".into()),
         },
+        Some("patch") => match (flag_value(&args, "--xex"), flag_value(&args, "--patch"), flag_value(&args, "--out")) {
+            (Some(x), Some(p), Some(o)) => patch(Path::new(&x), Path::new(&p), Path::new(&o)),
+            _ => Err("patch needs --xex BASE.xex --patch TU.xexp --out OUT.xex".into()),
+        },
         Some("switches") => match (flag_value(&args, "--xex"), flag_value(&args, "--out")) {
             (Some(x), Some(o)) => switches::run(Path::new(&x), Path::new(&o)),
             _ => Err("switches needs --xex FILE.xex --out FILE.toml".into()),
@@ -85,7 +91,7 @@ fn main() -> ExitCode {
             serve::serve(&dir, port, game.as_deref())
         }
         _ => {
-            Err("usage: cargo xtask <setup-xenonrecomp|decrypt|scan|switches|recompile|synth|e2e|build-web|serve> ..."
+            Err("usage: cargo xtask <setup-xenonrecomp|decrypt|patch|scan|switches|recompile|synth|e2e|build-web|serve> ..."
                 .into())
         }
     };
@@ -362,6 +368,33 @@ fn decrypt(input: &Path, output: &Path) -> Result<()> {
         xex.entry_point().unwrap_or(0),
         sections.len(),
         imports.len()
+    );
+    Ok(())
+}
+
+/// Applies a title update's delta patch (`default.xexp`) to the decrypted base
+/// executable. The result is decrypted and uncompressed, like `decrypt`'s output,
+/// so it can stand in for the disc's default.xex everywhere (scan, switches,
+/// recompile, the runtime).
+fn patch(base: &Path, patch: &Path, output: &Path) -> Result<()> {
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    run_tool(xex_decrypt_tool()?.arg("--patch").arg(base).arg(patch).arg(output), "xex-decrypt --patch")?;
+    let data = fs::read(output).map_err(|e| e.to_string())?;
+    let xex = xex::Xex::parse(&data).map_err(|e| format!("{}: {e}", output.display()))?;
+    let version = xex.execution_info().map_or(0, |i| i.version);
+    println!(
+        "{}: image {:#010X}+{:#X}, entry {:#010X}, version {}.{}.{}.{}, {} imports",
+        output.display(),
+        xex.image_base(),
+        xex.image_size(),
+        xex.entry_point().unwrap_or(0),
+        version >> 28,
+        (version >> 24) & 0xF,
+        (version >> 8) & 0xFFFF,
+        version & 0xFF,
+        xex.imports().map_err(|e| e.to_string())?.len()
     );
     Ok(())
 }

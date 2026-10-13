@@ -13,6 +13,10 @@
 //   xex-decrypt IN.xex OUT.xex
 //   xex-decrypt --encrypt IN.xex OUT.xex   (test fixtures: re-encrypt an
 //                                           unencrypted XEX with a fixed key)
+//   xex-decrypt --patch BASE.xex PATCH.xexp OUT.xex
+//                                          apply a title update's delta patch to
+//                                          the decrypted base (XenonRecomp's
+//                                          XexPatcher, as its recompiler does)
 
 #include <xex.h>
 #include <xex_patcher.h>
@@ -231,11 +235,43 @@ int encryptCommand(const char* in, const char* out) {
     return 0;
 }
 
+int patchCommand(const char* base, const char* patch, const char* out) {
+    switch (XexPatcher::apply(base, patch, out)) {
+    case XexPatcher::Result::Success:
+        return 0;
+    case XexPatcher::Result::FileOpenFailed:
+    case XexPatcher::Result::FileWriteFailed:
+        std::fprintf(stderr, "cannot read %s / %s or write %s\n", base, patch, out);
+        return 1;
+    case XexPatcher::Result::XexFileUnsupported:
+        std::fprintf(stderr, "%s: unsupported base executable\n", base);
+        return 1;
+    case XexPatcher::Result::XexFileInvalid:
+        std::fprintf(stderr, "%s: invalid base executable\n", base);
+        return 1;
+    case XexPatcher::Result::PatchFileInvalid:
+        std::fprintf(stderr, "%s: invalid patch\n", patch);
+        return 1;
+    case XexPatcher::Result::PatchIncompatible:
+        std::fprintf(stderr, "%s: patch is for a different base version than %s\n", patch, base);
+        return 1;
+    case XexPatcher::Result::PatchFailed:
+    case XexPatcher::Result::PatchUnsupported:
+        std::fprintf(stderr, "%s: applying the patch failed\n", patch);
+        return 1;
+    }
+    return 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc == 4 && std::string(argv[1]) == "--encrypt") return encryptCommand(argv[2], argv[3]);
+    if (argc == 5 && std::string(argv[1]) == "--patch") return patchCommand(argv[2], argv[3], argv[4]);
     if (argc == 3) return decryptCommand(argv[1], argv[2]);
-    std::fprintf(stderr, "usage: xex-decrypt IN.xex OUT.xex\n       xex-decrypt --encrypt IN.xex OUT.xex\n");
+    std::fprintf(stderr,
+                 "usage: xex-decrypt IN.xex OUT.xex\n"
+                 "       xex-decrypt --encrypt IN.xex OUT.xex\n"
+                 "       xex-decrypt --patch BASE.xex PATCH.xexp OUT.xex\n");
     return 2;
 }

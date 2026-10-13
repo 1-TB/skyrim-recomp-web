@@ -8,11 +8,15 @@
 // usage: PW_DIR=<dir with node_modules/playwright> xvfb-run -a node browser-run.mjs
 //          --dist web-dist --game <game dir> --profile <browser profile dir> --out <output dir>
 //          [--seconds 120] [--shot-every 10] [--args "--log info"] [--port 8091] [--reload-after S]
-//          [--stacks-at S[,S...]] [--audio] [--profile-at S:SECONDS] [--stream]
+//          [--stacks-at S[,S...]] [--audio] [--profile-at S:SECONDS] [--stream] [--saves DIR]
 //
 // `--stream` skips the OPFS import and has the runtime stream the game from this server instead
 // (`--stream-game`), through the same /game/manifest and ranged /game/files/ endpoints as
 // `cargo xtask serve --game-dir`.
+//
+// `--saves DIR` replaces the page's title content (OPFS content/, where saves live) with DIR
+// before booting. DIR has the layout of `cargo xtask serve`'s target/web-saves/ (what the
+// page's Export saves button writes), so an exported save can be loaded with taps on Continue.
 //
 // `--audio` plays the runtime's audio through web/audio-worklet.js like the page does and logs
 // the ring positions (both advancing means audio flows). `--profile-at S:D` runs the sampling
@@ -55,6 +59,7 @@ const audio = process.argv.includes('--audio');
 const stream = process.argv.includes('--stream');
 const [profileAt, profileFor] = option('profile-at', '0:0').split(':').map(Number);
 const stacksAt = option('stacks-at', '').split(',').filter(Boolean).map(Number);
+const saves = process.argv.includes('--saves') ? resolve(option('saves')) : null;
 mkdirSync(out, { recursive: true });
 const logPath = join(out, 'log.txt');
 writeFileSync(logPath, '');
@@ -62,12 +67,12 @@ writeFileSync(logPath, '');
 const require = createRequire(join(process.env.PW_DIR ?? '.', 'noop.js'));
 const { chromium } = require('playwright');
 
-function listFiles(dir) {
+function listFiles(dir, base = dir) {
   const files = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...listFiles(path));
-    else if (entry.isFile()) files.push({ path: relative(game, path).split(sep).join('/'), size: statSync(path).size });
+    if (entry.isDirectory()) files.push(...listFiles(path, base));
+    else if (entry.isFile()) files.push({ path: relative(base, path).split(sep).join('/'), size: statSync(path).size });
   }
   return files;
 }
@@ -83,6 +88,10 @@ const server = createServer((req, res) => {
   const path = decodeURIComponent(req.url.split('?')[0]);
   if (path === '/__game/manifest.json') {
     res.writeHead(200, { 'Content-Type': 'application/json', ...isolation }).end(JSON.stringify(listFiles(game)));
+    return;
+  }
+  if (path === '/__saves/manifest.json' && saves) {
+    res.writeHead(200, { 'Content-Type': 'application/json', ...isolation }).end(JSON.stringify(listFiles(saves)));
     return;
   }
   if (path === '/game/manifest') {
@@ -113,7 +122,11 @@ const server = createServer((req, res) => {
     createReadStream(file, { start, end: end - 1 }).pipe(res);
     return;
   }
-  const [root, name] = path.startsWith('/__game/') ? [game, path.slice(8)] : [dist, path.slice(1) || 'index.html'];
+  const [root, name] = path.startsWith('/__game/')
+    ? [game, path.slice(8)]
+    : saves && path.startsWith('/__saves/')
+      ? [saves, path.slice(9)]
+      : [dist, path.slice(1) || 'index.html'];
   const file = resolve(root, name);
   if (!file.startsWith(root + sep) || !existsSync(file) || !statSync(file).isFile()) {
     res.writeHead(404).end();
@@ -180,6 +193,24 @@ const imported = stream ? { files: 0, copied: 0 } : await page.evaluate(async ()
   return { files: manifest.length, copied };
 });
 note(`game: ${imported.files} files, ${(imported.copied / 2 ** 20).toFixed(1)} MiB copied into OPFS`);
+
+if (saves) {
+  const count = await page.evaluate(async () => {
+    const manifest = await (await fetch('/__saves/manifest.json')).json();
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry('content', { recursive: true }).catch(() => {});
+    const content = await root.getDirectoryHandle('content', { create: true });
+    for (const { path } of manifest) {
+      const parts = path.split('/');
+      let dir = content;
+      for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
+      const response = await fetch('/__saves/' + parts.map(encodeURIComponent).join('/'));
+      await response.body.pipeTo(await (await dir.getFileHandle(parts.at(-1), { create: true })).createWritable());
+    }
+    return manifest.length;
+  });
+  note(`saves: ${count} files from ${saves} copied into OPFS content/`);
+}
 
 // Boot.
 const boot = () => page.evaluate(async ([argv, withAudio]) => {
