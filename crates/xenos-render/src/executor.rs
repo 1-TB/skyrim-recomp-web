@@ -38,6 +38,7 @@ use xenos_texture_cache::{GpuSource, TextureCache};
 
 use crate::present::FrontBuffer;
 use crate::registers::{ActiveShaders, RegisterFile, dirty};
+use crate::float_patch::FloatPatcher;
 use crate::ring::Ring;
 use crate::shaders::{CachedShader, ShaderCache};
 use crate::shared_memory::SharedMemory;
@@ -306,6 +307,8 @@ pub struct Executor {
     constants: Ring,
     indices: Ring,
     constants_group: BindGroup,
+    /// Float constant blocks, built on the GPU from per-draw patches.
+    floats: FloatPatcher,
     shared_group: BindGroup,
     constants_layout: BindGroupLayout,
     shared_layout: BindGroupLayout,
@@ -348,10 +351,14 @@ pub struct ExecutorStats {
     pub pipelines: u64,
     /// Bytes sent to the GPU: per-draw constants, converted indices, and guest memory pages.
     pub constant_upload_bytes: u64,
-    /// Of `constant_upload_bytes`: float constants of vertex and pixel shaders, and how many of
-    /// those uploads were for shaders that index them dynamically (all 256 uploaded).
+    /// Of `constant_upload_bytes`: float constants of vertex and pixel shaders (patches: changed
+    /// vec4s and records), and how many new blocks were for shaders that index them dynamically
+    /// (all 256 bound).
     pub float_upload_bytes: [u64; 2],
     pub float_uploads_dynamic: [u64; 2],
+    /// Of the float constant uploads: vec4s that differed from the stage's previous block (the
+    /// rest were sent again unchanged).
+    pub float_vec4s_changed: [u64; 2],
     /// Constant blocks whose contents matched the last ones pushed (not uploaded again).
     pub constant_blocks_reused: u64,
     pub index_upload_bytes: u64,
@@ -485,19 +492,20 @@ impl Executor {
                 ),
             ],
         );
+        let floats = FloatPatcher::new(device, alignment);
         let constants_group = device.create_bind_group(
             "xenos constants",
             &constants_layout,
             &[
-                (bindings::FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE),
-                (bindings::BOOL_LOOP_CONSTANTS_BINDING, BOOL_LOOP_SIZE),
-                (bindings::FETCH_CONSTANTS_BINDING, FETCH_SIZE),
-                (bindings::SYSTEM_CONSTANTS_BINDING, SYSTEM_SIZE),
-                (bindings::PIXEL_FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE),
+                (bindings::FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, &floats.buffer),
+                (bindings::BOOL_LOOP_CONSTANTS_BINDING, BOOL_LOOP_SIZE, &constants.buffer),
+                (bindings::FETCH_CONSTANTS_BINDING, FETCH_SIZE, &constants.buffer),
+                (bindings::SYSTEM_CONSTANTS_BINDING, SYSTEM_SIZE, &constants.buffer),
+                (bindings::PIXEL_FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, &floats.buffer),
             ]
-            .map(|(binding, size)| BindGroupEntry {
+            .map(|(binding, size, buffer)| BindGroupEntry {
                 binding,
-                resource: BindingResource::Buffer { buffer: &constants.buffer, offset: 0, size: Some(size) },
+                resource: BindingResource::Buffer { buffer, offset: 0, size: Some(size) },
             }),
         );
         let shared_layout = device.create_bind_group_layout(
@@ -541,6 +549,7 @@ impl Executor {
             constants,
             indices,
             constants_group,
+            floats,
             shared_group,
             constants_layout,
             shared_layout,
@@ -674,10 +683,17 @@ impl Executor {
         self.encode_pass();
         self.stats.constant_upload_bytes += self.constants.upload(&self.device);
         self.stats.index_upload_bytes += self.indices.upload(&self.device);
-        if let Some(encoder) = self.encoder.take() {
-            self.device.queue().submit([encoder.finish("xenos")]);
+        // The float constant blocks are built first, in a command buffer of their own.
+        let patches = self.floats.encode(&self.device).map(|(commands, bytes)| {
+            self.stats.constant_upload_bytes += bytes;
+            commands
+        });
+        let main = self.encoder.take().map(|encoder| encoder.finish("xenos"));
+        if patches.is_some() || main.is_some() {
+            self.device.queue().submit(patches.into_iter().chain(main));
             self.stats.submissions += 1;
         }
+        self.floats.rewind();
         #[cfg(not(target_os = "emscripten"))]
         for (view, width, height, name) in std::mem::take(&mut self.trace_dumps) {
             let path = std::path::Path::new("target/shader-dump").join(format!("{name}.png"));
@@ -1013,8 +1029,11 @@ impl Executor {
             return Err(Skip::Warn(format!("draw with {index_len} bytes of indices skipped")));
         }
         // Each float constant binding spans a full stage's constants past its offset.
-        let constant_space = 2 * FLOAT_CONSTANTS_SIZE + BOOL_LOOP_SIZE + FETCH_SIZE + SYSTEM_SIZE + 5 * 256;
-        if self.constants.remaining() < constant_space || self.indices.remaining() < index_len {
+        let constant_space = BOOL_LOOP_SIZE + FETCH_SIZE + SYSTEM_SIZE + 3 * 256;
+        if self.constants.remaining() < constant_space
+            || self.indices.remaining() < index_len
+            || !self.floats.has_room(FLOAT_CONSTANTS_SIZE)
+        {
             self.flush();
         }
 
@@ -1242,12 +1261,34 @@ impl Executor {
             }
             scratch.clear();
             self.regs.float_constants_window(base, float_reads[stage], &mut scratch);
-            let reused = self.stats.constant_blocks_reused;
-            float[stage] = ConstantBlock::push(slot, ring, &scratch, FLOAT_CONSTANTS_SIZE, &mut self.stats);
-            if self.stats.constant_blocks_reused == reused {
-                self.stats.float_upload_bytes[stage] += read as u64;
-                self.stats.float_uploads_dynamic[stage] += u64::from(read == FLOAT_CONSTANTS_SIZE as usize);
+            if let Some(b) = slot.as_ref()
+                && b.data.starts_with(&scratch)
+            {
+                self.stats.constant_blocks_reused += 1;
+                float[stage] = b.offset;
+                continue;
             }
+            // A new block: only what differs from the stage's previous block is sent (see
+            // float_patch).
+            let previous = slot.as_ref().map(|b| &b.data[..]);
+            let changed = scratch
+                .chunks(16)
+                .enumerate()
+                .filter(|(i, v)| previous.and_then(|p| p.get(i * 16..i * 16 + 16)) != Some(*v))
+                .count();
+            let offset = self.floats.push(stage as u32, previous, &scratch, FLOAT_CONSTANTS_SIZE);
+            match slot {
+                Some(b) => {
+                    b.offset = offset;
+                    b.data.clear();
+                    b.data.extend_from_slice(&scratch);
+                }
+                None => *slot = Some(ConstantBlock { offset, data: scratch.clone() }),
+            }
+            float[stage] = offset;
+            self.stats.float_vec4s_changed[stage] += changed as u64;
+            self.stats.float_upload_bytes[stage] += changed as u64 * 16 + 48;
+            self.stats.float_uploads_dynamic[stage] += u64::from(read == FLOAT_CONSTANTS_SIZE as usize);
         }
         let bool_loop = match &cache.bool_loop {
             Some(b) if dirty_bits & dirty::BOOL_LOOP == 0 => b.offset,
