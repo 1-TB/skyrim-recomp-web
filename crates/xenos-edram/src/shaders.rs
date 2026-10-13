@@ -304,10 +304,14 @@ fn unpack_color(lo: u32, hi: u32, fmt: u32) -> vec4<f32> {
 }
 
 // Depth codes: 16 = D24S8, 17 = D24FS8. EDRAM depth dwords are depth << 8 | stencil.
+// Host D24FS8 depth holds half the guest value (like Xenia's full_float24_in_0_to_1, matched by
+// the viewport's depth range): 20e4 spans [0, 2) and host depth buffers only [0, 1], and EDRAM
+// tiles of other formats are reinterpreted as depth when a title aliases them (Skyrim's HUD
+// passes do, over the finished frame), so every 24-bit pattern must survive the round trip.
 fn pack_depth(d: f32, stencil: u32, fmt: u32) -> u32 {
     var d24: u32;
     if (fmt == 17u) {
-        d24 = f32_to_20e4(d);
+        d24 = f32_to_20e4(d * 2.0);
     } else {
         d24 = f32_to_unorm24(d);
     }
@@ -316,7 +320,7 @@ fn pack_depth(d: f32, stencil: u32, fmt: u32) -> u32 {
 
 fn unpack_depth(bits: u32, fmt: u32) -> f32 {
     if (fmt == 17u) {
-        return f20e4_to_f32(bits >> 8u);
+        return f20e4_to_f32(bits >> 8u) * 0.5;
     }
     return unorm24_to_f32(bits >> 8u);
 }

@@ -35,6 +35,8 @@ pub struct ViewportArgs {
 
 impl ViewportArgs {
     /// Defaults for a WebGPU host at native resolution with `max_dimension` (maxTextureDimension2D).
+    /// Float24 depth is remapped to [0, 0.5] (xenos-edram's host D24FS8 depth is half the guest
+    /// value) so that any 20e4 value, up to 2, fits WebGPU's [0, 1] depth range.
     pub fn webgpu(max_dimension: u32) -> Self {
         Self {
             draw_resolution_scale_x: 1,
@@ -44,7 +46,7 @@ impl ViewportArgs {
             y_max: max_dimension,
             allow_reverse_z: false,
             convert_z_to_float24: false,
-            full_float24_in_0_to_1: false,
+            full_float24_in_0_to_1: true,
             pixel_shader_writes_depth: false,
             xenos_sample_positions: false,
             half_pixel_offset: true,

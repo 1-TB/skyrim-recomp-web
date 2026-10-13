@@ -642,7 +642,8 @@ fn depth_resolves_d24s8_and_d24fs8() {
         for y in 0..32 {
             for x in 0..128 {
                 let d = depth_value(x, y);
-                let d24 = if format == D::D24FS8 { float32_to_20e4(d, true) } else { unorm24(d) };
+                // Host float24 depth is half the guest value (see xenos-edram's pack_depth).
+                let d24 = if format == D::D24FS8 { float32_to_20e4(d * 2.0, true) } else { unorm24(d) };
                 let stencil = if x < 64 { 0x5A } else { 0xC3 };
                 put(&mut expected, addr_2d(x, y, 128, 2), &((d24 << 8) | stencil).to_be_bytes());
             }
@@ -837,6 +838,34 @@ fn ownership_transfers(gpu: &Gpu, cache: &mut EdramCache) {
     assert_eq!(cache.render_target_count(), 3);
     cache.trim();
     assert_eq!(cache.render_target_count(), 1);
+}
+
+/// Color tiles taken over by a float24 depth buffer and given back unchanged must keep every bit,
+/// including patterns whose top 24 bits are 20e4 values of 1 or more (alpha 0xF0 and up), which
+/// a host depth buffer limited to [0, 1] would clamp. Skyrim draws depth-only HUD passes over its
+/// finished frame: clamping there turned the brightest areas pure red (only the stencil byte, red,
+/// survived).
+#[test]
+fn color_through_float24_depth_is_lossless() {
+    let gpu = gpu();
+    let device = &gpu.device;
+    let mut cache = EdramCache::new(device);
+    let mem = Mem::new();
+    draw(&gpu, &mut cache, &color_setup(256, MsaaSamples::X1, 10, C::K8888), 64, FS_8888, &[([0, 0, 320, 64], 0)]);
+    let mut enc = device.create_command_encoder("to depth");
+    cache.targets(device, &mut enc, &depth_setup(256, MsaaSamples::X1, 10, D::D24FS8), 64).expect("targets");
+    device.queue().submit([enc.finish("to depth")]);
+    let mut enc = device.create_command_encoder("back to color");
+    cache.targets(device, &mut enc, &color_setup(256, MsaaSamples::X1, 10, C::K8888), 64).expect("targets");
+    device.queue().submit([enc.finish("back to color")]);
+    let mut expected = mem.snapshot();
+    run(&gpu, &mut cache, &Resolve { color_base: 10, ..Default::default() }.info(), &mem);
+    for y in 0..64 {
+        for x in 0..256 {
+            put(&mut expected, addr_2d(x, y, 256, 2), &pattern_8888(x, y).to_le_bytes());
+        }
+    }
+    assert_mem(&mem, &expected);
 }
 
 const FS_HALF_SAFE: &str = r#"
