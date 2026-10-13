@@ -1,0 +1,9 @@
+[package]
+name = "xex"
+description = "XEX2 container parsing for decrypted Xbox 360 executables"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

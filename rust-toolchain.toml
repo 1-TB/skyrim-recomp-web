@@ -1,0 +1,6 @@
+[toolchain]
+# Nightly is required for -Zbuild-std: the prebuilt wasm32-unknown-emscripten std
+# is not compiled with +atomics, which pthreads need.
+channel = "nightly-2026-10-11"
+components = ["rust-src", "rustfmt", "clippy"]
+targets = ["wasm32-unknown-emscripten"]

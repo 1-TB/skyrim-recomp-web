@@ -1,0 +1,22 @@
+[package]
+name = "host-native"
+description = "Runs the recompiled title natively (x86_64 Linux) for debugging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "skyrim-native"
+path = "src/main.rs"
+
+[dependencies]
+guest-sys.workspace = true
+kernel-hle.workspace = true
+libc.workspace = true
+log.workspace = true
+runtime-core.workspace = true
+vfs.workspace = true
+xex.workspace = true
+xenos-render.workspace = true

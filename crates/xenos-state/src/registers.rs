@@ -1,0 +1,6906 @@
+//! Xenos register indices (dword addresses), mirroring the Xenia register table.
+//!
+//! Indices below 0x4000 are MMIO-visible registers; 0x4000 and above are the shader
+//! constant / fetch constant / bool / loop constant files written through PM4 packets.
+
+pub const RBBM_RTL_RELEASE: u32 = 0x0000;
+pub const RBBM_PATCH_RELEASE: u32 = 0x0001;
+pub const RBBM_AUXILIARY_CONFIG: u32 = 0x0002;
+pub const BIOS_0_SCRATCH: u32 = 0x0004;
+pub const BIOS_1_SCRATCH: u32 = 0x0005;
+pub const BIOS_2_SCRATCH: u32 = 0x0006;
+pub const BIOS_3_SCRATCH: u32 = 0x0007;
+pub const BIOS_4_SCRATCH: u32 = 0x0008;
+pub const BIOS_5_SCRATCH: u32 = 0x0009;
+pub const BIOS_6_SCRATCH: u32 = 0x000A;
+pub const BIOS_7_SCRATCH: u32 = 0x000B;
+pub const CONFIG_CNTL: u32 = 0x0038;
+pub const CONFIG_XSTRAP: u32 = 0x0039;
+pub const CONFIG_XSTRAP2: u32 = 0x003A;
+pub const RBBM_CNTL: u32 = 0x003B;
+pub const RBBM_SOFT_RESET: u32 = 0x003C;
+pub const RBBM_SKEW_CNTL: u32 = 0x003D;
+pub const MH_MMU_CONFIG: u32 = 0x0040;
+pub const MH_MMU_VA_RANGE: u32 = 0x0041;
+pub const MH_MMU_PT_BASE: u32 = 0x0042;
+pub const MH_MMU_PAGE_FAULT: u32 = 0x0043;
+pub const MH_MMU_TRAN_ERROR: u32 = 0x0044;
+pub const MH_MMU_INVALIDATE: u32 = 0x0045;
+pub const MH_MMU_MPU_BASE: u32 = 0x0046;
+pub const MH_MMU_MPU_END: u32 = 0x0047;
+pub const BIF_PERFCOUNTER0_SELECT: u32 = 0x0048;
+pub const BIF_PERFCOUNTER0_HI: u32 = 0x0049;
+pub const BIF_PERFCOUNTER0_LOW: u32 = 0x004A;
+pub const ROM_PAR_DATA_REG: u32 = 0x0064;
+pub const ROM_BAD_PIPE_DISABLE_REGISTER: u32 = 0x0065;
+pub const ROM_PAR_ADDR_REG: u32 = 0x0066;
+pub const ROM_CLK_REG: u32 = 0x0067;
+pub const ROM_BAD_PIPE_FUSE_REG: u32 = 0x0068;
+pub const DBG_CNTL1_REG: u32 = 0x0069;
+pub const ROM_SIMD_PIPE_DISABLE_REGISTER: u32 = 0x006A;
+pub const DBG_READ_REG: u32 = 0x006B;
+pub const ROM_PADS_REG: u32 = 0x006C;
+pub const SOFT_STRAP_CNTL: u32 = 0x006D;
+pub const CONFIG_XSTRAP3: u32 = 0x006E;
+pub const EXTERN_TRIG_CNTL: u32 = 0x006F;
+pub const ROM_STATUS_REG: u32 = 0x0070;
+pub const ROM_PORT_REG: u32 = 0x0071;
+pub const SCLK_PWRMGT_CNTL1_REG: u32 = 0x0080;
+pub const SCLK_PWRMGT_CNTL2_REG: u32 = 0x0081;
+pub const SCLK_PWRMGT_CNTL3_REG: u32 = 0x0082;
+pub const FSB_STOP_CLK_REG: u32 = 0x0083;
+pub const SPLL_CNTL_REG: u32 = 0x0084;
+pub const CG_SCRATCH1: u32 = 0x0085;
+pub const RCLK_PWRMGT_CNTL_REG: u32 = 0x0086;
+pub const PSRO_REG: u32 = 0x0087;
+pub const RPLL_CNTL_REG: u32 = 0x0091;
+pub const FPLL_CNTL_REG: u32 = 0x0092;
+pub const CG_INT_MASK_REG: u32 = 0x0093;
+pub const CG_INT_STAT_REG: u32 = 0x0094;
+pub const CG_INT_ACK_REG: u32 = 0x0095;
+pub const MCLK_CNTL1_REG: u32 = 0x00A0;
+pub const MPLL_CNTL_REG: u32 = 0x00A1;
+pub const YCLK_CNTL1_REG: u32 = 0x00A2;
+pub const MDLL_CNTL1_REG: u32 = 0x00A3;
+pub const MCLK_PWRMGT_CNTL_REG: u32 = 0x00A6;
+pub const MCLK_TEST_CNTL1_REG: u32 = 0x00A7;
+pub const CGM_MC0_IO_CNTL: u32 = 0x00A8;
+pub const CGM_DRAM_CNTL_REG: u32 = 0x00A9;
+pub const CGM_MC1_IO_CNTL: u32 = 0x00AA;
+pub const PCLK_SOFT_RESET: u32 = 0x0128;
+pub const DCCG_SCLK_R_DISP_CNTL: u32 = 0x0129;
+pub const SCLK_G_SCL1_CNTL: u32 = 0x012F;
+pub const SCLK_SOFT_RESET: u32 = 0x0132;
+pub const DCCG_CLK_CNTL: u32 = 0x0133;
+pub const TEST_COUNT_CNTL: u32 = 0x0135;
+pub const DCCG_TEST_CLK_SEL: u32 = 0x0136;
+pub const DVOACLK_CNTL: u32 = 0x013C;
+pub const DCCG_ONE_SHOT_CLOCKING_CNTL: u32 = 0x0140;
+pub const DCCG_ONE_SHOT_STOP_CLOCKS_CNTL: u32 = 0x0141;
+pub const DCCG_ONE_SHOT_RUN_CLOCKS_CNTL: u32 = 0x0142;
+pub const DCCG_ONE_SHOT_RUN_CLOCKS_COUNT: u32 = 0x0143;
+pub const DCCG_DEBUG: u32 = 0x0144;
+pub const SCLK_G_DCP_CNTL: u32 = 0x015C;
+pub const CP_RB_BASE: u32 = 0x01C0;
+pub const CP_RB_CNTL: u32 = 0x01C1;
+pub const CP_RB_RPTR_ADDR: u32 = 0x01C3;
+pub const CP_RB_RPTR: u32 = 0x01C4;
+pub const CP_RB_WPTR: u32 = 0x01C5;
+pub const CP_RB_WPTR_DELAY: u32 = 0x01C6;
+pub const CP_RB_RPTR_WR: u32 = 0x01C7;
+pub const CP_DMA_SRC_ADDR: u32 = 0x01C8;
+pub const CP_DMA_DST_ADDR: u32 = 0x01C9;
+pub const CP_DMA_COMMAND: u32 = 0x01CA;
+pub const CP_IB1_BASE: u32 = 0x01CC;
+pub const CP_IB1_BUFSZ: u32 = 0x01CD;
+pub const CP_IB2_BASE: u32 = 0x01CE;
+pub const CP_IB2_BUFSZ: u32 = 0x01CF;
+pub const CP_RT_BASE: u32 = 0x01D0;
+pub const CP_RT_BUFSZ: u32 = 0x01D1;
+pub const CP_RT_ST_BASE: u32 = 0x01D2;
+pub const CP_RT_ST_BUFSZ: u32 = 0x01D3;
+pub const CP_QUEUE_THRESHOLDS: u32 = 0x01D5;
+pub const CP_MEQ_THRESHOLDS: u32 = 0x01D6;
+pub const CP_CSQ_AVAIL: u32 = 0x01D7;
+pub const CP_STQ_AVAIL: u32 = 0x01D8;
+pub const CP_MEQ_AVAIL: u32 = 0x01D9;
+pub const CP_CMD_INDEX: u32 = 0x01DA;
+pub const CP_CMD_DATA: u32 = 0x01DB;
+pub const SCRATCH_UMSK: u32 = 0x01DC;
+pub const SCRATCH_ADDR: u32 = 0x01DD;
+pub const SCRATCH_CMP_HI: u32 = 0x01DE;
+pub const SCRATCH_CMP_LO: u32 = 0x01DF;
+pub const CP_DMA_TABLE_ADDR: u32 = 0x01E0;
+pub const CP_DMA_SRC_ADDR_STAT: u32 = 0x01E1;
+pub const CP_DMA_DST_ADDR_STAT: u32 = 0x01E2;
+pub const CP_DMA_COMMAND_STAT: u32 = 0x01E3;
+pub const CP_DMA_STAT: u32 = 0x01E4;
+pub const CP_DMA_ACT_DSCR_STAT: u32 = 0x01E5;
+pub const CP_PERFCOUNTER_SELECT: u32 = 0x01E6;
+pub const CP_PERFCOUNTER_LO: u32 = 0x01E7;
+pub const CP_PERFCOUNTER_HI: u32 = 0x01E8;
+pub const SCRATCH_CMP_CNTL: u32 = 0x01E9;
+pub const CP_ME_RDADDR: u32 = 0x01EA;
+pub const CP_STATE_DEBUG_INDEX: u32 = 0x01EC;
+pub const CP_STATE_DEBUG_DATA: u32 = 0x01ED;
+pub const CP_NV_FLAGS_0: u32 = 0x01EE;
+pub const CP_NV_FLAGS_1: u32 = 0x01EF;
+pub const CP_NV_FLAGS_2: u32 = 0x01F0;
+pub const CP_NV_FLAGS_3: u32 = 0x01F1;
+pub const CP_INT_CNTL: u32 = 0x01F2;
+pub const CP_INT_STATUS: u32 = 0x01F3;
+pub const CP_INT_ACK: u32 = 0x01F4;
+pub const CP_PERFMON_CNTL: u32 = 0x01F5;
+pub const CP_ME_CNTL: u32 = 0x01F6;
+pub const CP_ME_STATUS: u32 = 0x01F7;
+pub const CP_ME_RAM_WADDR: u32 = 0x01F8;
+pub const CP_ME_RAM_RADDR: u32 = 0x01F9;
+pub const CP_ME_RAM_DATA: u32 = 0x01FA;
+pub const CP_SNOOP_CNTL: u32 = 0x01FB;
+pub const CP_DEBUG: u32 = 0x01FC;
+pub const CP_CSQ_RB_STAT: u32 = 0x01FD;
+pub const CP_CSQ_IB1_STAT: u32 = 0x01FE;
+pub const CP_CSQ_IB2_STAT: u32 = 0x01FF;
+pub const NQWAIT_UNTIL: u32 = 0x0394;
+pub const RBBM_PERFCOUNTER0_SELECT: u32 = 0x0395;
+pub const RBBM_PERFCOUNTER1_SELECT: u32 = 0x0396;
+pub const RBBM_PERFCOUNTER0_LOW: u32 = 0x0397;
+pub const RBBM_PERFCOUNTER0_HI: u32 = 0x0398;
+pub const RBBM_PERFCOUNTER1_LOW: u32 = 0x0399;
+pub const RBBM_PERFCOUNTER1_HI: u32 = 0x039A;
+pub const RBBM_DEBUG: u32 = 0x039B;
+pub const RBBM_STATUS2: u32 = 0x039C;
+pub const RBBM_CRC32: u32 = 0x039D;
+pub const RBBM_DEBUG_OUT: u32 = 0x03A0;
+pub const RBBM_DEBUG_CNTL: u32 = 0x03A1;
+pub const RBBM_WAIT_IDLE_CLOCKS: u32 = 0x03B2;
+pub const RBBM_READ_ERROR: u32 = 0x03B3;
+pub const RBBM_INT_CNTL: u32 = 0x03B4;
+pub const RBBM_INT_STATUS: u32 = 0x03B5;
+pub const RBBM_INT_ACK: u32 = 0x03B6;
+pub const MASTER_INT_SIGNAL: u32 = 0x03B7;
+pub const RBBM_PERIPHID1: u32 = 0x03F9;
+pub const RBBM_PERIPHID2: u32 = 0x03FA;
+pub const CP_NON_PREFETCH_CNTRS: u32 = 0x0440;
+pub const CP_STQ_RT_STAT: u32 = 0x0442;
+pub const CP_STQ_ST_STAT: u32 = 0x0443;
+pub const CP_STQ_RT_ST_STAT: u32 = 0x0444;
+pub const CP_RT_DMA_SRC_ADDR: u32 = 0x0445;
+pub const CP_RT_DMA_DST_ADDR: u32 = 0x0446;
+pub const CP_RT_DMA_COMMAND: u32 = 0x0447;
+pub const CP_RT_ME_RAM_WADDR: u32 = 0x0448;
+pub const CP_RT_ME_RAM_RADDR: u32 = 0x0449;
+pub const CP_RT_ME_RAM_DATA: u32 = 0x044A;
+pub const CP_PROG_COUNTER: u32 = 0x044B;
+pub const CP_RT_ME_RDADDR: u32 = 0x044C;
+pub const CP_ST_BASE: u32 = 0x044D;
+pub const CP_ST_BUFSZ: u32 = 0x044E;
+pub const CP_MEQ_STAT: u32 = 0x044F;
+pub const CP_MIU_TAG_STAT0: u32 = 0x0452;
+pub const CP_MIU_TAG_STAT1: u32 = 0x0453;
+pub const CP_BIN_MASK_LO: u32 = 0x0454;
+pub const CP_BIN_MASK_HI: u32 = 0x0455;
+pub const CP_BIN_SELECT_LO: u32 = 0x0456;
+pub const CP_BIN_SELECT_HI: u32 = 0x0457;
+pub const CP_RT_BIN_MASK_LO: u32 = 0x0458;
+pub const CP_RT_BIN_MASK_HI: u32 = 0x0459;
+pub const CP_RT_BIN_SELECT_LO: u32 = 0x045A;
+pub const CP_RT_BIN_SELECT_HI: u32 = 0x045B;
+pub const CP_CPU_INT_CNTL: u32 = 0x045C;
+pub const CP_CPU_INT_STATUS: u32 = 0x045D;
+pub const CP_CPU_INT_ACK: u32 = 0x045E;
+pub const CP_PFP_UCODE_ADDR: u32 = 0x045F;
+pub const CP_PFP_UCODE_DATA: u32 = 0x0460;
+pub const CP_PFP_RT_UCODE_ADDR: u32 = 0x0461;
+pub const CP_PFP_RT_UCODE_DATA: u32 = 0x0462;
+pub const CP_RT_STAT: u32 = 0x047E;
+pub const CP_STAT: u32 = 0x047F;
+pub const CP_RT0_COMMAND: u32 = 0x04C0;
+pub const CP_RT0_POLL_ADDRESS: u32 = 0x04C1;
+pub const CP_RT0_REFERENCE: u32 = 0x04C2;
+pub const CP_RT0_MASK: u32 = 0x04C3;
+pub const CP_RT0_BADR: u32 = 0x04C4;
+pub const CP_RT0_SIZE: u32 = 0x04C5;
+pub const CP_RT1_COMMAND: u32 = 0x04C6;
+pub const CP_RT1_POLL_ADDRESS: u32 = 0x04C7;
+pub const CP_RT1_REFERENCE: u32 = 0x04C8;
+pub const CP_RT1_MASK: u32 = 0x04C9;
+pub const CP_RT1_BADR: u32 = 0x04CA;
+pub const CP_RT1_SIZE: u32 = 0x04CB;
+pub const CP_RT2_COMMAND: u32 = 0x04CC;
+pub const CP_RT2_POLL_ADDRESS: u32 = 0x04CD;
+pub const CP_RT2_REFERENCE: u32 = 0x04CE;
+pub const CP_RT2_MASK: u32 = 0x04CF;
+pub const CP_RT2_BADR: u32 = 0x04D0;
+pub const CP_RT2_SIZE: u32 = 0x04D1;
+pub const CP_RT3_COMMAND: u32 = 0x04D2;
+pub const CP_RT3_POLL_ADDRESS: u32 = 0x04D3;
+pub const CP_RT3_REFERENCE: u32 = 0x04D4;
+pub const CP_RT3_MASK: u32 = 0x04D5;
+pub const CP_RT3_BADR: u32 = 0x04D6;
+pub const CP_RT3_SIZE: u32 = 0x04D7;
+pub const CP_RT4_COMMAND: u32 = 0x04D8;
+pub const CP_RT4_POLL_ADDRESS: u32 = 0x04D9;
+pub const CP_RT4_REFERENCE: u32 = 0x04DA;
+pub const CP_RT4_MASK: u32 = 0x04DB;
+pub const CP_RT4_BADR: u32 = 0x04DC;
+pub const CP_RT4_SIZE: u32 = 0x04DD;
+pub const CP_RT5_COMMAND: u32 = 0x04DE;
+pub const CP_RT5_POLL_ADDRESS: u32 = 0x04DF;
+pub const CP_RT5_REFERENCE: u32 = 0x04E0;
+pub const CP_RT5_MASK: u32 = 0x04E1;
+pub const CP_RT5_BADR: u32 = 0x04E2;
+pub const CP_RT5_SIZE: u32 = 0x04E3;
+pub const CP_RT6_COMMAND: u32 = 0x04E4;
+pub const CP_RT6_POLL_ADDRESS: u32 = 0x04E5;
+pub const CP_RT6_REFERENCE: u32 = 0x04E6;
+pub const CP_RT6_MASK: u32 = 0x04E7;
+pub const CP_RT6_BADR: u32 = 0x04E8;
+pub const CP_RT6_SIZE: u32 = 0x04E9;
+pub const CP_RT7_COMMAND: u32 = 0x04EA;
+pub const CP_RT7_POLL_ADDRESS: u32 = 0x04EB;
+pub const CP_RT7_REFERENCE: u32 = 0x04EC;
+pub const CP_RT7_MASK: u32 = 0x04ED;
+pub const CP_RT7_BADR: u32 = 0x04EE;
+pub const CP_RT7_SIZE: u32 = 0x04EF;
+pub const CP_RT8_COMMAND: u32 = 0x04F0;
+pub const CP_RT8_POLL_ADDRESS: u32 = 0x04F1;
+pub const CP_RT8_REFERENCE: u32 = 0x04F2;
+pub const CP_RT8_MASK: u32 = 0x04F3;
+pub const CP_RT8_BADR: u32 = 0x04F4;
+pub const CP_RT8_SIZE: u32 = 0x04F5;
+pub const CP_RT9_COMMAND: u32 = 0x04F6;
+pub const CP_RT9_POLL_ADDRESS: u32 = 0x04F7;
+pub const CP_RT9_REFERENCE: u32 = 0x04F8;
+pub const CP_RT9_MASK: u32 = 0x04F9;
+pub const CP_RT9_BADR: u32 = 0x04FA;
+pub const CP_RT9_SIZE: u32 = 0x04FB;
+pub const CP_RT10_COMMAND: u32 = 0x04FC;
+pub const CP_RT10_POLL_ADDRESS: u32 = 0x04FD;
+pub const CP_RT10_REFERENCE: u32 = 0x04FE;
+pub const CP_RT10_MASK: u32 = 0x04FF;
+pub const CP_RT10_BADR: u32 = 0x0500;
+pub const CP_RT10_SIZE: u32 = 0x0501;
+pub const CP_RT11_COMMAND: u32 = 0x0502;
+pub const CP_RT11_POLL_ADDRESS: u32 = 0x0503;
+pub const CP_RT11_REFERENCE: u32 = 0x0504;
+pub const CP_RT11_MASK: u32 = 0x0505;
+pub const CP_RT11_BADR: u32 = 0x0506;
+pub const CP_RT11_SIZE: u32 = 0x0507;
+pub const CP_RT12_COMMAND: u32 = 0x0508;
+pub const CP_RT12_POLL_ADDRESS: u32 = 0x0509;
+pub const CP_RT12_REFERENCE: u32 = 0x050A;
+pub const CP_RT12_MASK: u32 = 0x050B;
+pub const CP_RT12_BADR: u32 = 0x050C;
+pub const CP_RT12_SIZE: u32 = 0x050D;
+pub const CP_RT13_COMMAND: u32 = 0x050E;
+pub const CP_RT13_POLL_ADDRESS: u32 = 0x050F;
+pub const CP_RT13_REFERENCE: u32 = 0x0510;
+pub const CP_RT13_MASK: u32 = 0x0511;
+pub const CP_RT13_BADR: u32 = 0x0512;
+pub const CP_RT13_SIZE: u32 = 0x0513;
+pub const CP_RT14_COMMAND: u32 = 0x0514;
+pub const CP_RT14_POLL_ADDRESS: u32 = 0x0515;
+pub const CP_RT14_REFERENCE: u32 = 0x0516;
+pub const CP_RT14_MASK: u32 = 0x0517;
+pub const CP_RT14_RADR: u32 = 0x0518;
+pub const CP_RT14_SIZE: u32 = 0x0519;
+pub const CP_RT15_COMMAND: u32 = 0x051A;
+pub const CP_RT15_POLL_ADDRESS: u32 = 0x051B;
+pub const CP_RT15_REFERENCE: u32 = 0x051C;
+pub const CP_RT15_MASK: u32 = 0x051D;
+pub const CP_RT15_BADR: u32 = 0x051E;
+pub const CP_RT15_SIZE: u32 = 0x051F;
+pub const CP_RT_POLL_INTERVAL: u32 = 0x0520;
+pub const CP_VIP_EOL_EOF_COUNTER: u32 = 0x0521;
+pub const CP_D1_EOL_SOF_COUNTER: u32 = 0x0522;
+pub const CP_D2_EOL_SOF_COUNTER: u32 = 0x0523;
+pub const SCRATCH_REG0: u32 = 0x0578;
+pub const SCRATCH_REG1: u32 = 0x0579;
+pub const SCRATCH_REG2: u32 = 0x057A;
+pub const SCRATCH_REG3: u32 = 0x057B;
+pub const SCRATCH_REG4: u32 = 0x057C;
+pub const SCRATCH_REG5: u32 = 0x057D;
+pub const SCRATCH_REG6: u32 = 0x057E;
+pub const SCRATCH_REG7: u32 = 0x057F;
+pub const BIOS_8_SCRATCH: u32 = 0x0580;
+pub const BIOS_9_SCRATCH: u32 = 0x0581;
+pub const BIOS_10_SCRATCH: u32 = 0x0582;
+pub const BIOS_11_SCRATCH: u32 = 0x0583;
+pub const BIOS_12_SCRATCH: u32 = 0x0584;
+pub const BIOS_13_SCRATCH: u32 = 0x0585;
+pub const BIOS_14_SCRATCH: u32 = 0x0586;
+pub const BIOS_15_SCRATCH: u32 = 0x0587;
+pub const WAIT_UNTIL: u32 = 0x05C8;
+pub const RBBM_ISYNC_CNTL: u32 = 0x05C9;
+pub const CP_IB2D_BASE: u32 = 0x05F0;
+pub const CP_IB2D_BUFSZ: u32 = 0x05F1;
+pub const CP_DEFAULT_PITCH_OFFSET: u32 = 0x05F2;
+pub const CP_DEFAULT2_PITCH_OFFSET: u32 = 0x05F3;
+pub const CP_DEFAULT_SC_BOTTOM_RIGHT: u32 = 0x05F4;
+pub const CP_DEFAULT2_SC_BOTTOM_RIGHT: u32 = 0x05F5;
+pub const CP_2D_BRUSH_BASE: u32 = 0x05F6;
+pub const CP_2D_PALETTE_BASE: u32 = 0x05F7;
+pub const CP_2D_IMMD_BASE: u32 = 0x05F8;
+pub const CP_2D_BOOLEANS: u32 = 0x05F9;
+pub const CP_ME_VS_EVENT_SRC: u32 = 0x0600;
+pub const CP_ME_VS_EVENT_ADDR: u32 = 0x0601;
+pub const CP_ME_VS_EVENT_DATA: u32 = 0x0602;
+pub const CP_ME_VS_EVENT_ADDR_SWM: u32 = 0x0603;
+pub const CP_ME_VS_EVENT_DATA_SWM: u32 = 0x0604;
+pub const CP_ME_PS_EVENT_SRC: u32 = 0x0605;
+pub const CP_ME_PS_EVENT_ADDR: u32 = 0x0606;
+pub const CP_ME_PS_EVENT_DATA: u32 = 0x0607;
+pub const CP_ME_PS_EVENT_ADDR_SWM: u32 = 0x0608;
+pub const CP_ME_PS_EVENT_DATA_SWM: u32 = 0x0609;
+pub const CP_ME_CF_EVENT_SRC: u32 = 0x060A;
+pub const CP_ME_CF_EVENT_ADDR: u32 = 0x060B;
+pub const CP_ME_CF_EVENT_DATA: u32 = 0x060C;
+pub const CP_ME_NRT_ADDR: u32 = 0x060D;
+pub const CP_ME_NRT_DATA: u32 = 0x060E;
+pub const CP_ME_RT_ADDR: u32 = 0x060F;
+pub const CP_ME_RT_DATA: u32 = 0x0610;
+pub const CP_ME_SCREEN_EXT_RPT_ADDR: u32 = 0x0611;
+pub const CP_ME_VS_FETCH_DONE_SRC: u32 = 0x0612;
+pub const CP_ME_VS_FETCH_DONE_ADDR: u32 = 0x0613;
+pub const CP_ME_VS_FETCH_DONE_DATA: u32 = 0x0614;
+pub const MC0_CNTL: u32 = 0x0800;
+pub const MC0_DRAM_CONFIG: u32 = 0x0801;
+pub const MC0_BSB_SNOOPED_TIMER_CNTL: u32 = 0x0802;
+pub const MC0_TUNING_0: u32 = 0x0803;
+pub const MC0_TUNING_1: u32 = 0x0804;
+pub const MC0_RD_BUFFER_CNTL_0: u32 = 0x0805;
+pub const MC0_ARBITRATION_CNTL: u32 = 0x0806;
+pub const MC0_TIMING_CNTL_0: u32 = 0x0807;
+pub const MC0_TIMING_CNTL_1: u32 = 0x0808;
+pub const MC0_TIMING_CNTL_2: u32 = 0x0809;
+pub const MC0_PAD_CAL_CNTL: u32 = 0x080A;
+pub const MC0_DRAM_CMD: u32 = 0x080B;
+pub const MC0_DRAM_DATA: u32 = 0x080C;
+pub const MC0_POINTER: u32 = 0x080D;
+pub const MC0_RDBUF_DATA: u32 = 0x080E;
+pub const MC0_DRAM_DQ: u32 = 0x080F;
+pub const MC0_STATUS_0: u32 = 0x0810;
+pub const MC0_STATUS_1: u32 = 0x0811;
+pub const MC0_CRC_CNTL: u32 = 0x0812;
+pub const MC0_DEBUG: u32 = 0x0813;
+pub const MC0_CRC_READ: u32 = 0x0814;
+pub const MC0_PERFCOUNTER0_CNTL: u32 = 0x0815;
+pub const MC0_PERFCOUNTER0_HI: u32 = 0x0816;
+pub const MC0_PERFCOUNTER0_LOW: u32 = 0x0817;
+pub const MC0_PERFCOUNTER1_CNTL: u32 = 0x0818;
+pub const MC0_PERFCOUNTER1_HI: u32 = 0x0819;
+pub const MC0_PERFCOUNTER1_LOW: u32 = 0x081A;
+pub const MC0_INTERRUPT_MASK: u32 = 0x081B;
+pub const MC0_INTERRUPT_STATUS: u32 = 0x081C;
+pub const MC0_INTERRUPT_ACK: u32 = 0x081D;
+pub const MC0_SECURE_MEMORY_APERTURE_LOG_MH: u32 = 0x081E;
+pub const MC0_SECURE_MEMORY_APERTURE_LOG_BIU: u32 = 0x081F;
+pub const MC0_WR_STR_DLL_0: u32 = 0x0820;
+pub const MC0_WR_STR_DLL_1: u32 = 0x0821;
+pub const MC0_DLL_MASTER_ADJ_0: u32 = 0x0822;
+pub const MC0_DLL_MASTER_ADJ_1: u32 = 0x0823;
+pub const MC0_TERM_CNTL: u32 = 0x0824;
+pub const MC0_WR_DATA_DLY_0: u32 = 0x0825;
+pub const MC0_WR_DATA_DLY_1: u32 = 0x0826;
+pub const MC0_RD_STR_DLY_0: u32 = 0x0827;
+pub const MC0_RD_STR_DLY_1: u32 = 0x0828;
+pub const MC0_WR_STR_DLY: u32 = 0x0829;
+pub const MC0_PAD_CAL_STATUS: u32 = 0x082A;
+pub const MC0_RD_STR_DLY_CNTL: u32 = 0x082B;
+pub const MC0_PAD_IF_CNTL: u32 = 0x0830;
+pub const MC0_PAD_IF_CNTL_2: u32 = 0x0831;
+pub const MC0_RD_BUFFER_CNTL_1: u32 = 0x0832;
+pub const MC1_CNTL: u32 = 0x0840;
+pub const MC1_DRAM_CONFIG: u32 = 0x0841;
+pub const MC1_BSB_SNOOPED_TIMER_CNTL: u32 = 0x0842;
+pub const MC1_TUNING_0: u32 = 0x0843;
+pub const MC1_TUNING_1: u32 = 0x0844;
+pub const MC1_RD_BUFFER_CNTL_0: u32 = 0x0845;
+pub const MC1_ARBITRATION_CNTL: u32 = 0x0846;
+pub const MC1_TIMING_CNTL_0: u32 = 0x0847;
+pub const MC1_TIMING_CNTL_1: u32 = 0x0848;
+pub const MC1_TIMING_CNTL_2: u32 = 0x0849;
+pub const MC1_PAD_CAL_CNTL: u32 = 0x084A;
+pub const MC1_DRAM_CMD: u32 = 0x084B;
+pub const MC1_DRAM_DATA: u32 = 0x084C;
+pub const MC1_POINTER: u32 = 0x084D;
+pub const MC1_RDBUF_DATA: u32 = 0x084E;
+pub const MC1_DRAM_DQ: u32 = 0x084F;
+pub const MC1_STATUS_0: u32 = 0x0850;
+pub const MC1_STATUS_1: u32 = 0x0851;
+pub const MC1_CRC_CNTL: u32 = 0x0852;
+pub const MC1_DEBUG: u32 = 0x0853;
+pub const MC1_CRC_READ: u32 = 0x0854;
+pub const MC1_PERFCOUNTER0_CNTL: u32 = 0x0855;
+pub const MC1_PERFCOUNTER0_HI: u32 = 0x0856;
+pub const MC1_PERFCOUNTER0_LOW: u32 = 0x0857;
+pub const MC1_PERFCOUNTER1_CNTL: u32 = 0x0858;
+pub const MC1_PERFCOUNTER1_HI: u32 = 0x0859;
+pub const MC1_PERFCOUNTER1_LOW: u32 = 0x085A;
+pub const MC1_INTERRUPT_MASK: u32 = 0x085B;
+pub const MC1_INTERRUPT_STATUS: u32 = 0x085C;
+pub const MC1_INTERRUPT_ACK: u32 = 0x085D;
+pub const MC1_SECURE_MEMORY_APERTURE_LOG_MH: u32 = 0x085E;
+pub const MC1_SECURE_MEMORY_APERTURE_LOG_BIU: u32 = 0x085F;
+pub const MC1_WR_STR_DLL_0: u32 = 0x0860;
+pub const MC1_WR_STR_DLL_1: u32 = 0x0861;
+pub const MC1_DLL_MASTER_ADJ_0: u32 = 0x0862;
+pub const MC1_DLL_MASTER_ADJ_1: u32 = 0x0863;
+pub const MC1_TERM_CNTL: u32 = 0x0864;
+pub const MC1_WR_DATA_DLY_0: u32 = 0x0865;
+pub const MC1_WR_DATA_DLY_1: u32 = 0x0866;
+pub const MC1_RD_STR_DLY_0: u32 = 0x0867;
+pub const MC1_RD_STR_DLY_1: u32 = 0x0868;
+pub const MC1_WR_STR_DLY: u32 = 0x0869;
+pub const MC1_PAD_CAL_STATUS: u32 = 0x086A;
+pub const MC1_RD_STR_DLY_CNTL: u32 = 0x086B;
+pub const MC1_PAD_IF_CNTL: u32 = 0x0870;
+pub const MC1_PAD_IF_CNTL_2: u32 = 0x0871;
+pub const MC1_RD_BUFFER_CNTL_1: u32 = 0x0872;
+pub const FB_START: u32 = 0x0A00;
+pub const FB_SIZE: u32 = 0x0A01;
+pub const PG_START: u32 = 0x0A02;
+pub const PG_SIZE: u32 = 0x0A03;
+pub const WRITEBACK_START: u32 = 0x0A04;
+pub const WRITEBACK_SIZE: u32 = 0x0A05;
+pub const MH_CNTL: u32 = 0x0A06;
+pub const MH_STATUS: u32 = 0x0A07;
+pub const MH_INT_MASK: u32 = 0x0A08;
+pub const MH_INT_STATUS: u32 = 0x0A09;
+pub const MH_INT_CLEAR: u32 = 0x0A0A;
+pub const MH_INT_SIGNAL: u32 = 0x0A0B;
+pub const PGL_CTL0: u32 = 0x0A0C;
+pub const PGL_CTL1: u32 = 0x0A0D;
+pub const DC_SURFACE_0_BASE: u32 = 0x0A10;
+pub const DC_SURFACE_0_EXTENT: u32 = 0x0A11;
+pub const DC_SURFACE_0_INFO: u32 = 0x0A12;
+pub const DC_SURFACE_2_BASE: u32 = 0x0A13;
+pub const DC_SURFACE_2_EXTENT: u32 = 0x0A14;
+pub const DC_SURFACE_2_INFO: u32 = 0x0A15;
+pub const MH_PERFMON_PERFCOUNTER0_SELECT: u32 = 0x0A18;
+pub const MH_PERFMON_PERFCOUNTER0_HI: u32 = 0x0A19;
+pub const MH_PERFMON_PERFCOUNTER0_LOW: u32 = 0x0A1A;
+pub const MH_PERFMON_PERFCOUNTER1_SELECT: u32 = 0x0A1B;
+pub const MH_PERFMON_PERFCOUNTER1_HI: u32 = 0x0A1C;
+pub const MH_PERFMON_PERFCOUNTER1_LOW: u32 = 0x0A1D;
+pub const MH_PERFMON_PERFCOUNTER2_SELECT: u32 = 0x0A1E;
+pub const MH_PERFMON_PERFCOUNTER2_HI: u32 = 0x0A1F;
+pub const MH_PERFMON_PERFCOUNTER2_LOW: u32 = 0x0A20;
+pub const DC_SURFACE_1_BASE: u32 = 0x0A21;
+pub const DC_SURFACE_1_EXTENT: u32 = 0x0A22;
+pub const DC_SURFACE_1_INFO: u32 = 0x0A23;
+pub const COHER_SIZE_PM4: u32 = 0x0A29;
+pub const COHER_BASE_PM4: u32 = 0x0A2A;
+pub const COHER_STATUS_PM4: u32 = 0x0A2B;
+pub const COHER_SIZE_RT: u32 = 0x0A2C;
+pub const COHER_BASE_RT: u32 = 0x0A2D;
+pub const COHER_STATUS_RT: u32 = 0x0A2E;
+pub const COHER_SIZE_HOST: u32 = 0x0A2F;
+pub const COHER_BASE_HOST: u32 = 0x0A30;
+pub const COHER_STATUS_HOST: u32 = 0x0A31;
+pub const MH_ARBITER_CONFIG: u32 = 0x0A40;
+pub const MH_DEBUG_INDEX: u32 = 0x0BFE;
+pub const MH_DEBUG_DATA: u32 = 0x0BFF;
+pub const RTS_INITIATOR: u32 = 0x0C00;
+pub const RTS_BOUNDBOX_START: u32 = 0x0C01;
+pub const RTS_BOUNDBOX_END: u32 = 0x0C02;
+pub const RTS_BARYC_REF_VTX_X: u32 = 0x0C03;
+pub const RTS_BARYC_REF_VTX_Y: u32 = 0x0C04;
+pub const RTS_I_W_DX: u32 = 0x0C05;
+pub const RTS_J_W_DY: u32 = 0x0C06;
+pub const RTS_INV_W_REF: u32 = 0x0C07;
+pub const RTS_INV_W_DX: u32 = 0x0C08;
+pub const RTS_INV_W_DY: u32 = 0x0C09;
+pub const RTS_I_W_REF: u32 = 0x0C0A;
+pub const RTS_I_W_DY: u32 = 0x0C0B;
+pub const RTS_J_W_REF: u32 = 0x0C0C;
+pub const RTS_J_W_DX: u32 = 0x0C0D;
+pub const RTS_Z_REF: u32 = 0x0C0E;
+pub const RTS_Z_DX_MSBS: u32 = 0x0C0F;
+pub const RTS_Z_DY_MSBS: u32 = 0x0C10;
+pub const RTS_Z_DX_DY_LSBS: u32 = 0x0C11;
+pub const RTS_Z_MIN: u32 = 0x0C12;
+pub const RTS_Z_MAX: u32 = 0x0C13;
+pub const RTS_EDGE_0_DIST_LSBS: u32 = 0x0C14;
+pub const RTS_EDGE_1_DIST_LSBS: u32 = 0x0C15;
+pub const RTS_EDGE_2_DIST_LSBS: u32 = 0x0C16;
+pub const RTS_EDGE_DIST_MSBS: u32 = 0x0C17;
+pub const RTS_WD_EDGE_0_DIST_LSBS: u32 = 0x0C18;
+pub const RTS_WD_EDGE_1_DIST_LSBS: u32 = 0x0C19;
+pub const RTS_WD_EDGE_2_DIST_LSBS: u32 = 0x0C1A;
+pub const RTS_WD_EDGE_DIST_MSBS: u32 = 0x0C1B;
+pub const RTS_EDGE_0_DX: u32 = 0x0C1C;
+pub const RTS_EDGE_0_DY: u32 = 0x0C1D;
+pub const RTS_EDGE_1_DX: u32 = 0x0C1E;
+pub const RTS_EDGE_1_DY: u32 = 0x0C1F;
+pub const RTS_EDGE_2_DX: u32 = 0x0C20;
+pub const RTS_EDGE_2_DY: u32 = 0x0C21;
+pub const RTS_MISC: u32 = 0x0C22;
+pub const VGT_VTX_VECT_EJECT_REG: u32 = 0x0C2C;
+pub const VGT_DMA_DATA_FIFO_DEPTH: u32 = 0x0C2D;
+pub const VGT_DMA_REQ_FIFO_DEPTH: u32 = 0x0C2E;
+pub const VGT_DRAW_INIT_FIFO_DEPTH: u32 = 0x0C2F;
+pub const VGT_LAST_COPY_STATE: u32 = 0x0C30;
+pub const VGT_DEBUG_CNTL: u32 = 0x0C38;
+pub const VGT_DEBUG_DATA: u32 = 0x0C39;
+pub const VGT_CRC_SQ_DATA: u32 = 0x0C3A;
+pub const VGT_CRC_SQ_CTRL: u32 = 0x0C3B;
+pub const VGT_CNTL_STATUS: u32 = 0x0C3C;
+pub const PA_SC_LINE_STIPPLE_STATE: u32 = 0x0C40;
+pub const PA_SC_MULTI_CHIP_CNTL: u32 = 0x0C41;
+pub const PA_SC_VIZ_QUERY_STATUS_0: u32 = 0x0C44;
+pub const PA_SC_VIZ_QUERY_STATUS_1: u32 = 0x0C45;
+pub const VGT_PERFCOUNTER0_SELECT: u32 = 0x0C48;
+pub const VGT_PERFCOUNTER1_SELECT: u32 = 0x0C49;
+pub const VGT_PERFCOUNTER2_SELECT: u32 = 0x0C4A;
+pub const VGT_PERFCOUNTER3_SELECT: u32 = 0x0C4B;
+pub const VGT_PERFCOUNTER0_LOW: u32 = 0x0C4C;
+pub const VGT_PERFCOUNTER0_HI: u32 = 0x0C4D;
+pub const VGT_PERFCOUNTER1_LOW: u32 = 0x0C4E;
+pub const VGT_PERFCOUNTER1_HI: u32 = 0x0C4F;
+pub const VGT_PERFCOUNTER2_LOW: u32 = 0x0C50;
+pub const VGT_PERFCOUNTER2_HI: u32 = 0x0C51;
+pub const VGT_PERFCOUNTER3_LOW: u32 = 0x0C52;
+pub const VGT_PERFCOUNTER3_HI: u32 = 0x0C53;
+pub const PA_SU_DEBUG_CNTL: u32 = 0x0C80;
+pub const PA_SU_DEBUG_DATA: u32 = 0x0C81;
+pub const PA_SC_DEBUG_CNTL: u32 = 0x0C82;
+pub const PA_SC_DEBUG_DATA: u32 = 0x0C83;
+pub const PA_CL_CNTL_STATUS: u32 = 0x0C84;
+pub const PA_CL_ENHANCE: u32 = 0x0C85;
+pub const PA_SU_FACE_DATA: u32 = 0x0C86;
+pub const PA_SU_PERFCOUNTER0_SELECT: u32 = 0x0C88;
+pub const PA_SU_PERFCOUNTER1_SELECT: u32 = 0x0C89;
+pub const PA_SU_PERFCOUNTER2_SELECT: u32 = 0x0C8A;
+pub const PA_SU_PERFCOUNTER3_SELECT: u32 = 0x0C8B;
+pub const PA_SU_PERFCOUNTER0_LOW: u32 = 0x0C8C;
+pub const PA_SU_PERFCOUNTER0_HI: u32 = 0x0C8D;
+pub const PA_SU_PERFCOUNTER1_LOW: u32 = 0x0C8E;
+pub const PA_SU_PERFCOUNTER1_HI: u32 = 0x0C8F;
+pub const PA_SU_PERFCOUNTER2_LOW: u32 = 0x0C90;
+pub const PA_SU_PERFCOUNTER2_HI: u32 = 0x0C91;
+pub const PA_SU_PERFCOUNTER3_LOW: u32 = 0x0C92;
+pub const PA_SU_PERFCOUNTER3_HI: u32 = 0x0C93;
+pub const PA_SU_CNTL_STATUS: u32 = 0x0C94;
+pub const PA_SC_PERFCOUNTER0_SELECT: u32 = 0x0C98;
+pub const PA_SC_PERFCOUNTER1_SELECT: u32 = 0x0C99;
+pub const PA_SC_PERFCOUNTER2_SELECT: u32 = 0x0C9A;
+pub const PA_SC_PERFCOUNTER3_SELECT: u32 = 0x0C9B;
+pub const PA_SC_PERFCOUNTER0_LOW: u32 = 0x0C9C;
+pub const PA_SC_PERFCOUNTER0_HI: u32 = 0x0C9D;
+pub const PA_SC_PERFCOUNTER1_LOW: u32 = 0x0C9E;
+pub const PA_SC_PERFCOUNTER1_HI: u32 = 0x0C9F;
+pub const PA_SC_PERFCOUNTER2_LOW: u32 = 0x0CA0;
+pub const PA_SC_PERFCOUNTER2_HI: u32 = 0x0CA1;
+pub const PA_SC_PERFCOUNTER3_LOW: u32 = 0x0CA2;
+pub const PA_SC_PERFCOUNTER3_HI: u32 = 0x0CA3;
+pub const PA_SC_CNTL_STATUS: u32 = 0x0CA4;
+pub const PA_SC_ENHANCE: u32 = 0x0CA5;
+pub const PA_SC_FIFO_SIZE: u32 = 0x0CC0;
+pub const SQ_GPR_MANAGEMENT: u32 = 0x0D00;
+pub const SQ_FLOW_CNTL: u32 = 0x0D01;
+pub const SQ_INST_STORE_MANAGEMENT: u32 = 0x0D02;
+pub const SQ_RESOURCE_MANAGMENT: u32 = 0x0D03;
+pub const SQ_EO_RT: u32 = 0x0D04;
+pub const SQ_DEBUG_MISC: u32 = 0x0D05;
+pub const SQ_ACTIVITY_METER_CNTL: u32 = 0x0D06;
+pub const SQ_ACTIVITY_METER_STATUS: u32 = 0x0D07;
+pub const SQ_INPUT_ARB_PRIORITY: u32 = 0x0D08;
+pub const SQ_THREAD_ARB_PRIORITY: u32 = 0x0D09;
+pub const SQ_INT_CNTL: u32 = 0x0D34;
+pub const SQ_INT_STATUS: u32 = 0x0D35;
+pub const SQ_INT_ACK: u32 = 0x0D36;
+pub const SQ_DEBUG_INPUT_FSM: u32 = 0x0DAE;
+pub const SQ_DEBUG_CONST_MGR_FSM: u32 = 0x0DAF;
+pub const SQ_DEBUG_TP_FSM: u32 = 0x0DB0;
+pub const SQ_DEBUG_FSM_ALU_0: u32 = 0x0DB1;
+pub const SQ_DEBUG_FSM_ALU_1: u32 = 0x0DB2;
+pub const SQ_DEBUG_EXP_ALLOC: u32 = 0x0DB3;
+pub const SQ_DEBUG_PTR_BUFF: u32 = 0x0DB4;
+pub const SQ_DEBUG_GPR_VTX: u32 = 0x0DB5;
+pub const SQ_DEBUG_GPR_PIX: u32 = 0x0DB6;
+pub const SQ_DEBUG_TB_STATUS_SEL: u32 = 0x0DB7;
+pub const SQ_DEBUG_VTX_TB_0: u32 = 0x0DB8;
+pub const SQ_DEBUG_VTX_TB_1: u32 = 0x0DB9;
+pub const SQ_DEBUG_VTX_TB_STATUS_REG: u32 = 0x0DBA;
+pub const SQ_DEBUG_VTX_TB_STATE_MEM: u32 = 0x0DBB;
+pub const SQ_DEBUG_PIX_TB_0: u32 = 0x0DBC;
+pub const SQ_DEBUG_PIX_TB_STATUS_REG_0: u32 = 0x0DBD;
+pub const SQ_DEBUG_PIX_TB_STATUS_REG_1: u32 = 0x0DBE;
+pub const SQ_DEBUG_PIX_TB_STATUS_REG_2: u32 = 0x0DBF;
+pub const SQ_DEBUG_PIX_TB_STATUS_REG_3: u32 = 0x0DC0;
+pub const SQ_DEBUG_PIX_TB_STATE_MEM: u32 = 0x0DC1;
+pub const SQ_PERFCOUNTER0_SELECT: u32 = 0x0DC8;
+pub const SQ_PERFCOUNTER1_SELECT: u32 = 0x0DC9;
+pub const SQ_PERFCOUNTER2_SELECT: u32 = 0x0DCA;
+pub const SQ_PERFCOUNTER3_SELECT: u32 = 0x0DCB;
+pub const SQ_PERFCOUNTER0_LOW: u32 = 0x0DCC;
+pub const SQ_PERFCOUNTER0_HI: u32 = 0x0DCD;
+pub const SQ_PERFCOUNTER1_LOW: u32 = 0x0DCE;
+pub const SQ_PERFCOUNTER1_HI: u32 = 0x0DCF;
+pub const SQ_PERFCOUNTER2_LOW: u32 = 0x0DD0;
+pub const SQ_PERFCOUNTER2_HI: u32 = 0x0DD1;
+pub const SQ_PERFCOUNTER3_LOW: u32 = 0x0DD2;
+pub const SQ_PERFCOUNTER3_HI: u32 = 0x0DD3;
+pub const SX_PERFCOUNTER0_SELECT: u32 = 0x0DD4;
+pub const SX_PERFCOUNTER1_SELECT: u32 = 0x0DD5;
+pub const SX_PERFCOUNTER2_SELECT: u32 = 0x0DD6;
+pub const SX_PERFCOUNTER3_SELECT: u32 = 0x0DD7;
+pub const SX_PERFCOUNTER0_LOW: u32 = 0x0DD8;
+pub const SX_PERFCOUNTER0_HI: u32 = 0x0DD9;
+pub const SX_PERFCOUNTER1_LOW: u32 = 0x0DDA;
+pub const SX_PERFCOUNTER1_HI: u32 = 0x0DDB;
+pub const SX_PERFCOUNTER2_LOW: u32 = 0x0DDC;
+pub const SX_PERFCOUNTER2_HI: u32 = 0x0DDD;
+pub const SX_PERFCOUNTER3_LOW: u32 = 0x0DDE;
+pub const SX_PERFCOUNTER3_HI: u32 = 0x0DDF;
+pub const TC_CNTL_STATUS: u32 = 0x0E00;
+pub const TP_DEBUG0: u32 = 0x0E01;
+pub const TCR_CHICKEN: u32 = 0x0E02;
+pub const TCF_CHICKEN: u32 = 0x0E03;
+pub const TCM_CHICKEN: u32 = 0x0E04;
+pub const TCR_PERFCOUNTER0_SELECT: u32 = 0x0E05;
+pub const TCR_PERFCOUNTER0_HI: u32 = 0x0E06;
+pub const TCR_PERFCOUNTER0_LOW: u32 = 0x0E07;
+pub const TCR_PERFCOUNTER1_SELECT: u32 = 0x0E08;
+pub const TCR_PERFCOUNTER1_HI: u32 = 0x0E09;
+pub const TCR_PERFCOUNTER1_LOW: u32 = 0x0E0A;
+pub const TP_TC_CLKGATE_CNTL: u32 = 0x0E17;
+pub const TPC_CNTL_STATUS: u32 = 0x0E18;
+pub const TPC_DEBUG0: u32 = 0x0E19;
+pub const TPC_DEBUG1: u32 = 0x0E1A;
+pub const TPC_CHICKEN: u32 = 0x0E1B;
+pub const TP0_CNTL_STATUS: u32 = 0x0E1C;
+pub const TP0_DEBUG: u32 = 0x0E1D;
+pub const TP0_CHICKEN: u32 = 0x0E1E;
+pub const TP0_PERFCOUNTER0_SELECT: u32 = 0x0E1F;
+pub const TP0_PERFCOUNTER0_HI: u32 = 0x0E20;
+pub const TP0_PERFCOUNTER0_LOW: u32 = 0x0E21;
+pub const TP0_PERFCOUNTER1_SELECT: u32 = 0x0E22;
+pub const TP0_PERFCOUNTER1_HI: u32 = 0x0E23;
+pub const TP0_PERFCOUNTER1_LOW: u32 = 0x0E24;
+pub const TP1_CNTL_STATUS: u32 = 0x0E25;
+pub const TP1_DEBUG: u32 = 0x0E26;
+pub const TP1_CHICKEN: u32 = 0x0E27;
+pub const TP1_PERFCOUNTER0_SELECT: u32 = 0x0E28;
+pub const TP1_PERFCOUNTER0_HI: u32 = 0x0E29;
+pub const TP1_PERFCOUNTER0_LOW: u32 = 0x0E2A;
+pub const TP1_PERFCOUNTER1_SELECT: u32 = 0x0E2B;
+pub const TP1_PERFCOUNTER1_HI: u32 = 0x0E2C;
+pub const TP1_PERFCOUNTER1_LOW: u32 = 0x0E2D;
+pub const TP2_CNTL_STATUS: u32 = 0x0E2E;
+pub const TP2_DEBUG: u32 = 0x0E2F;
+pub const TP2_CHICKEN: u32 = 0x0E30;
+pub const TP2_PERFCOUNTER0_SELECT: u32 = 0x0E31;
+pub const TP2_PERFCOUNTER0_HI: u32 = 0x0E32;
+pub const TP2_PERFCOUNTER0_LOW: u32 = 0x0E33;
+pub const TP2_PERFCOUNTER1_SELECT: u32 = 0x0E34;
+pub const TP2_PERFCOUNTER1_HI: u32 = 0x0E35;
+pub const TP2_PERFCOUNTER1_LOW: u32 = 0x0E36;
+pub const TP3_CNTL_STATUS: u32 = 0x0E37;
+pub const TP3_DEBUG: u32 = 0x0E38;
+pub const TP3_CHICKEN: u32 = 0x0E39;
+pub const TP3_PERFCOUNTER0_SELECT: u32 = 0x0E3A;
+pub const TP3_PERFCOUNTER0_HI: u32 = 0x0E3B;
+pub const TP3_PERFCOUNTER0_LOW: u32 = 0x0E3C;
+pub const TP3_PERFCOUNTER1_SELECT: u32 = 0x0E3D;
+pub const TP3_PERFCOUNTER1_HI: u32 = 0x0E3E;
+pub const TP3_PERFCOUNTER1_LOW: u32 = 0x0E3F;
+pub const VC_CNTL: u32 = 0x0E40;
+pub const VC_CNTL_STATUS: u32 = 0x0E41;
+pub const VC_FIFO_DEPTHS: u32 = 0x0E42;
+pub const VC_DEBUG_CNTL: u32 = 0x0E43;
+pub const VC_DEBUG_DATA: u32 = 0x0E44;
+pub const VC_ENHANCE: u32 = 0x0E45;
+pub const VC_PERFCOUNTER0_SELECT: u32 = 0x0E48;
+pub const VC_PERFCOUNTER0_HI: u32 = 0x0E49;
+pub const VC_PERFCOUNTER0_LOW: u32 = 0x0E4A;
+pub const VC_PERFCOUNTER1_SELECT: u32 = 0x0E4B;
+pub const VC_PERFCOUNTER1_HI: u32 = 0x0E4C;
+pub const VC_PERFCOUNTER1_LOW: u32 = 0x0E4D;
+pub const VC_PERFCOUNTER2_SELECT: u32 = 0x0E4E;
+pub const VC_PERFCOUNTER2_HI: u32 = 0x0E4F;
+pub const VC_PERFCOUNTER2_LOW: u32 = 0x0E50;
+pub const VC_PERFCOUNTER3_SELECT: u32 = 0x0E51;
+pub const VC_PERFCOUNTER3_HI: u32 = 0x0E52;
+pub const VC_PERFCOUNTER3_LOW: u32 = 0x0E53;
+pub const TCM_PERFCOUNTER0_SELECT: u32 = 0x0E54;
+pub const TCM_PERFCOUNTER0_HI: u32 = 0x0E55;
+pub const TCM_PERFCOUNTER0_LOW: u32 = 0x0E56;
+pub const TCM_PERFCOUNTER1_SELECT: u32 = 0x0E57;
+pub const TCM_PERFCOUNTER1_HI: u32 = 0x0E58;
+pub const TCM_PERFCOUNTER1_LOW: u32 = 0x0E59;
+pub const TCF_PERFCOUNTER0_SELECT: u32 = 0x0E5A;
+pub const TCF_PERFCOUNTER0_HI: u32 = 0x0E5B;
+pub const TCF_PERFCOUNTER0_LOW: u32 = 0x0E5C;
+pub const TCF_PERFCOUNTER1_SELECT: u32 = 0x0E5D;
+pub const TCF_PERFCOUNTER1_HI: u32 = 0x0E5E;
+pub const TCF_PERFCOUNTER1_LOW: u32 = 0x0E5F;
+pub const TCF_PERFCOUNTER2_SELECT: u32 = 0x0E60;
+pub const TCF_PERFCOUNTER2_HI: u32 = 0x0E61;
+pub const TCF_PERFCOUNTER2_LOW: u32 = 0x0E62;
+pub const TCF_PERFCOUNTER3_SELECT: u32 = 0x0E63;
+pub const TCF_PERFCOUNTER3_HI: u32 = 0x0E64;
+pub const TCF_PERFCOUNTER3_LOW: u32 = 0x0E65;
+pub const TCF_PERFCOUNTER4_SELECT: u32 = 0x0E66;
+pub const TCF_PERFCOUNTER4_HI: u32 = 0x0E67;
+pub const TCF_PERFCOUNTER4_LOW: u32 = 0x0E68;
+pub const TCF_PERFCOUNTER5_SELECT: u32 = 0x0E69;
+pub const TCF_PERFCOUNTER5_HI: u32 = 0x0E6A;
+pub const TCF_PERFCOUNTER5_LOW: u32 = 0x0E6B;
+pub const TCF_PERFCOUNTER6_SELECT: u32 = 0x0E6C;
+pub const TCF_PERFCOUNTER6_HI: u32 = 0x0E6D;
+pub const TCF_PERFCOUNTER6_LOW: u32 = 0x0E6E;
+pub const TCF_PERFCOUNTER7_SELECT: u32 = 0x0E6F;
+pub const TCF_PERFCOUNTER7_HI: u32 = 0x0E70;
+pub const TCF_PERFCOUNTER7_LOW: u32 = 0x0E71;
+pub const TCF_PERFCOUNTER8_SELECT: u32 = 0x0E72;
+pub const TCF_PERFCOUNTER8_HI: u32 = 0x0E73;
+pub const TCF_PERFCOUNTER8_LOW: u32 = 0x0E74;
+pub const TCF_PERFCOUNTER9_SELECT: u32 = 0x0E75;
+pub const TCF_PERFCOUNTER9_HI: u32 = 0x0E76;
+pub const TCF_PERFCOUNTER9_LOW: u32 = 0x0E77;
+pub const TCF_PERFCOUNTER10_SELECT: u32 = 0x0E78;
+pub const TCF_PERFCOUNTER10_HI: u32 = 0x0E79;
+pub const TCF_PERFCOUNTER10_LOW: u32 = 0x0E7A;
+pub const TCF_PERFCOUNTER11_SELECT: u32 = 0x0E7B;
+pub const TCF_PERFCOUNTER11_HI: u32 = 0x0E7C;
+pub const TCF_PERFCOUNTER11_LOW: u32 = 0x0E7D;
+pub const RB_BC_CONTROL: u32 = 0x0F01;
+pub const RB_EDRAM_INFO: u32 = 0x0F02;
+pub const BC_PERFCOUNTER0_SELECT: u32 = 0x0F04;
+pub const BC_PERFCOUNTER1_SELECT: u32 = 0x0F05;
+pub const BC_PERFCOUNTER2_SELECT: u32 = 0x0F06;
+pub const BC_PERFCOUNTER3_SELECT: u32 = 0x0F07;
+pub const BC_PERFCOUNTER0_LOW: u32 = 0x0F08;
+pub const BC_PERFCOUNTER0_HI: u32 = 0x0F09;
+pub const BC_PERFCOUNTER1_LOW: u32 = 0x0F0A;
+pub const BC_PERFCOUNTER1_HI: u32 = 0x0F0B;
+pub const BC_PERFCOUNTER2_LOW: u32 = 0x0F0C;
+pub const BC_PERFCOUNTER2_HI: u32 = 0x0F0D;
+pub const BC_PERFCOUNTER3_LOW: u32 = 0x0F0E;
+pub const BC_PERFCOUNTER3_HI: u32 = 0x0F0F;
+pub const RB_ZPASS_SAMPLES: u32 = 0x0F10;
+pub const RB_ZFAIL_SAMPLES: u32 = 0x0F11;
+pub const RB_SFAIL_SAMPLES: u32 = 0x0F12;
+pub const BC_DUMMY_CRAYRB_ENUMS: u32 = 0x0F15;
+pub const BC_DUMMY_CRAYRB_MOREENUMS: u32 = 0x0F16;
+pub const RB_DEBUG_CNTL: u32 = 0x0F26;
+pub const RB_DEBUG_DATA: u32 = 0x0F27;
+pub const RB_DEBUG_0: u32 = 0x0F28;
+pub const RB_DEBUG_1: u32 = 0x0F29;
+pub const RB_DEBUG_2: u32 = 0x0F2A;
+pub const RB_FLAG_CONTROL: u32 = 0x0F2B;
+pub const RB_BC_SPARES: u32 = 0x0F2C;
+pub const RB_HSIO_INTERFACE_ALIGNER_VALUE: u32 = 0x0F2D;
+pub const HZ_PERFCOUNTER0_SELECT: u32 = 0x1004;
+pub const HZ_PERFCOUNTER0_HI: u32 = 0x1005;
+pub const HZ_PERFCOUNTER0_LOW: u32 = 0x1006;
+pub const HZ_PERFCOUNTER1_SELECT: u32 = 0x1007;
+pub const HZ_PERFCOUNTER1_HI: u32 = 0x1008;
+pub const HZ_PERFCOUNTER1_LOW: u32 = 0x1009;
+pub const D1CRTC_H_TOTAL: u32 = 0x1800;
+pub const D1CRTC_H_BLANK_START_END: u32 = 0x1801;
+pub const D1CRTC_H_SYNC_A: u32 = 0x1802;
+pub const D1CRTC_H_SYNC_A_CNTL: u32 = 0x1803;
+pub const D1CRTC_V_TOTAL: u32 = 0x1804;
+pub const D1CRTC_V_BLANK_START_END: u32 = 0x1805;
+pub const D1CRTC_V_SYNC_A: u32 = 0x1806;
+pub const D1CRTC_V_SYNC_A_CNTL: u32 = 0x1807;
+pub const D1CRTC_FORCE_COUNT_NOW_CNTL: u32 = 0x1808;
+pub const D1CRTC_PIXEL_DATA_READBACK: u32 = 0x1809;
+pub const D1CRTC_CONTROL: u32 = 0x180A;
+pub const D1CRTC_BLANK_CONTROL: u32 = 0x180B;
+pub const D1CRTC_INTERLACE_CONTROL: u32 = 0x180C;
+pub const D1CRTC_INTERLACE_STATUS: u32 = 0x180D;
+pub const D1CRTC_BLANK_DATA_COLOR: u32 = 0x180E;
+pub const D1CRTC_OVERSCAN_COLOR: u32 = 0x180F;
+pub const D1CRTC_BLACK_COLOR: u32 = 0x1810;
+pub const D1CRTC_OVERSCAN_TOP: u32 = 0x1811;
+pub const D1CRTC_OVERSCAN_BOTTOM: u32 = 0x1812;
+pub const D1CRTC_OVERSCAN_LEFT: u32 = 0x1813;
+pub const D1CRTC_OVERSCAN_RIGHT: u32 = 0x1814;
+pub const D1CRTC_STATUS: u32 = 0x1815;
+pub const D1CRTC_STATUS_POSITION: u32 = 0x1816;
+pub const D1CRTC_FRAME_COUNT_CONTROL: u32 = 0x1817;
+pub const D1CRTC_STATUS_FRAME_COUNT: u32 = 0x1818;
+pub const D1CRTC_STATUS_VF_COUNT: u32 = 0x1819;
+pub const D1CRTC_STATUS_HV_COUNT: u32 = 0x181A;
+pub const D1CRTC_FRAME_COUNT_START: u32 = 0x181B;
+pub const D1CRTC_COUNT_CONTROL: u32 = 0x181C;
+pub const D1CRTC_STEREO_STATUS: u32 = 0x181D;
+pub const D1CRTC_STEREO_CONTROL: u32 = 0x181E;
+pub const D1CRTC_FRAME_RESET_CONTRO: u32 = 0x181F;
+pub const D1MODE_MASTER_UPDATE_LOCK: u32 = 0x1838;
+pub const D1MODE_MASTER_UPDATE_MODE: u32 = 0x1839;
+pub const D1CRTC_UPDATE_LOCK: u32 = 0x183A;
+pub const D1CRTC_DOUBLE_BUFFER_CONTROL: u32 = 0x183B;
+pub const CRTC_DEBUG: u32 = 0x183C;
+pub const D1GRPH_ENABLE: u32 = 0x1840;
+pub const D1GRPH_CONTROL: u32 = 0x1841;
+pub const D1GRPH_LUT_10BIT_BYPASS_CNTL: u32 = 0x1842;
+pub const D1GRPH_LUT_AFTER_CSC: u32 = 0x1843;
+pub const D1GRPH_PRIMARY_SURFACE_ADDRESS: u32 = 0x1844;
+pub const D1GRPH_SECONDARY_SURFACE_ADDRESS: u32 = 0x1846;
+pub const D1GRPH_PITCH: u32 = 0x1848;
+pub const D1GRPH_SURFACE_OFFSET_X: u32 = 0x1849;
+pub const D1GRPH_SURFACE_OFFSET_Y: u32 = 0x184A;
+pub const D1GRPH_X_START: u32 = 0x184B;
+pub const D1GRPH_Y_START: u32 = 0x184C;
+pub const D1GRPH_X_END: u32 = 0x184D;
+pub const D1GRPH_Y_END: u32 = 0x184E;
+pub const D1COLOR_SUBSAMPLE_CRCB_CNTL: u32 = 0x184F;
+pub const D1GRPH_UPDATE: u32 = 0x1851;
+pub const D1GRPH_FLIP_CONTROL: u32 = 0x1852;
+pub const D1OVL_ENABLE: u32 = 0x1860;
+pub const D1OVL_CONTROL1: u32 = 0x1861;
+pub const D1OVL_SURFACE_ADDRESS: u32 = 0x1864;
+pub const D1OVL_PITCH: u32 = 0x1866;
+pub const D1OVL_SURFACE_OFFSET_X: u32 = 0x1867;
+pub const D1OVL_SURFACE_OFFSET_Y: u32 = 0x1868;
+pub const D1OVL_START: u32 = 0x1869;
+pub const D1OVL_END: u32 = 0x186A;
+pub const D1OVL_UPDATE: u32 = 0x186B;
+pub const D1OVL_ALPHA_OUTSIDE_OVL_WINDOW: u32 = 0x18C1;
+pub const D1OVL_ALPHA_INSIDE_OVL_WINDOW: u32 = 0x18C2;
+pub const D1OVL_ALPHA_CONTROL: u32 = 0x18C3;
+pub const D1GRPH_COLOR_MATRIX_CNTL: u32 = 0x18E0;
+pub const D1GRPH_COLOR_MATRIX_COEF_1_1: u32 = 0x18E1;
+pub const D1GRPH_COLOR_MATRIX_COEF_1_2: u32 = 0x18E2;
+pub const D1GRPH_COLOR_MATRIX_COEF_1_3: u32 = 0x18E3;
+pub const D1GRPH_COLOR_MATRIX_COEF_1_4: u32 = 0x18E4;
+pub const D1GRPH_COLOR_MATRIX_COEF_2_1: u32 = 0x18E5;
+pub const D1GRPH_COLOR_MATRIX_COEF_2_2: u32 = 0x18E6;
+pub const D1GRPH_COLOR_MATRIX_COEF_2_3: u32 = 0x18E7;
+pub const D1GRPH_COLOR_MATRIX_COEF_2_4: u32 = 0x18E8;
+pub const D1GRPH_COLOR_MATRIX_COEF_3_1: u32 = 0x18E9;
+pub const D1GRPH_COLOR_MATRIX_COEF_3_2: u32 = 0x18EA;
+pub const D1GRPH_COLOR_MATRIX_COEF_3_3: u32 = 0x18EB;
+pub const D1GRPH_COLOR_MATRIX_COEF_3_4: u32 = 0x18EC;
+pub const DC_LUT_RW_MODE: u32 = 0x1921;
+pub const DC_LUT_RW_INDEX: u32 = 0x1922;
+pub const DC_LUT_SEQ_COLOR: u32 = 0x1923;
+pub const DC_LUT_PWL_DATA: u32 = 0x1924;
+pub const DC_LUT_30_COLOR: u32 = 0x1925;
+pub const DC_LUT_WRITE_EN_MASK: u32 = 0x1927;
+pub const DC_LUTA_CONTROL: u32 = 0x1930;
+pub const DC_LUTA_BLACK_OFFSET_BLUE: u32 = 0x1931;
+pub const DC_LUTA_BLACK_OFFSET_GREEN: u32 = 0x1932;
+pub const DC_LUTA_BLACK_OFFSET_RED: u32 = 0x1933;
+pub const DC_LUTA_WHITE_OFFSET_BLUE: u32 = 0x1934;
+pub const DC_LUTA_WHITE_OFFSET_GREEN: u32 = 0x1935;
+pub const DC_LUTA_WHITE_OFFSET_RED: u32 = 0x1936;
+pub const D1MODE_UNDERFLOW_STATUS: u32 = 0x1949;
+pub const D1MODE_DATA_FORMAT: u32 = 0x194A;
+pub const D1MODE_DESKTOP_HEIGHT: u32 = 0x194B;
+pub const D1MODE_V_COUNTER: u32 = 0x194C;
+pub const D1MODE_VBLANK_STATUS: u32 = 0x194D;
+pub const D1MODE_VLINE_START_END: u32 = 0x194E;
+pub const D1MODE_VLINE_STATUS: u32 = 0x194F;
+pub const D1MODE_INT_MASK: u32 = 0x1950;
+pub const D1MODE_VBLANK_VLINE_STATUS: u32 = 0x1951;
+pub const D1MODE_MAX_CHUNK_SIZE: u32 = 0x1952;
+pub const D1MODE_CHUNK_SIZE_DEBUG: u32 = 0x1953;
+pub const D1MODE_PRIORITY_A_CNT: u32 = 0x1954;
+pub const D1MODE_URGENCY_STAT: u32 = 0x1955;
+pub const D1SCL_COEF_RAM_SELECT: u32 = 0x195E;
+pub const D1SCL_COEF_RAM_TAP_DATA: u32 = 0x195F;
+pub const D1MODE_VIEWPORT_START: u32 = 0x1960;
+pub const D1MODE_VIEWPORT_SIZE: u32 = 0x1961;
+pub const D1SCL_SCALER_ENABLE: u32 = 0x1964;
+pub const D1SCL_TAP_CONTROL: u32 = 0x1965;
+pub const D1SCL_MANUAL_REPLICATE_CONTROL: u32 = 0x1968;
+pub const D1SCL_HORZ_FILTER_CONTROL: u32 = 0x196C;
+pub const D1SCL_HORZ_FILTER_SCALE_RATIO: u32 = 0x196D;
+pub const D1SCL_HORZ_FILTER_INIT_RGB_LUMA: u32 = 0x196E;
+pub const D1SCL_HORZ_FILTER_INIT_CHROMA: u32 = 0x196F;
+pub const D1SCL_VERT_FILTER_CONTROL: u32 = 0x1970;
+pub const D1SCL_VERT_FILTER_SCALE_RATIO: u32 = 0x1971;
+pub const D1SCL_VERT_FILTER_INIT: u32 = 0x1972;
+pub const D1SCL_UPDATE: u32 = 0x1973;
+pub const D1SCL_UNDERFLOW_STATUS: u32 = 0x1974;
+pub const D1SCL_VERT_FILTER_INIT_BOT: u32 = 0x1977;
+pub const D1SCL_COEF_RAM_CONFLICT_STATUS: u32 = 0x1978;
+pub const D1SCL_ONE_SHOT_WATERMARK: u32 = 0x1979;
+pub const D1MODE_LB_PITCH_IN_WORDS: u32 = 0x197A;
+pub const DISP_RBBMIF_RDWR_TIMEOUT: u32 = 0x198C;
+pub const D1SCL_CRC_ENABLE: u32 = 0x19BA;
+pub const D1SCL_CRC_SOURCE_SEL: u32 = 0x19BC;
+pub const D1SCL_CRC_MAS: u32 = 0x19BD;
+pub const D1SCL_CRC_CURRENT: u32 = 0x19BE;
+pub const D1SCL_CRC_LAST: u32 = 0x19BF;
+pub const DCP_CRC_CONTROL: u32 = 0x1B20;
+pub const DCP_CRC_MASK: u32 = 0x1B21;
+pub const DCP_CRC_P0_CURRENT: u32 = 0x1B22;
+pub const DCP_CRC_P0_LAST: u32 = 0x1B24;
+pub const DCP_DEBUG: u32 = 0x1B25;
+pub const DMIF_STATUS: u32 = 0x1B2E;
+pub const DCP_LB_DATA_GAP_BETWEEN_CHUNK: u32 = 0x1B2F;
+pub const DC_LB_MEM_SIZE: u32 = 0x1C46;
+pub const XDVO_ENABLE: u32 = 0x1E40;
+pub const XDVO_BIT_DEPTH_CONTROL: u32 = 0x1E43;
+pub const XDVO_CLOCK_INV: u32 = 0x1E44;
+pub const XDVO_CONTROL: u32 = 0x1E45;
+pub const XDVO_CRC_EN: u32 = 0x1E46;
+pub const XDVO_CRC_CNTL: u32 = 0x1E47;
+pub const XDVO_CRC_MASK_SIG_RGB: u32 = 0x1E48;
+pub const XDVO_CRC_MASK_SIG_CNTL: u32 = 0x1E49;
+pub const XDVO_CRC_SIG_RGB: u32 = 0x1E4A;
+pub const XDVO_CRC_SIG_CNTL: u32 = 0x1E4B;
+pub const XDVO_STRENGTH_CONTROL: u32 = 0x1E4C;
+pub const XDVO_DATA_STRENGTH_CONTROL: u32 = 0x1E4D;
+pub const XDVO_FORCE_OUTPUT_CNTL: u32 = 0x1E4E;
+pub const XDVO_FORCE_DATA: u32 = 0x1E4F;
+pub const XDVO_2ND_CRC_EN: u32 = 0x1E50;
+pub const XDVO_2ND_CRC_CNTL: u32 = 0x1E51;
+pub const XDVO_2ND_CRC_MASK_SIG: u32 = 0x1E52;
+pub const XDVO_2ND_CRC_SIG: u32 = 0x1E53;
+pub const XDVO_REGISTER_INDEX: u32 = 0x1E54;
+pub const XDVO_REGISTER_DATA: u32 = 0x1E55;
+pub const DC_GPIO_XDVODATA_MASK: u32 = 0x1F98;
+pub const DC_GPIO_XDVODATA_A: u32 = 0x1F99;
+pub const DC_GPIO_XDVODATA_EN: u32 = 0x1F9A;
+pub const DC_GPIO_XDVODATA_Y: u32 = 0x1F9B;
+pub const DC_HSYNC_DEBUG_TEST: u32 = 0x1F9C;
+pub const CAPTURE_START_STATUS: u32 = 0x1FB4;
+pub const DISP_INTERRUPT_STATUS: u32 = 0x1FB7;
+pub const DOUT_DEBUG: u32 = 0x1FB8;
+pub const DO_PERFCOUNTER0_SELECT: u32 = 0x1FC0;
+pub const DO_PERFCOUNTER0_HI: u32 = 0x1FC1;
+pub const DO_PERFCOUNTER0_LOW: u32 = 0x1FC2;
+pub const DO_PERFCOUNTER1_SELECT: u32 = 0x1FC3;
+pub const DO_PERFCOUNTER1_HI: u32 = 0x1FC4;
+pub const DO_PERFCOUNTER1_LOW: u32 = 0x1FC5;
+pub const DC_PERFCOUNTER0_SELECT: u32 = 0x1FC8;
+pub const DC_PERFCOUNTER0_HI: u32 = 0x1FC9;
+pub const DC_PERFCOUNTER0_LOW: u32 = 0x1FCA;
+pub const DC_PERFCOUNTER1_SELECT: u32 = 0x1FCB;
+pub const DC_PERFCOUNTER1_HI: u32 = 0x1FCC;
+pub const DC_PERFCOUNTER1_LOW: u32 = 0x1FCD;
+pub const DC_PERFMON_CNTL: u32 = 0x1FCE;
+pub const DC_DOUT_DEBUG_MUX_CNTL: u32 = 0x1FD0;
+pub const DC_TEST_DEBUG_BUS_CLK1_SEL: u32 = 0x1FE6;
+pub const DC_TEST_DEBUG_OUT_PIN_MASK: u32 = 0x1FE7;
+pub const DC_TEST_DEBUG_TRIGGER_CNTL: u32 = 0x1FE8;
+pub const DC_TEST_DEBUG_TRIGGER_STAT: u32 = 0x1FE9;
+pub const DC_TEST_DEBUG_EDGE_TRIGGER_MASK: u32 = 0x1FEA;
+pub const DC_TEST_DEBUG_EDGE_TRIGGER_PATTERN: u32 = 0x1FEB;
+pub const DC_TEST_DEBUG_DATA_TRIGGER_MASK: u32 = 0x1FEC;
+pub const DC_TEST_DEBUG_DATA_TRIGGER_PATTERN: u32 = 0x1FED;
+pub const DC_TEST_DEBUG_OUT_TEST_DATA: u32 = 0x1FEE;
+pub const DC_TEST_DEBUG_OUT_CNTL: u32 = 0x1FEF;
+pub const DO_TEST_DEBUG_BUS_CLK1_SEL: u32 = 0x1FF2;
+pub const DO_TEST_DEBUG_OUT_PIN_MASK: u32 = 0x1FF3;
+pub const DO_TEST_DEBUG_TRIGGER_CNTL: u32 = 0x1FF4;
+pub const DO_TEST_DEBUG_TRIGGER_STAT: u32 = 0x1FF5;
+pub const DO_TEST_DEBUG_EDGE_TRIGGER_MASK: u32 = 0x1FF6;
+pub const DO_TEST_DEBUG_EDGE_TRIGGER_PATTERN: u32 = 0x1FF7;
+pub const DO_TEST_DEBUG_DATA_TRIGGER_MASK: u32 = 0x1FF8;
+pub const DO_TEST_DEBUG_DATA_TRIGGER_PATTERN: u32 = 0x1FF9;
+pub const DO_TEST_DEBUG_OUT_TEST_DATA: u32 = 0x1FFA;
+pub const DO_TEST_DEBUG_OUT_CNTL: u32 = 0x1FFB;
+pub const DC_TEST_DEBUG_INDEX: u32 = 0x1FFC;
+pub const DC_TEST_DEBUG_DATA: u32 = 0x1FFD;
+pub const DO_TEST_DEBUG_INDEX: u32 = 0x1FFE;
+pub const DO_TEST_DEBUG_DATA: u32 = 0x1FFF;
+pub const RB_SURFACE_INFO: u32 = 0x2000;
+pub const RB_COLOR_INFO: u32 = 0x2001;
+pub const RB_DEPTH_INFO: u32 = 0x2002;
+pub const RB_COLOR1_INFO: u32 = 0x2003;
+pub const RB_COLOR2_INFO: u32 = 0x2004;
+pub const RB_COLOR3_INFO: u32 = 0x2005;
+pub const COHER_DEST_BASE_0: u32 = 0x2006;
+pub const COHER_DEST_BASE_1: u32 = 0x2007;
+pub const COHER_DEST_BASE_2: u32 = 0x2008;
+pub const COHER_DEST_BASE_3: u32 = 0x2009;
+pub const COHER_DEST_BASE_4: u32 = 0x200A;
+pub const COHER_DEST_BASE_5: u32 = 0x200B;
+pub const COHER_DEST_BASE_6: u32 = 0x200C;
+pub const COHER_DEST_BASE_7: u32 = 0x200D;
+pub const PA_SC_SCREEN_SCISSOR_TL: u32 = 0x200E;
+pub const PA_SC_SCREEN_SCISSOR_BR: u32 = 0x200F;
+pub const PA_SC_WINDOW_OFFSET: u32 = 0x2080;
+pub const PA_SC_WINDOW_SCISSOR_TL: u32 = 0x2081;
+pub const PA_SC_WINDOW_SCISSOR_BR: u32 = 0x2082;
+pub const PA_SC_CLIPRECT_RULE: u32 = 0x2083;
+pub const PA_SC_CLIPRECT_0_TL: u32 = 0x2084;
+pub const PA_SC_CLIPRECT_0_BR: u32 = 0x2085;
+pub const PA_SC_CLIPRECT_1_TL: u32 = 0x2086;
+pub const PA_SC_CLIPRECT_1_BR: u32 = 0x2087;
+pub const PA_SC_CLIPRECT_2_TL: u32 = 0x2088;
+pub const PA_SC_CLIPRECT_2_BR: u32 = 0x2089;
+pub const PA_SC_CLIPRECT_3_TL: u32 = 0x208A;
+pub const PA_SC_CLIPRECT_3_BR: u32 = 0x208B;
+pub const VGT_MAX_VTX_INDX: u32 = 0x2100;
+pub const VGT_MIN_VTX_INDX: u32 = 0x2101;
+pub const VGT_INDX_OFFSET: u32 = 0x2102;
+pub const VGT_MULTI_PRIM_IB_RESET_INDX: u32 = 0x2103;
+pub const RB_COLOR_MASK: u32 = 0x2104;
+pub const RB_BLEND_RED: u32 = 0x2105;
+pub const RB_BLEND_GREEN: u32 = 0x2106;
+pub const RB_BLEND_BLUE: u32 = 0x2107;
+pub const RB_BLEND_ALPHA: u32 = 0x2108;
+pub const RB_FOG_COLOR_RED: u32 = 0x2109;
+pub const RB_FOG_COLOR_GREEN: u32 = 0x210A;
+pub const RB_FOG_COLOR_BLUE: u32 = 0x210B;
+pub const RB_STENCILREFMASK_BF: u32 = 0x210C;
+pub const RB_STENCILREFMASK: u32 = 0x210D;
+pub const RB_ALPHA_REF: u32 = 0x210E;
+pub const PA_CL_VPORT_XSCALE: u32 = 0x210F;
+pub const PA_CL_VPORT_XOFFSET: u32 = 0x2110;
+pub const PA_CL_VPORT_YSCALE: u32 = 0x2111;
+pub const PA_CL_VPORT_YOFFSET: u32 = 0x2112;
+pub const PA_CL_VPORT_ZSCALE: u32 = 0x2113;
+pub const PA_CL_VPORT_ZOFFSET: u32 = 0x2114;
+pub const SQ_PROGRAM_CNTL: u32 = 0x2180;
+pub const SQ_CONTEXT_MISC: u32 = 0x2181;
+pub const SQ_INTERPOLATOR_CNTL: u32 = 0x2182;
+pub const SQ_WRAPPING_0: u32 = 0x2183;
+pub const SQ_WRAPPING_1: u32 = 0x2184;
+pub const GFX_COPY_STATE: u32 = 0x21F4;
+pub const SQ_CF_RD_BASE: u32 = 0x21F5;
+pub const SQ_PS_PROGRAM: u32 = 0x21F6;
+pub const SQ_VS_PROGRAM: u32 = 0x21F7;
+pub const VGT_EVENT_INITIATOR: u32 = 0x21F9;
+pub const VGT_DMA_BASE: u32 = 0x21FA;
+pub const VGT_DMA_SIZE: u32 = 0x21FB;
+pub const VGT_DRAW_INITIATOR: u32 = 0x21FC;
+pub const VGT_IMMED_DATA: u32 = 0x21FD;
+pub const RB_DEPTHCONTROL: u32 = 0x2200;
+pub const RB_BLENDCONTROL0: u32 = 0x2201;
+pub const RB_COLORCONTROL: u32 = 0x2202;
+pub const RB_HIZCONTROL: u32 = 0x2203;
+pub const PA_CL_CLIP_CNTL: u32 = 0x2204;
+pub const PA_SU_SC_MODE_CNTL: u32 = 0x2205;
+pub const PA_CL_VTE_CNTL: u32 = 0x2206;
+pub const VGT_CURRENT_BIN_ID_MIN: u32 = 0x2207;
+pub const RB_MODECONTROL: u32 = 0x2208;
+pub const RB_BLENDCONTROL1: u32 = 0x2209;
+pub const RB_BLENDCONTROL2: u32 = 0x220A;
+pub const RB_BLENDCONTROL3: u32 = 0x220B;
+pub const GRAS_CONTROL: u32 = 0x2210;
+pub const PA_SU_POINT_SIZE: u32 = 0x2280;
+pub const PA_SU_POINT_MINMAX: u32 = 0x2281;
+pub const PA_SU_LINE_CNTL: u32 = 0x2282;
+pub const PA_SC_LINE_STIPPLE: u32 = 0x2283;
+pub const VGT_OUTPUT_PATH_CNTL: u32 = 0x2284;
+pub const VGT_HOS_CNTL: u32 = 0x2285;
+pub const VGT_HOS_MAX_TESS_LEVEL: u32 = 0x2286;
+pub const VGT_HOS_MIN_TESS_LEVEL: u32 = 0x2287;
+pub const VGT_HOS_REUSE_DEPTH: u32 = 0x2288;
+pub const VGT_GROUP_PRIM_TYPE: u32 = 0x2289;
+pub const VGT_GROUP_FIRST_DECR: u32 = 0x228A;
+pub const VGT_GROUP_DECR: u32 = 0x228B;
+pub const VGT_GROUP_VECT_0_CNTL: u32 = 0x228C;
+pub const VGT_GROUP_VECT_1_CNTL: u32 = 0x228D;
+pub const VGT_GROUP_VECT_0_FMT_CNTL: u32 = 0x228E;
+pub const VGT_GROUP_VECT_1_FMT_CNTL: u32 = 0x228F;
+pub const UNKNOWN_2290: u32 = 0x2290;
+pub const UNKNOWN_2291: u32 = 0x2291;
+pub const PA_SC_MPASS_PS_CNTL: u32 = 0x2292;
+pub const PA_SC_VIZ_QUERY: u32 = 0x2293;
+pub const VGT_ENHANCE: u32 = 0x2294;
+pub const PA_SC_LINE_CNTL: u32 = 0x2300;
+pub const PA_SC_AA_CONFIG: u32 = 0x2301;
+pub const PA_SU_VTX_CNTL: u32 = 0x2302;
+pub const PA_CL_GB_VERT_CLIP_ADJ: u32 = 0x2303;
+pub const PA_CL_GB_VERT_DISC_ADJ: u32 = 0x2304;
+pub const PA_CL_GB_HORZ_CLIP_ADJ: u32 = 0x2305;
+pub const PA_CL_GB_HORZ_DISC_ADJ: u32 = 0x2306;
+pub const SQ_VS_CONST: u32 = 0x2307;
+pub const SQ_PS_CONST: u32 = 0x2308;
+pub const SQ_DEBUG_MISC_0: u32 = 0x2309;
+pub const SQ_DEBUG_MISC_1: u32 = 0x230A;
+pub const UNKNOWN_230B: u32 = 0x230B;
+pub const UNKNOWN_230C: u32 = 0x230C;
+pub const UNKNOWN_230D: u32 = 0x230D;
+pub const UNKNOWN_230E: u32 = 0x230E;
+pub const UNKNOWN_230F: u32 = 0x230F;
+pub const UNKNOWN_2310: u32 = 0x2310;
+pub const UNKNOWN_2311: u32 = 0x2311;
+pub const PA_SC_AA_MASK: u32 = 0x2312;
+pub const UNKNOWN_2313: u32 = 0x2313;
+pub const UNKNOWN_2314: u32 = 0x2314;
+pub const SQ_CF_PROGRAM_SIZE: u32 = 0x2315;
+pub const VGT_VERTEX_REUSE_BLOCK_CNTL: u32 = 0x2316;
+pub const VGT_OUT_DEALLOC_CNTL: u32 = 0x2317;
+pub const RB_COPY_CONTROL: u32 = 0x2318;
+pub const RB_COPY_DEST_BASE: u32 = 0x2319;
+pub const RB_COPY_DEST_PITCH: u32 = 0x231A;
+pub const RB_COPY_DEST_INFO: u32 = 0x231B;
+pub const RB_HIZ_CLEAR: u32 = 0x231C;
+pub const RB_DEPTH_CLEAR: u32 = 0x231D;
+pub const RB_COLOR_CLEAR: u32 = 0x231E;
+pub const RB_COLOR_CLEAR_LO: u32 = 0x231F;
+pub const RB_COPY_FUNC: u32 = 0x2320;
+pub const RB_COPY_REF: u32 = 0x2321;
+pub const RB_COPY_MASK: u32 = 0x2322;
+pub const RB_COPY_SURFACE_SLICE: u32 = 0x2323;
+pub const RB_SAMPLE_COUNT_CTL: u32 = 0x2324;
+pub const RB_SAMPLE_COUNT_ADDR: u32 = 0x2325;
+pub const RB_COLOR_DEST_MASK: u32 = 0x2326;
+pub const GRAS_UCP0X: u32 = 0x2340;
+pub const GRAS_UCP5W: u32 = 0x2357;
+pub const GRAS_UCP_ENABLED: u32 = 0x2360;
+pub const PA_SU_POLY_OFFSET_FRONT_SCALE: u32 = 0x2380;
+pub const PA_SU_POLY_OFFSET_FRONT_OFFSET: u32 = 0x2381;
+pub const PA_SU_POLY_OFFSET_BACK_SCALE: u32 = 0x2382;
+pub const PA_SU_POLY_OFFSET_BACK_OFFSET: u32 = 0x2383;
+pub const PA_CL_POINT_X_RAD: u32 = 0x2384;
+pub const PA_CL_POINT_Y_RAD: u32 = 0x2385;
+pub const PA_CL_POINT_SIZE: u32 = 0x2386;
+pub const PA_CL_POINT_CULL_RAD: u32 = 0x2387;
+pub const PA_CL_UCP_0_X: u32 = 0x2388;
+pub const PA_CL_UCP_0_Y: u32 = 0x2389;
+pub const PA_CL_UCP_0_Z: u32 = 0x238A;
+pub const PA_CL_UCP_0_W: u32 = 0x238B;
+pub const PA_CL_UCP_1_X: u32 = 0x238C;
+pub const PA_CL_UCP_1_Y: u32 = 0x238D;
+pub const PA_CL_UCP_1_Z: u32 = 0x238E;
+pub const PA_CL_UCP_1_W: u32 = 0x238F;
+pub const PA_CL_UCP_2_X: u32 = 0x2390;
+pub const PA_CL_UCP_2_Y: u32 = 0x2391;
+pub const PA_CL_UCP_2_Z: u32 = 0x2392;
+pub const PA_CL_UCP_2_W: u32 = 0x2393;
+pub const PA_CL_UCP_3_X: u32 = 0x2394;
+pub const PA_CL_UCP_3_Y: u32 = 0x2395;
+pub const PA_CL_UCP_3_Z: u32 = 0x2396;
+pub const PA_CL_UCP_3_W: u32 = 0x2397;
+pub const PA_CL_UCP_4_X: u32 = 0x2398;
+pub const PA_CL_UCP_4_Y: u32 = 0x2399;
+pub const PA_CL_UCP_4_Z: u32 = 0x239A;
+pub const PA_CL_UCP_4_W: u32 = 0x239B;
+pub const PA_CL_UCP_5_X: u32 = 0x239C;
+pub const PA_CL_UCP_5_Y: u32 = 0x239D;
+pub const PA_CL_UCP_5_Z: u32 = 0x239E;
+pub const PA_CL_UCP_5_W: u32 = 0x239F;
+pub const SHADER_CONSTANT_000_X: u32 = 0x4000;
+pub const SHADER_CONSTANT_000_Y: u32 = 0x4001;
+pub const SHADER_CONSTANT_000_Z: u32 = 0x4002;
+pub const SHADER_CONSTANT_000_W: u32 = 0x4003;
+pub const SHADER_CONSTANT_001_X: u32 = 0x4004;
+pub const SHADER_CONSTANT_001_Y: u32 = 0x4005;
+pub const SHADER_CONSTANT_001_Z: u32 = 0x4006;
+pub const SHADER_CONSTANT_001_W: u32 = 0x4007;
+pub const SHADER_CONSTANT_002_X: u32 = 0x4008;
+pub const SHADER_CONSTANT_002_Y: u32 = 0x4009;
+pub const SHADER_CONSTANT_002_Z: u32 = 0x400A;
+pub const SHADER_CONSTANT_002_W: u32 = 0x400B;
+pub const SHADER_CONSTANT_003_X: u32 = 0x400C;
+pub const SHADER_CONSTANT_003_Y: u32 = 0x400D;
+pub const SHADER_CONSTANT_003_Z: u32 = 0x400E;
+pub const SHADER_CONSTANT_003_W: u32 = 0x400F;
+pub const SHADER_CONSTANT_004_X: u32 = 0x4010;
+pub const SHADER_CONSTANT_004_Y: u32 = 0x4011;
+pub const SHADER_CONSTANT_004_Z: u32 = 0x4012;
+pub const SHADER_CONSTANT_004_W: u32 = 0x4013;
+pub const SHADER_CONSTANT_005_X: u32 = 0x4014;
+pub const SHADER_CONSTANT_005_Y: u32 = 0x4015;
+pub const SHADER_CONSTANT_005_Z: u32 = 0x4016;
+pub const SHADER_CONSTANT_005_W: u32 = 0x4017;
+pub const SHADER_CONSTANT_006_X: u32 = 0x4018;
+pub const SHADER_CONSTANT_006_Y: u32 = 0x4019;
+pub const SHADER_CONSTANT_006_Z: u32 = 0x401A;
+pub const SHADER_CONSTANT_006_W: u32 = 0x401B;
+pub const SHADER_CONSTANT_007_X: u32 = 0x401C;
+pub const SHADER_CONSTANT_007_Y: u32 = 0x401D;
+pub const SHADER_CONSTANT_007_Z: u32 = 0x401E;
+pub const SHADER_CONSTANT_007_W: u32 = 0x401F;
+pub const SHADER_CONSTANT_008_X: u32 = 0x4020;
+pub const SHADER_CONSTANT_008_Y: u32 = 0x4021;
+pub const SHADER_CONSTANT_008_Z: u32 = 0x4022;
+pub const SHADER_CONSTANT_008_W: u32 = 0x4023;
+pub const SHADER_CONSTANT_009_X: u32 = 0x4024;
+pub const SHADER_CONSTANT_009_Y: u32 = 0x4025;
+pub const SHADER_CONSTANT_009_Z: u32 = 0x4026;
+pub const SHADER_CONSTANT_009_W: u32 = 0x4027;
+pub const SHADER_CONSTANT_010_X: u32 = 0x4028;
+pub const SHADER_CONSTANT_010_Y: u32 = 0x4029;
+pub const SHADER_CONSTANT_010_Z: u32 = 0x402A;
+pub const SHADER_CONSTANT_010_W: u32 = 0x402B;
+pub const SHADER_CONSTANT_011_X: u32 = 0x402C;
+pub const SHADER_CONSTANT_011_Y: u32 = 0x402D;
+pub const SHADER_CONSTANT_011_Z: u32 = 0x402E;
+pub const SHADER_CONSTANT_011_W: u32 = 0x402F;
+pub const SHADER_CONSTANT_012_X: u32 = 0x4030;
+pub const SHADER_CONSTANT_012_Y: u32 = 0x4031;
+pub const SHADER_CONSTANT_012_Z: u32 = 0x4032;
+pub const SHADER_CONSTANT_012_W: u32 = 0x4033;
+pub const SHADER_CONSTANT_013_X: u32 = 0x4034;
+pub const SHADER_CONSTANT_013_Y: u32 = 0x4035;
+pub const SHADER_CONSTANT_013_Z: u32 = 0x4036;
+pub const SHADER_CONSTANT_013_W: u32 = 0x4037;
+pub const SHADER_CONSTANT_014_X: u32 = 0x4038;
+pub const SHADER_CONSTANT_014_Y: u32 = 0x4039;
+pub const SHADER_CONSTANT_014_Z: u32 = 0x403A;
+pub const SHADER_CONSTANT_014_W: u32 = 0x403B;
+pub const SHADER_CONSTANT_015_X: u32 = 0x403C;
+pub const SHADER_CONSTANT_015_Y: u32 = 0x403D;
+pub const SHADER_CONSTANT_015_Z: u32 = 0x403E;
+pub const SHADER_CONSTANT_015_W: u32 = 0x403F;
+pub const SHADER_CONSTANT_016_X: u32 = 0x4040;
+pub const SHADER_CONSTANT_016_Y: u32 = 0x4041;
+pub const SHADER_CONSTANT_016_Z: u32 = 0x4042;
+pub const SHADER_CONSTANT_016_W: u32 = 0x4043;
+pub const SHADER_CONSTANT_017_X: u32 = 0x4044;
+pub const SHADER_CONSTANT_017_Y: u32 = 0x4045;
+pub const SHADER_CONSTANT_017_Z: u32 = 0x4046;
+pub const SHADER_CONSTANT_017_W: u32 = 0x4047;
+pub const SHADER_CONSTANT_018_X: u32 = 0x4048;
+pub const SHADER_CONSTANT_018_Y: u32 = 0x4049;
+pub const SHADER_CONSTANT_018_Z: u32 = 0x404A;
+pub const SHADER_CONSTANT_018_W: u32 = 0x404B;
+pub const SHADER_CONSTANT_019_X: u32 = 0x404C;
+pub const SHADER_CONSTANT_019_Y: u32 = 0x404D;
+pub const SHADER_CONSTANT_019_Z: u32 = 0x404E;
+pub const SHADER_CONSTANT_019_W: u32 = 0x404F;
+pub const SHADER_CONSTANT_020_X: u32 = 0x4050;
+pub const SHADER_CONSTANT_020_Y: u32 = 0x4051;
+pub const SHADER_CONSTANT_020_Z: u32 = 0x4052;
+pub const SHADER_CONSTANT_020_W: u32 = 0x4053;
+pub const SHADER_CONSTANT_021_X: u32 = 0x4054;
+pub const SHADER_CONSTANT_021_Y: u32 = 0x4055;
+pub const SHADER_CONSTANT_021_Z: u32 = 0x4056;
+pub const SHADER_CONSTANT_021_W: u32 = 0x4057;
+pub const SHADER_CONSTANT_022_X: u32 = 0x4058;
+pub const SHADER_CONSTANT_022_Y: u32 = 0x4059;
+pub const SHADER_CONSTANT_022_Z: u32 = 0x405A;
+pub const SHADER_CONSTANT_022_W: u32 = 0x405B;
+pub const SHADER_CONSTANT_023_X: u32 = 0x405C;
+pub const SHADER_CONSTANT_023_Y: u32 = 0x405D;
+pub const SHADER_CONSTANT_023_Z: u32 = 0x405E;
+pub const SHADER_CONSTANT_023_W: u32 = 0x405F;
+pub const SHADER_CONSTANT_024_X: u32 = 0x4060;
+pub const SHADER_CONSTANT_024_Y: u32 = 0x4061;
+pub const SHADER_CONSTANT_024_Z: u32 = 0x4062;
+pub const SHADER_CONSTANT_024_W: u32 = 0x4063;
+pub const SHADER_CONSTANT_025_X: u32 = 0x4064;
+pub const SHADER_CONSTANT_025_Y: u32 = 0x4065;
+pub const SHADER_CONSTANT_025_Z: u32 = 0x4066;
+pub const SHADER_CONSTANT_025_W: u32 = 0x4067;
+pub const SHADER_CONSTANT_026_X: u32 = 0x4068;
+pub const SHADER_CONSTANT_026_Y: u32 = 0x4069;
+pub const SHADER_CONSTANT_026_Z: u32 = 0x406A;
+pub const SHADER_CONSTANT_026_W: u32 = 0x406B;
+pub const SHADER_CONSTANT_027_X: u32 = 0x406C;
+pub const SHADER_CONSTANT_027_Y: u32 = 0x406D;
+pub const SHADER_CONSTANT_027_Z: u32 = 0x406E;
+pub const SHADER_CONSTANT_027_W: u32 = 0x406F;
+pub const SHADER_CONSTANT_028_X: u32 = 0x4070;
+pub const SHADER_CONSTANT_028_Y: u32 = 0x4071;
+pub const SHADER_CONSTANT_028_Z: u32 = 0x4072;
+pub const SHADER_CONSTANT_028_W: u32 = 0x4073;
+pub const SHADER_CONSTANT_029_X: u32 = 0x4074;
+pub const SHADER_CONSTANT_029_Y: u32 = 0x4075;
+pub const SHADER_CONSTANT_029_Z: u32 = 0x4076;
+pub const SHADER_CONSTANT_029_W: u32 = 0x4077;
+pub const SHADER_CONSTANT_030_X: u32 = 0x4078;
+pub const SHADER_CONSTANT_030_Y: u32 = 0x4079;
+pub const SHADER_CONSTANT_030_Z: u32 = 0x407A;
+pub const SHADER_CONSTANT_030_W: u32 = 0x407B;
+pub const SHADER_CONSTANT_031_X: u32 = 0x407C;
+pub const SHADER_CONSTANT_031_Y: u32 = 0x407D;
+pub const SHADER_CONSTANT_031_Z: u32 = 0x407E;
+pub const SHADER_CONSTANT_031_W: u32 = 0x407F;
+pub const SHADER_CONSTANT_032_X: u32 = 0x4080;
+pub const SHADER_CONSTANT_032_Y: u32 = 0x4081;
+pub const SHADER_CONSTANT_032_Z: u32 = 0x4082;
+pub const SHADER_CONSTANT_032_W: u32 = 0x4083;
+pub const SHADER_CONSTANT_033_X: u32 = 0x4084;
+pub const SHADER_CONSTANT_033_Y: u32 = 0x4085;
+pub const SHADER_CONSTANT_033_Z: u32 = 0x4086;
+pub const SHADER_CONSTANT_033_W: u32 = 0x4087;
+pub const SHADER_CONSTANT_034_X: u32 = 0x4088;
+pub const SHADER_CONSTANT_034_Y: u32 = 0x4089;
+pub const SHADER_CONSTANT_034_Z: u32 = 0x408A;
+pub const SHADER_CONSTANT_034_W: u32 = 0x408B;
+pub const SHADER_CONSTANT_035_X: u32 = 0x408C;
+pub const SHADER_CONSTANT_035_Y: u32 = 0x408D;
+pub const SHADER_CONSTANT_035_Z: u32 = 0x408E;
+pub const SHADER_CONSTANT_035_W: u32 = 0x408F;
+pub const SHADER_CONSTANT_036_X: u32 = 0x4090;
+pub const SHADER_CONSTANT_036_Y: u32 = 0x4091;
+pub const SHADER_CONSTANT_036_Z: u32 = 0x4092;
+pub const SHADER_CONSTANT_036_W: u32 = 0x4093;
+pub const SHADER_CONSTANT_037_X: u32 = 0x4094;
+pub const SHADER_CONSTANT_037_Y: u32 = 0x4095;
+pub const SHADER_CONSTANT_037_Z: u32 = 0x4096;
+pub const SHADER_CONSTANT_037_W: u32 = 0x4097;
+pub const SHADER_CONSTANT_038_X: u32 = 0x4098;
+pub const SHADER_CONSTANT_038_Y: u32 = 0x4099;
+pub const SHADER_CONSTANT_038_Z: u32 = 0x409A;
+pub const SHADER_CONSTANT_038_W: u32 = 0x409B;
+pub const SHADER_CONSTANT_039_X: u32 = 0x409C;
+pub const SHADER_CONSTANT_039_Y: u32 = 0x409D;
+pub const SHADER_CONSTANT_039_Z: u32 = 0x409E;
+pub const SHADER_CONSTANT_039_W: u32 = 0x409F;
+pub const SHADER_CONSTANT_040_X: u32 = 0x40A0;
+pub const SHADER_CONSTANT_040_Y: u32 = 0x40A1;
+pub const SHADER_CONSTANT_040_Z: u32 = 0x40A2;
+pub const SHADER_CONSTANT_040_W: u32 = 0x40A3;
+pub const SHADER_CONSTANT_041_X: u32 = 0x40A4;
+pub const SHADER_CONSTANT_041_Y: u32 = 0x40A5;
+pub const SHADER_CONSTANT_041_Z: u32 = 0x40A6;
+pub const SHADER_CONSTANT_041_W: u32 = 0x40A7;
+pub const SHADER_CONSTANT_042_X: u32 = 0x40A8;
+pub const SHADER_CONSTANT_042_Y: u32 = 0x40A9;
+pub const SHADER_CONSTANT_042_Z: u32 = 0x40AA;
+pub const SHADER_CONSTANT_042_W: u32 = 0x40AB;
+pub const SHADER_CONSTANT_043_X: u32 = 0x40AC;
+pub const SHADER_CONSTANT_043_Y: u32 = 0x40AD;
+pub const SHADER_CONSTANT_043_Z: u32 = 0x40AE;
+pub const SHADER_CONSTANT_043_W: u32 = 0x40AF;
+pub const SHADER_CONSTANT_044_X: u32 = 0x40B0;
+pub const SHADER_CONSTANT_044_Y: u32 = 0x40B1;
+pub const SHADER_CONSTANT_044_Z: u32 = 0x40B2;
+pub const SHADER_CONSTANT_044_W: u32 = 0x40B3;
+pub const SHADER_CONSTANT_045_X: u32 = 0x40B4;
+pub const SHADER_CONSTANT_045_Y: u32 = 0x40B5;
+pub const SHADER_CONSTANT_045_Z: u32 = 0x40B6;
+pub const SHADER_CONSTANT_045_W: u32 = 0x40B7;
+pub const SHADER_CONSTANT_046_X: u32 = 0x40B8;
+pub const SHADER_CONSTANT_046_Y: u32 = 0x40B9;
+pub const SHADER_CONSTANT_046_Z: u32 = 0x40BA;
+pub const SHADER_CONSTANT_046_W: u32 = 0x40BB;
+pub const SHADER_CONSTANT_047_X: u32 = 0x40BC;
+pub const SHADER_CONSTANT_047_Y: u32 = 0x40BD;
+pub const SHADER_CONSTANT_047_Z: u32 = 0x40BE;
+pub const SHADER_CONSTANT_047_W: u32 = 0x40BF;
+pub const SHADER_CONSTANT_048_X: u32 = 0x40C0;
+pub const SHADER_CONSTANT_048_Y: u32 = 0x40C1;
+pub const SHADER_CONSTANT_048_Z: u32 = 0x40C2;
+pub const SHADER_CONSTANT_048_W: u32 = 0x40C3;
+pub const SHADER_CONSTANT_049_X: u32 = 0x40C4;
+pub const SHADER_CONSTANT_049_Y: u32 = 0x40C5;
+pub const SHADER_CONSTANT_049_Z: u32 = 0x40C6;
+pub const SHADER_CONSTANT_049_W: u32 = 0x40C7;
+pub const SHADER_CONSTANT_050_X: u32 = 0x40C8;
+pub const SHADER_CONSTANT_050_Y: u32 = 0x40C9;
+pub const SHADER_CONSTANT_050_Z: u32 = 0x40CA;
+pub const SHADER_CONSTANT_050_W: u32 = 0x40CB;
+pub const SHADER_CONSTANT_051_X: u32 = 0x40CC;
+pub const SHADER_CONSTANT_051_Y: u32 = 0x40CD;
+pub const SHADER_CONSTANT_051_Z: u32 = 0x40CE;
+pub const SHADER_CONSTANT_051_W: u32 = 0x40CF;
+pub const SHADER_CONSTANT_052_X: u32 = 0x40D0;
+pub const SHADER_CONSTANT_052_Y: u32 = 0x40D1;
+pub const SHADER_CONSTANT_052_Z: u32 = 0x40D2;
+pub const SHADER_CONSTANT_052_W: u32 = 0x40D3;
+pub const SHADER_CONSTANT_053_X: u32 = 0x40D4;
+pub const SHADER_CONSTANT_053_Y: u32 = 0x40D5;
+pub const SHADER_CONSTANT_053_Z: u32 = 0x40D6;
+pub const SHADER_CONSTANT_053_W: u32 = 0x40D7;
+pub const SHADER_CONSTANT_054_X: u32 = 0x40D8;
+pub const SHADER_CONSTANT_054_Y: u32 = 0x40D9;
+pub const SHADER_CONSTANT_054_Z: u32 = 0x40DA;
+pub const SHADER_CONSTANT_054_W: u32 = 0x40DB;
+pub const SHADER_CONSTANT_055_X: u32 = 0x40DC;
+pub const SHADER_CONSTANT_055_Y: u32 = 0x40DD;
+pub const SHADER_CONSTANT_055_Z: u32 = 0x40DE;
+pub const SHADER_CONSTANT_055_W: u32 = 0x40DF;
+pub const SHADER_CONSTANT_056_X: u32 = 0x40E0;
+pub const SHADER_CONSTANT_056_Y: u32 = 0x40E1;
+pub const SHADER_CONSTANT_056_Z: u32 = 0x40E2;
+pub const SHADER_CONSTANT_056_W: u32 = 0x40E3;
+pub const SHADER_CONSTANT_057_X: u32 = 0x40E4;
+pub const SHADER_CONSTANT_057_Y: u32 = 0x40E5;
+pub const SHADER_CONSTANT_057_Z: u32 = 0x40E6;
+pub const SHADER_CONSTANT_057_W: u32 = 0x40E7;
+pub const SHADER_CONSTANT_058_X: u32 = 0x40E8;
+pub const SHADER_CONSTANT_058_Y: u32 = 0x40E9;
+pub const SHADER_CONSTANT_058_Z: u32 = 0x40EA;
+pub const SHADER_CONSTANT_058_W: u32 = 0x40EB;
+pub const SHADER_CONSTANT_059_X: u32 = 0x40EC;
+pub const SHADER_CONSTANT_059_Y: u32 = 0x40ED;
+pub const SHADER_CONSTANT_059_Z: u32 = 0x40EE;
+pub const SHADER_CONSTANT_059_W: u32 = 0x40EF;
+pub const SHADER_CONSTANT_060_X: u32 = 0x40F0;
+pub const SHADER_CONSTANT_060_Y: u32 = 0x40F1;
+pub const SHADER_CONSTANT_060_Z: u32 = 0x40F2;
+pub const SHADER_CONSTANT_060_W: u32 = 0x40F3;
+pub const SHADER_CONSTANT_061_X: u32 = 0x40F4;
+pub const SHADER_CONSTANT_061_Y: u32 = 0x40F5;
+pub const SHADER_CONSTANT_061_Z: u32 = 0x40F6;
+pub const SHADER_CONSTANT_061_W: u32 = 0x40F7;
+pub const SHADER_CONSTANT_062_X: u32 = 0x40F8;
+pub const SHADER_CONSTANT_062_Y: u32 = 0x40F9;
+pub const SHADER_CONSTANT_062_Z: u32 = 0x40FA;
+pub const SHADER_CONSTANT_062_W: u32 = 0x40FB;
+pub const SHADER_CONSTANT_063_X: u32 = 0x40FC;
+pub const SHADER_CONSTANT_063_Y: u32 = 0x40FD;
+pub const SHADER_CONSTANT_063_Z: u32 = 0x40FE;
+pub const SHADER_CONSTANT_063_W: u32 = 0x40FF;
+pub const SHADER_CONSTANT_064_X: u32 = 0x4100;
+pub const SHADER_CONSTANT_064_Y: u32 = 0x4101;
+pub const SHADER_CONSTANT_064_Z: u32 = 0x4102;
+pub const SHADER_CONSTANT_064_W: u32 = 0x4103;
+pub const SHADER_CONSTANT_065_X: u32 = 0x4104;
+pub const SHADER_CONSTANT_065_Y: u32 = 0x4105;
+pub const SHADER_CONSTANT_065_Z: u32 = 0x4106;
+pub const SHADER_CONSTANT_065_W: u32 = 0x4107;
+pub const SHADER_CONSTANT_066_X: u32 = 0x4108;
+pub const SHADER_CONSTANT_066_Y: u32 = 0x4109;
+pub const SHADER_CONSTANT_066_Z: u32 = 0x410A;
+pub const SHADER_CONSTANT_066_W: u32 = 0x410B;
+pub const SHADER_CONSTANT_067_X: u32 = 0x410C;
+pub const SHADER_CONSTANT_067_Y: u32 = 0x410D;
+pub const SHADER_CONSTANT_067_Z: u32 = 0x410E;
+pub const SHADER_CONSTANT_067_W: u32 = 0x410F;
+pub const SHADER_CONSTANT_068_X: u32 = 0x4110;
+pub const SHADER_CONSTANT_068_Y: u32 = 0x4111;
+pub const SHADER_CONSTANT_068_Z: u32 = 0x4112;
+pub const SHADER_CONSTANT_068_W: u32 = 0x4113;
+pub const SHADER_CONSTANT_069_X: u32 = 0x4114;
+pub const SHADER_CONSTANT_069_Y: u32 = 0x4115;
+pub const SHADER_CONSTANT_069_Z: u32 = 0x4116;
+pub const SHADER_CONSTANT_069_W: u32 = 0x4117;
+pub const SHADER_CONSTANT_070_X: u32 = 0x4118;
+pub const SHADER_CONSTANT_070_Y: u32 = 0x4119;
+pub const SHADER_CONSTANT_070_Z: u32 = 0x411A;
+pub const SHADER_CONSTANT_070_W: u32 = 0x411B;
+pub const SHADER_CONSTANT_071_X: u32 = 0x411C;
+pub const SHADER_CONSTANT_071_Y: u32 = 0x411D;
+pub const SHADER_CONSTANT_071_Z: u32 = 0x411E;
+pub const SHADER_CONSTANT_071_W: u32 = 0x411F;
+pub const SHADER_CONSTANT_072_X: u32 = 0x4120;
+pub const SHADER_CONSTANT_072_Y: u32 = 0x4121;
+pub const SHADER_CONSTANT_072_Z: u32 = 0x4122;
+pub const SHADER_CONSTANT_072_W: u32 = 0x4123;
+pub const SHADER_CONSTANT_073_X: u32 = 0x4124;
+pub const SHADER_CONSTANT_073_Y: u32 = 0x4125;
+pub const SHADER_CONSTANT_073_Z: u32 = 0x4126;
+pub const SHADER_CONSTANT_073_W: u32 = 0x4127;
+pub const SHADER_CONSTANT_074_X: u32 = 0x4128;
+pub const SHADER_CONSTANT_074_Y: u32 = 0x4129;
+pub const SHADER_CONSTANT_074_Z: u32 = 0x412A;
+pub const SHADER_CONSTANT_074_W: u32 = 0x412B;
+pub const SHADER_CONSTANT_075_X: u32 = 0x412C;
+pub const SHADER_CONSTANT_075_Y: u32 = 0x412D;
+pub const SHADER_CONSTANT_075_Z: u32 = 0x412E;
+pub const SHADER_CONSTANT_075_W: u32 = 0x412F;
+pub const SHADER_CONSTANT_076_X: u32 = 0x4130;
+pub const SHADER_CONSTANT_076_Y: u32 = 0x4131;
+pub const SHADER_CONSTANT_076_Z: u32 = 0x4132;
+pub const SHADER_CONSTANT_076_W: u32 = 0x4133;
+pub const SHADER_CONSTANT_077_X: u32 = 0x4134;
+pub const SHADER_CONSTANT_077_Y: u32 = 0x4135;
+pub const SHADER_CONSTANT_077_Z: u32 = 0x4136;
+pub const SHADER_CONSTANT_077_W: u32 = 0x4137;
+pub const SHADER_CONSTANT_078_X: u32 = 0x4138;
+pub const SHADER_CONSTANT_078_Y: u32 = 0x4139;
+pub const SHADER_CONSTANT_078_Z: u32 = 0x413A;
+pub const SHADER_CONSTANT_078_W: u32 = 0x413B;
+pub const SHADER_CONSTANT_079_X: u32 = 0x413C;
+pub const SHADER_CONSTANT_079_Y: u32 = 0x413D;
+pub const SHADER_CONSTANT_079_Z: u32 = 0x413E;
+pub const SHADER_CONSTANT_079_W: u32 = 0x413F;
+pub const SHADER_CONSTANT_080_X: u32 = 0x4140;
+pub const SHADER_CONSTANT_080_Y: u32 = 0x4141;
+pub const SHADER_CONSTANT_080_Z: u32 = 0x4142;
+pub const SHADER_CONSTANT_080_W: u32 = 0x4143;
+pub const SHADER_CONSTANT_081_X: u32 = 0x4144;
+pub const SHADER_CONSTANT_081_Y: u32 = 0x4145;
+pub const SHADER_CONSTANT_081_Z: u32 = 0x4146;
+pub const SHADER_CONSTANT_081_W: u32 = 0x4147;
+pub const SHADER_CONSTANT_082_X: u32 = 0x4148;
+pub const SHADER_CONSTANT_082_Y: u32 = 0x4149;
+pub const SHADER_CONSTANT_082_Z: u32 = 0x414A;
+pub const SHADER_CONSTANT_082_W: u32 = 0x414B;
+pub const SHADER_CONSTANT_083_X: u32 = 0x414C;
+pub const SHADER_CONSTANT_083_Y: u32 = 0x414D;
+pub const SHADER_CONSTANT_083_Z: u32 = 0x414E;
+pub const SHADER_CONSTANT_083_W: u32 = 0x414F;
+pub const SHADER_CONSTANT_084_X: u32 = 0x4150;
+pub const SHADER_CONSTANT_084_Y: u32 = 0x4151;
+pub const SHADER_CONSTANT_084_Z: u32 = 0x4152;
+pub const SHADER_CONSTANT_084_W: u32 = 0x4153;
+pub const SHADER_CONSTANT_085_X: u32 = 0x4154;
+pub const SHADER_CONSTANT_085_Y: u32 = 0x4155;
+pub const SHADER_CONSTANT_085_Z: u32 = 0x4156;
+pub const SHADER_CONSTANT_085_W: u32 = 0x4157;
+pub const SHADER_CONSTANT_086_X: u32 = 0x4158;
+pub const SHADER_CONSTANT_086_Y: u32 = 0x4159;
+pub const SHADER_CONSTANT_086_Z: u32 = 0x415A;
+pub const SHADER_CONSTANT_086_W: u32 = 0x415B;
+pub const SHADER_CONSTANT_087_X: u32 = 0x415C;
+pub const SHADER_CONSTANT_087_Y: u32 = 0x415D;
+pub const SHADER_CONSTANT_087_Z: u32 = 0x415E;
+pub const SHADER_CONSTANT_087_W: u32 = 0x415F;
+pub const SHADER_CONSTANT_088_X: u32 = 0x4160;
+pub const SHADER_CONSTANT_088_Y: u32 = 0x4161;
+pub const SHADER_CONSTANT_088_Z: u32 = 0x4162;
+pub const SHADER_CONSTANT_088_W: u32 = 0x4163;
+pub const SHADER_CONSTANT_089_X: u32 = 0x4164;
+pub const SHADER_CONSTANT_089_Y: u32 = 0x4165;
+pub const SHADER_CONSTANT_089_Z: u32 = 0x4166;
+pub const SHADER_CONSTANT_089_W: u32 = 0x4167;
+pub const SHADER_CONSTANT_090_X: u32 = 0x4168;
+pub const SHADER_CONSTANT_090_Y: u32 = 0x4169;
+pub const SHADER_CONSTANT_090_Z: u32 = 0x416A;
+pub const SHADER_CONSTANT_090_W: u32 = 0x416B;
+pub const SHADER_CONSTANT_091_X: u32 = 0x416C;
+pub const SHADER_CONSTANT_091_Y: u32 = 0x416D;
+pub const SHADER_CONSTANT_091_Z: u32 = 0x416E;
+pub const SHADER_CONSTANT_091_W: u32 = 0x416F;
+pub const SHADER_CONSTANT_092_X: u32 = 0x4170;
+pub const SHADER_CONSTANT_092_Y: u32 = 0x4171;
+pub const SHADER_CONSTANT_092_Z: u32 = 0x4172;
+pub const SHADER_CONSTANT_092_W: u32 = 0x4173;
+pub const SHADER_CONSTANT_093_X: u32 = 0x4174;
+pub const SHADER_CONSTANT_093_Y: u32 = 0x4175;
+pub const SHADER_CONSTANT_093_Z: u32 = 0x4176;
+pub const SHADER_CONSTANT_093_W: u32 = 0x4177;
+pub const SHADER_CONSTANT_094_X: u32 = 0x4178;
+pub const SHADER_CONSTANT_094_Y: u32 = 0x4179;
+pub const SHADER_CONSTANT_094_Z: u32 = 0x417A;
+pub const SHADER_CONSTANT_094_W: u32 = 0x417B;
+pub const SHADER_CONSTANT_095_X: u32 = 0x417C;
+pub const SHADER_CONSTANT_095_Y: u32 = 0x417D;
+pub const SHADER_CONSTANT_095_Z: u32 = 0x417E;
+pub const SHADER_CONSTANT_095_W: u32 = 0x417F;
+pub const SHADER_CONSTANT_096_X: u32 = 0x4180;
+pub const SHADER_CONSTANT_096_Y: u32 = 0x4181;
+pub const SHADER_CONSTANT_096_Z: u32 = 0x4182;
+pub const SHADER_CONSTANT_096_W: u32 = 0x4183;
+pub const SHADER_CONSTANT_097_X: u32 = 0x4184;
+pub const SHADER_CONSTANT_097_Y: u32 = 0x4185;
+pub const SHADER_CONSTANT_097_Z: u32 = 0x4186;
+pub const SHADER_CONSTANT_097_W: u32 = 0x4187;
+pub const SHADER_CONSTANT_098_X: u32 = 0x4188;
+pub const SHADER_CONSTANT_098_Y: u32 = 0x4189;
+pub const SHADER_CONSTANT_098_Z: u32 = 0x418A;
+pub const SHADER_CONSTANT_098_W: u32 = 0x418B;
+pub const SHADER_CONSTANT_099_X: u32 = 0x418C;
+pub const SHADER_CONSTANT_099_Y: u32 = 0x418D;
+pub const SHADER_CONSTANT_099_Z: u32 = 0x418E;
+pub const SHADER_CONSTANT_099_W: u32 = 0x418F;
+pub const SHADER_CONSTANT_100_X: u32 = 0x4190;
+pub const SHADER_CONSTANT_100_Y: u32 = 0x4191;
+pub const SHADER_CONSTANT_100_Z: u32 = 0x4192;
+pub const SHADER_CONSTANT_100_W: u32 = 0x4193;
+pub const SHADER_CONSTANT_101_X: u32 = 0x4194;
+pub const SHADER_CONSTANT_101_Y: u32 = 0x4195;
+pub const SHADER_CONSTANT_101_Z: u32 = 0x4196;
+pub const SHADER_CONSTANT_101_W: u32 = 0x4197;
+pub const SHADER_CONSTANT_102_X: u32 = 0x4198;
+pub const SHADER_CONSTANT_102_Y: u32 = 0x4199;
+pub const SHADER_CONSTANT_102_Z: u32 = 0x419A;
+pub const SHADER_CONSTANT_102_W: u32 = 0x419B;
+pub const SHADER_CONSTANT_103_X: u32 = 0x419C;
+pub const SHADER_CONSTANT_103_Y: u32 = 0x419D;
+pub const SHADER_CONSTANT_103_Z: u32 = 0x419E;
+pub const SHADER_CONSTANT_103_W: u32 = 0x419F;
+pub const SHADER_CONSTANT_104_X: u32 = 0x41A0;
+pub const SHADER_CONSTANT_104_Y: u32 = 0x41A1;
+pub const SHADER_CONSTANT_104_Z: u32 = 0x41A2;
+pub const SHADER_CONSTANT_104_W: u32 = 0x41A3;
+pub const SHADER_CONSTANT_105_X: u32 = 0x41A4;
+pub const SHADER_CONSTANT_105_Y: u32 = 0x41A5;
+pub const SHADER_CONSTANT_105_Z: u32 = 0x41A6;
+pub const SHADER_CONSTANT_105_W: u32 = 0x41A7;
+pub const SHADER_CONSTANT_106_X: u32 = 0x41A8;
+pub const SHADER_CONSTANT_106_Y: u32 = 0x41A9;
+pub const SHADER_CONSTANT_106_Z: u32 = 0x41AA;
+pub const SHADER_CONSTANT_106_W: u32 = 0x41AB;
+pub const SHADER_CONSTANT_107_X: u32 = 0x41AC;
+pub const SHADER_CONSTANT_107_Y: u32 = 0x41AD;
+pub const SHADER_CONSTANT_107_Z: u32 = 0x41AE;
+pub const SHADER_CONSTANT_107_W: u32 = 0x41AF;
+pub const SHADER_CONSTANT_108_X: u32 = 0x41B0;
+pub const SHADER_CONSTANT_108_Y: u32 = 0x41B1;
+pub const SHADER_CONSTANT_108_Z: u32 = 0x41B2;
+pub const SHADER_CONSTANT_108_W: u32 = 0x41B3;
+pub const SHADER_CONSTANT_109_X: u32 = 0x41B4;
+pub const SHADER_CONSTANT_109_Y: u32 = 0x41B5;
+pub const SHADER_CONSTANT_109_Z: u32 = 0x41B6;
+pub const SHADER_CONSTANT_109_W: u32 = 0x41B7;
+pub const SHADER_CONSTANT_110_X: u32 = 0x41B8;
+pub const SHADER_CONSTANT_110_Y: u32 = 0x41B9;
+pub const SHADER_CONSTANT_110_Z: u32 = 0x41BA;
+pub const SHADER_CONSTANT_110_W: u32 = 0x41BB;
+pub const SHADER_CONSTANT_111_X: u32 = 0x41BC;
+pub const SHADER_CONSTANT_111_Y: u32 = 0x41BD;
+pub const SHADER_CONSTANT_111_Z: u32 = 0x41BE;
+pub const SHADER_CONSTANT_111_W: u32 = 0x41BF;
+pub const SHADER_CONSTANT_112_X: u32 = 0x41C0;
+pub const SHADER_CONSTANT_112_Y: u32 = 0x41C1;
+pub const SHADER_CONSTANT_112_Z: u32 = 0x41C2;
+pub const SHADER_CONSTANT_112_W: u32 = 0x41C3;
+pub const SHADER_CONSTANT_113_X: u32 = 0x41C4;
+pub const SHADER_CONSTANT_113_Y: u32 = 0x41C5;
+pub const SHADER_CONSTANT_113_Z: u32 = 0x41C6;
+pub const SHADER_CONSTANT_113_W: u32 = 0x41C7;
+pub const SHADER_CONSTANT_114_X: u32 = 0x41C8;
+pub const SHADER_CONSTANT_114_Y: u32 = 0x41C9;
+pub const SHADER_CONSTANT_114_Z: u32 = 0x41CA;
+pub const SHADER_CONSTANT_114_W: u32 = 0x41CB;
+pub const SHADER_CONSTANT_115_X: u32 = 0x41CC;
+pub const SHADER_CONSTANT_115_Y: u32 = 0x41CD;
+pub const SHADER_CONSTANT_115_Z: u32 = 0x41CE;
+pub const SHADER_CONSTANT_115_W: u32 = 0x41CF;
+pub const SHADER_CONSTANT_116_X: u32 = 0x41D0;
+pub const SHADER_CONSTANT_116_Y: u32 = 0x41D1;
+pub const SHADER_CONSTANT_116_Z: u32 = 0x41D2;
+pub const SHADER_CONSTANT_116_W: u32 = 0x41D3;
+pub const SHADER_CONSTANT_117_X: u32 = 0x41D4;
+pub const SHADER_CONSTANT_117_Y: u32 = 0x41D5;
+pub const SHADER_CONSTANT_117_Z: u32 = 0x41D6;
+pub const SHADER_CONSTANT_117_W: u32 = 0x41D7;
+pub const SHADER_CONSTANT_118_X: u32 = 0x41D8;
+pub const SHADER_CONSTANT_118_Y: u32 = 0x41D9;
+pub const SHADER_CONSTANT_118_Z: u32 = 0x41DA;
+pub const SHADER_CONSTANT_118_W: u32 = 0x41DB;
+pub const SHADER_CONSTANT_119_X: u32 = 0x41DC;
+pub const SHADER_CONSTANT_119_Y: u32 = 0x41DD;
+pub const SHADER_CONSTANT_119_Z: u32 = 0x41DE;
+pub const SHADER_CONSTANT_119_W: u32 = 0x41DF;
+pub const SHADER_CONSTANT_120_X: u32 = 0x41E0;
+pub const SHADER_CONSTANT_120_Y: u32 = 0x41E1;
+pub const SHADER_CONSTANT_120_Z: u32 = 0x41E2;
+pub const SHADER_CONSTANT_120_W: u32 = 0x41E3;
+pub const SHADER_CONSTANT_121_X: u32 = 0x41E4;
+pub const SHADER_CONSTANT_121_Y: u32 = 0x41E5;
+pub const SHADER_CONSTANT_121_Z: u32 = 0x41E6;
+pub const SHADER_CONSTANT_121_W: u32 = 0x41E7;
+pub const SHADER_CONSTANT_122_X: u32 = 0x41E8;
+pub const SHADER_CONSTANT_122_Y: u32 = 0x41E9;
+pub const SHADER_CONSTANT_122_Z: u32 = 0x41EA;
+pub const SHADER_CONSTANT_122_W: u32 = 0x41EB;
+pub const SHADER_CONSTANT_123_X: u32 = 0x41EC;
+pub const SHADER_CONSTANT_123_Y: u32 = 0x41ED;
+pub const SHADER_CONSTANT_123_Z: u32 = 0x41EE;
+pub const SHADER_CONSTANT_123_W: u32 = 0x41EF;
+pub const SHADER_CONSTANT_124_X: u32 = 0x41F0;
+pub const SHADER_CONSTANT_124_Y: u32 = 0x41F1;
+pub const SHADER_CONSTANT_124_Z: u32 = 0x41F2;
+pub const SHADER_CONSTANT_124_W: u32 = 0x41F3;
+pub const SHADER_CONSTANT_125_X: u32 = 0x41F4;
+pub const SHADER_CONSTANT_125_Y: u32 = 0x41F5;
+pub const SHADER_CONSTANT_125_Z: u32 = 0x41F6;
+pub const SHADER_CONSTANT_125_W: u32 = 0x41F7;
+pub const SHADER_CONSTANT_126_X: u32 = 0x41F8;
+pub const SHADER_CONSTANT_126_Y: u32 = 0x41F9;
+pub const SHADER_CONSTANT_126_Z: u32 = 0x41FA;
+pub const SHADER_CONSTANT_126_W: u32 = 0x41FB;
+pub const SHADER_CONSTANT_127_X: u32 = 0x41FC;
+pub const SHADER_CONSTANT_127_Y: u32 = 0x41FD;
+pub const SHADER_CONSTANT_127_Z: u32 = 0x41FE;
+pub const SHADER_CONSTANT_127_W: u32 = 0x41FF;
+pub const SHADER_CONSTANT_128_X: u32 = 0x4200;
+pub const SHADER_CONSTANT_128_Y: u32 = 0x4201;
+pub const SHADER_CONSTANT_128_Z: u32 = 0x4202;
+pub const SHADER_CONSTANT_128_W: u32 = 0x4203;
+pub const SHADER_CONSTANT_129_X: u32 = 0x4204;
+pub const SHADER_CONSTANT_129_Y: u32 = 0x4205;
+pub const SHADER_CONSTANT_129_Z: u32 = 0x4206;
+pub const SHADER_CONSTANT_129_W: u32 = 0x4207;
+pub const SHADER_CONSTANT_130_X: u32 = 0x4208;
+pub const SHADER_CONSTANT_130_Y: u32 = 0x4209;
+pub const SHADER_CONSTANT_130_Z: u32 = 0x420A;
+pub const SHADER_CONSTANT_130_W: u32 = 0x420B;
+pub const SHADER_CONSTANT_131_X: u32 = 0x420C;
+pub const SHADER_CONSTANT_131_Y: u32 = 0x420D;
+pub const SHADER_CONSTANT_131_Z: u32 = 0x420E;
+pub const SHADER_CONSTANT_131_W: u32 = 0x420F;
+pub const SHADER_CONSTANT_132_X: u32 = 0x4210;
+pub const SHADER_CONSTANT_132_Y: u32 = 0x4211;
+pub const SHADER_CONSTANT_132_Z: u32 = 0x4212;
+pub const SHADER_CONSTANT_132_W: u32 = 0x4213;
+pub const SHADER_CONSTANT_133_X: u32 = 0x4214;
+pub const SHADER_CONSTANT_133_Y: u32 = 0x4215;
+pub const SHADER_CONSTANT_133_Z: u32 = 0x4216;
+pub const SHADER_CONSTANT_133_W: u32 = 0x4217;
+pub const SHADER_CONSTANT_134_X: u32 = 0x4218;
+pub const SHADER_CONSTANT_134_Y: u32 = 0x4219;
+pub const SHADER_CONSTANT_134_Z: u32 = 0x421A;
+pub const SHADER_CONSTANT_134_W: u32 = 0x421B;
+pub const SHADER_CONSTANT_135_X: u32 = 0x421C;
+pub const SHADER_CONSTANT_135_Y: u32 = 0x421D;
+pub const SHADER_CONSTANT_135_Z: u32 = 0x421E;
+pub const SHADER_CONSTANT_135_W: u32 = 0x421F;
+pub const SHADER_CONSTANT_136_X: u32 = 0x4220;
+pub const SHADER_CONSTANT_136_Y: u32 = 0x4221;
+pub const SHADER_CONSTANT_136_Z: u32 = 0x4222;
+pub const SHADER_CONSTANT_136_W: u32 = 0x4223;
+pub const SHADER_CONSTANT_137_X: u32 = 0x4224;
+pub const SHADER_CONSTANT_137_Y: u32 = 0x4225;
+pub const SHADER_CONSTANT_137_Z: u32 = 0x4226;
+pub const SHADER_CONSTANT_137_W: u32 = 0x4227;
+pub const SHADER_CONSTANT_138_X: u32 = 0x4228;
+pub const SHADER_CONSTANT_138_Y: u32 = 0x4229;
+pub const SHADER_CONSTANT_138_Z: u32 = 0x422A;
+pub const SHADER_CONSTANT_138_W: u32 = 0x422B;
+pub const SHADER_CONSTANT_139_X: u32 = 0x422C;
+pub const SHADER_CONSTANT_139_Y: u32 = 0x422D;
+pub const SHADER_CONSTANT_139_Z: u32 = 0x422E;
+pub const SHADER_CONSTANT_139_W: u32 = 0x422F;
+pub const SHADER_CONSTANT_140_X: u32 = 0x4230;
+pub const SHADER_CONSTANT_140_Y: u32 = 0x4231;
+pub const SHADER_CONSTANT_140_Z: u32 = 0x4232;
+pub const SHADER_CONSTANT_140_W: u32 = 0x4233;
+pub const SHADER_CONSTANT_141_X: u32 = 0x4234;
+pub const SHADER_CONSTANT_141_Y: u32 = 0x4235;
+pub const SHADER_CONSTANT_141_Z: u32 = 0x4236;
+pub const SHADER_CONSTANT_141_W: u32 = 0x4237;
+pub const SHADER_CONSTANT_142_X: u32 = 0x4238;
+pub const SHADER_CONSTANT_142_Y: u32 = 0x4239;
+pub const SHADER_CONSTANT_142_Z: u32 = 0x423A;
+pub const SHADER_CONSTANT_142_W: u32 = 0x423B;
+pub const SHADER_CONSTANT_143_X: u32 = 0x423C;
+pub const SHADER_CONSTANT_143_Y: u32 = 0x423D;
+pub const SHADER_CONSTANT_143_Z: u32 = 0x423E;
+pub const SHADER_CONSTANT_143_W: u32 = 0x423F;
+pub const SHADER_CONSTANT_144_X: u32 = 0x4240;
+pub const SHADER_CONSTANT_144_Y: u32 = 0x4241;
+pub const SHADER_CONSTANT_144_Z: u32 = 0x4242;
+pub const SHADER_CONSTANT_144_W: u32 = 0x4243;
+pub const SHADER_CONSTANT_145_X: u32 = 0x4244;
+pub const SHADER_CONSTANT_145_Y: u32 = 0x4245;
+pub const SHADER_CONSTANT_145_Z: u32 = 0x4246;
+pub const SHADER_CONSTANT_145_W: u32 = 0x4247;
+pub const SHADER_CONSTANT_146_X: u32 = 0x4248;
+pub const SHADER_CONSTANT_146_Y: u32 = 0x4249;
+pub const SHADER_CONSTANT_146_Z: u32 = 0x424A;
+pub const SHADER_CONSTANT_146_W: u32 = 0x424B;
+pub const SHADER_CONSTANT_147_X: u32 = 0x424C;
+pub const SHADER_CONSTANT_147_Y: u32 = 0x424D;
+pub const SHADER_CONSTANT_147_Z: u32 = 0x424E;
+pub const SHADER_CONSTANT_147_W: u32 = 0x424F;
+pub const SHADER_CONSTANT_148_X: u32 = 0x4250;
+pub const SHADER_CONSTANT_148_Y: u32 = 0x4251;
+pub const SHADER_CONSTANT_148_Z: u32 = 0x4252;
+pub const SHADER_CONSTANT_148_W: u32 = 0x4253;
+pub const SHADER_CONSTANT_149_X: u32 = 0x4254;
+pub const SHADER_CONSTANT_149_Y: u32 = 0x4255;
+pub const SHADER_CONSTANT_149_Z: u32 = 0x4256;
+pub const SHADER_CONSTANT_149_W: u32 = 0x4257;
+pub const SHADER_CONSTANT_150_X: u32 = 0x4258;
+pub const SHADER_CONSTANT_150_Y: u32 = 0x4259;
+pub const SHADER_CONSTANT_150_Z: u32 = 0x425A;
+pub const SHADER_CONSTANT_150_W: u32 = 0x425B;
+pub const SHADER_CONSTANT_151_X: u32 = 0x425C;
+pub const SHADER_CONSTANT_151_Y: u32 = 0x425D;
+pub const SHADER_CONSTANT_151_Z: u32 = 0x425E;
+pub const SHADER_CONSTANT_151_W: u32 = 0x425F;
+pub const SHADER_CONSTANT_152_X: u32 = 0x4260;
+pub const SHADER_CONSTANT_152_Y: u32 = 0x4261;
+pub const SHADER_CONSTANT_152_Z: u32 = 0x4262;
+pub const SHADER_CONSTANT_152_W: u32 = 0x4263;
+pub const SHADER_CONSTANT_153_X: u32 = 0x4264;
+pub const SHADER_CONSTANT_153_Y: u32 = 0x4265;
+pub const SHADER_CONSTANT_153_Z: u32 = 0x4266;
+pub const SHADER_CONSTANT_153_W: u32 = 0x4267;
+pub const SHADER_CONSTANT_154_X: u32 = 0x4268;
+pub const SHADER_CONSTANT_154_Y: u32 = 0x4269;
+pub const SHADER_CONSTANT_154_Z: u32 = 0x426A;
+pub const SHADER_CONSTANT_154_W: u32 = 0x426B;
+pub const SHADER_CONSTANT_155_X: u32 = 0x426C;
+pub const SHADER_CONSTANT_155_Y: u32 = 0x426D;
+pub const SHADER_CONSTANT_155_Z: u32 = 0x426E;
+pub const SHADER_CONSTANT_155_W: u32 = 0x426F;
+pub const SHADER_CONSTANT_156_X: u32 = 0x4270;
+pub const SHADER_CONSTANT_156_Y: u32 = 0x4271;
+pub const SHADER_CONSTANT_156_Z: u32 = 0x4272;
+pub const SHADER_CONSTANT_156_W: u32 = 0x4273;
+pub const SHADER_CONSTANT_157_X: u32 = 0x4274;
+pub const SHADER_CONSTANT_157_Y: u32 = 0x4275;
+pub const SHADER_CONSTANT_157_Z: u32 = 0x4276;
+pub const SHADER_CONSTANT_157_W: u32 = 0x4277;
+pub const SHADER_CONSTANT_158_X: u32 = 0x4278;
+pub const SHADER_CONSTANT_158_Y: u32 = 0x4279;
+pub const SHADER_CONSTANT_158_Z: u32 = 0x427A;
+pub const SHADER_CONSTANT_158_W: u32 = 0x427B;
+pub const SHADER_CONSTANT_159_X: u32 = 0x427C;
+pub const SHADER_CONSTANT_159_Y: u32 = 0x427D;
+pub const SHADER_CONSTANT_159_Z: u32 = 0x427E;
+pub const SHADER_CONSTANT_159_W: u32 = 0x427F;
+pub const SHADER_CONSTANT_160_X: u32 = 0x4280;
+pub const SHADER_CONSTANT_160_Y: u32 = 0x4281;
+pub const SHADER_CONSTANT_160_Z: u32 = 0x4282;
+pub const SHADER_CONSTANT_160_W: u32 = 0x4283;
+pub const SHADER_CONSTANT_161_X: u32 = 0x4284;
+pub const SHADER_CONSTANT_161_Y: u32 = 0x4285;
+pub const SHADER_CONSTANT_161_Z: u32 = 0x4286;
+pub const SHADER_CONSTANT_161_W: u32 = 0x4287;
+pub const SHADER_CONSTANT_162_X: u32 = 0x4288;
+pub const SHADER_CONSTANT_162_Y: u32 = 0x4289;
+pub const SHADER_CONSTANT_162_Z: u32 = 0x428A;
+pub const SHADER_CONSTANT_162_W: u32 = 0x428B;
+pub const SHADER_CONSTANT_163_X: u32 = 0x428C;
+pub const SHADER_CONSTANT_163_Y: u32 = 0x428D;
+pub const SHADER_CONSTANT_163_Z: u32 = 0x428E;
+pub const SHADER_CONSTANT_163_W: u32 = 0x428F;
+pub const SHADER_CONSTANT_164_X: u32 = 0x4290;
+pub const SHADER_CONSTANT_164_Y: u32 = 0x4291;
+pub const SHADER_CONSTANT_164_Z: u32 = 0x4292;
+pub const SHADER_CONSTANT_164_W: u32 = 0x4293;
+pub const SHADER_CONSTANT_165_X: u32 = 0x4294;
+pub const SHADER_CONSTANT_165_Y: u32 = 0x4295;
+pub const SHADER_CONSTANT_165_Z: u32 = 0x4296;
+pub const SHADER_CONSTANT_165_W: u32 = 0x4297;
+pub const SHADER_CONSTANT_166_X: u32 = 0x4298;
+pub const SHADER_CONSTANT_166_Y: u32 = 0x4299;
+pub const SHADER_CONSTANT_166_Z: u32 = 0x429A;
+pub const SHADER_CONSTANT_166_W: u32 = 0x429B;
+pub const SHADER_CONSTANT_167_X: u32 = 0x429C;
+pub const SHADER_CONSTANT_167_Y: u32 = 0x429D;
+pub const SHADER_CONSTANT_167_Z: u32 = 0x429E;
+pub const SHADER_CONSTANT_167_W: u32 = 0x429F;
+pub const SHADER_CONSTANT_168_X: u32 = 0x42A0;
+pub const SHADER_CONSTANT_168_Y: u32 = 0x42A1;
+pub const SHADER_CONSTANT_168_Z: u32 = 0x42A2;
+pub const SHADER_CONSTANT_168_W: u32 = 0x42A3;
+pub const SHADER_CONSTANT_169_X: u32 = 0x42A4;
+pub const SHADER_CONSTANT_169_Y: u32 = 0x42A5;
+pub const SHADER_CONSTANT_169_Z: u32 = 0x42A6;
+pub const SHADER_CONSTANT_169_W: u32 = 0x42A7;
+pub const SHADER_CONSTANT_170_X: u32 = 0x42A8;
+pub const SHADER_CONSTANT_170_Y: u32 = 0x42A9;
+pub const SHADER_CONSTANT_170_Z: u32 = 0x42AA;
+pub const SHADER_CONSTANT_170_W: u32 = 0x42AB;
+pub const SHADER_CONSTANT_171_X: u32 = 0x42AC;
+pub const SHADER_CONSTANT_171_Y: u32 = 0x42AD;
+pub const SHADER_CONSTANT_171_Z: u32 = 0x42AE;
+pub const SHADER_CONSTANT_171_W: u32 = 0x42AF;
+pub const SHADER_CONSTANT_172_X: u32 = 0x42B0;
+pub const SHADER_CONSTANT_172_Y: u32 = 0x42B1;
+pub const SHADER_CONSTANT_172_Z: u32 = 0x42B2;
+pub const SHADER_CONSTANT_172_W: u32 = 0x42B3;
+pub const SHADER_CONSTANT_173_X: u32 = 0x42B4;
+pub const SHADER_CONSTANT_173_Y: u32 = 0x42B5;
+pub const SHADER_CONSTANT_173_Z: u32 = 0x42B6;
+pub const SHADER_CONSTANT_173_W: u32 = 0x42B7;
+pub const SHADER_CONSTANT_174_X: u32 = 0x42B8;
+pub const SHADER_CONSTANT_174_Y: u32 = 0x42B9;
+pub const SHADER_CONSTANT_174_Z: u32 = 0x42BA;
+pub const SHADER_CONSTANT_174_W: u32 = 0x42BB;
+pub const SHADER_CONSTANT_175_X: u32 = 0x42BC;
+pub const SHADER_CONSTANT_175_Y: u32 = 0x42BD;
+pub const SHADER_CONSTANT_175_Z: u32 = 0x42BE;
+pub const SHADER_CONSTANT_175_W: u32 = 0x42BF;
+pub const SHADER_CONSTANT_176_X: u32 = 0x42C0;
+pub const SHADER_CONSTANT_176_Y: u32 = 0x42C1;
+pub const SHADER_CONSTANT_176_Z: u32 = 0x42C2;
+pub const SHADER_CONSTANT_176_W: u32 = 0x42C3;
+pub const SHADER_CONSTANT_177_X: u32 = 0x42C4;
+pub const SHADER_CONSTANT_177_Y: u32 = 0x42C5;
+pub const SHADER_CONSTANT_177_Z: u32 = 0x42C6;
+pub const SHADER_CONSTANT_177_W: u32 = 0x42C7;
+pub const SHADER_CONSTANT_178_X: u32 = 0x42C8;
+pub const SHADER_CONSTANT_178_Y: u32 = 0x42C9;
+pub const SHADER_CONSTANT_178_Z: u32 = 0x42CA;
+pub const SHADER_CONSTANT_178_W: u32 = 0x42CB;
+pub const SHADER_CONSTANT_179_X: u32 = 0x42CC;
+pub const SHADER_CONSTANT_179_Y: u32 = 0x42CD;
+pub const SHADER_CONSTANT_179_Z: u32 = 0x42CE;
+pub const SHADER_CONSTANT_179_W: u32 = 0x42CF;
+pub const SHADER_CONSTANT_180_X: u32 = 0x42D0;
+pub const SHADER_CONSTANT_180_Y: u32 = 0x42D1;
+pub const SHADER_CONSTANT_180_Z: u32 = 0x42D2;
+pub const SHADER_CONSTANT_180_W: u32 = 0x42D3;
+pub const SHADER_CONSTANT_181_X: u32 = 0x42D4;
+pub const SHADER_CONSTANT_181_Y: u32 = 0x42D5;
+pub const SHADER_CONSTANT_181_Z: u32 = 0x42D6;
+pub const SHADER_CONSTANT_181_W: u32 = 0x42D7;
+pub const SHADER_CONSTANT_182_X: u32 = 0x42D8;
+pub const SHADER_CONSTANT_182_Y: u32 = 0x42D9;
+pub const SHADER_CONSTANT_182_Z: u32 = 0x42DA;
+pub const SHADER_CONSTANT_182_W: u32 = 0x42DB;
+pub const SHADER_CONSTANT_183_X: u32 = 0x42DC;
+pub const SHADER_CONSTANT_183_Y: u32 = 0x42DD;
+pub const SHADER_CONSTANT_183_Z: u32 = 0x42DE;
+pub const SHADER_CONSTANT_183_W: u32 = 0x42DF;
+pub const SHADER_CONSTANT_184_X: u32 = 0x42E0;
+pub const SHADER_CONSTANT_184_Y: u32 = 0x42E1;
+pub const SHADER_CONSTANT_184_Z: u32 = 0x42E2;
+pub const SHADER_CONSTANT_184_W: u32 = 0x42E3;
+pub const SHADER_CONSTANT_185_X: u32 = 0x42E4;
+pub const SHADER_CONSTANT_185_Y: u32 = 0x42E5;
+pub const SHADER_CONSTANT_185_Z: u32 = 0x42E6;
+pub const SHADER_CONSTANT_185_W: u32 = 0x42E7;
+pub const SHADER_CONSTANT_186_X: u32 = 0x42E8;
+pub const SHADER_CONSTANT_186_Y: u32 = 0x42E9;
+pub const SHADER_CONSTANT_186_Z: u32 = 0x42EA;
+pub const SHADER_CONSTANT_186_W: u32 = 0x42EB;
+pub const SHADER_CONSTANT_187_X: u32 = 0x42EC;
+pub const SHADER_CONSTANT_187_Y: u32 = 0x42ED;
+pub const SHADER_CONSTANT_187_Z: u32 = 0x42EE;
+pub const SHADER_CONSTANT_187_W: u32 = 0x42EF;
+pub const SHADER_CONSTANT_188_X: u32 = 0x42F0;
+pub const SHADER_CONSTANT_188_Y: u32 = 0x42F1;
+pub const SHADER_CONSTANT_188_Z: u32 = 0x42F2;
+pub const SHADER_CONSTANT_188_W: u32 = 0x42F3;
+pub const SHADER_CONSTANT_189_X: u32 = 0x42F4;
+pub const SHADER_CONSTANT_189_Y: u32 = 0x42F5;
+pub const SHADER_CONSTANT_189_Z: u32 = 0x42F6;
+pub const SHADER_CONSTANT_189_W: u32 = 0x42F7;
+pub const SHADER_CONSTANT_190_X: u32 = 0x42F8;
+pub const SHADER_CONSTANT_190_Y: u32 = 0x42F9;
+pub const SHADER_CONSTANT_190_Z: u32 = 0x42FA;
+pub const SHADER_CONSTANT_190_W: u32 = 0x42FB;
+pub const SHADER_CONSTANT_191_X: u32 = 0x42FC;
+pub const SHADER_CONSTANT_191_Y: u32 = 0x42FD;
+pub const SHADER_CONSTANT_191_Z: u32 = 0x42FE;
+pub const SHADER_CONSTANT_191_W: u32 = 0x42FF;
+pub const SHADER_CONSTANT_192_X: u32 = 0x4300;
+pub const SHADER_CONSTANT_192_Y: u32 = 0x4301;
+pub const SHADER_CONSTANT_192_Z: u32 = 0x4302;
+pub const SHADER_CONSTANT_192_W: u32 = 0x4303;
+pub const SHADER_CONSTANT_193_X: u32 = 0x4304;
+pub const SHADER_CONSTANT_193_Y: u32 = 0x4305;
+pub const SHADER_CONSTANT_193_Z: u32 = 0x4306;
+pub const SHADER_CONSTANT_193_W: u32 = 0x4307;
+pub const SHADER_CONSTANT_194_X: u32 = 0x4308;
+pub const SHADER_CONSTANT_194_Y: u32 = 0x4309;
+pub const SHADER_CONSTANT_194_Z: u32 = 0x430A;
+pub const SHADER_CONSTANT_194_W: u32 = 0x430B;
+pub const SHADER_CONSTANT_195_X: u32 = 0x430C;
+pub const SHADER_CONSTANT_195_Y: u32 = 0x430D;
+pub const SHADER_CONSTANT_195_Z: u32 = 0x430E;
+pub const SHADER_CONSTANT_195_W: u32 = 0x430F;
+pub const SHADER_CONSTANT_196_X: u32 = 0x4310;
+pub const SHADER_CONSTANT_196_Y: u32 = 0x4311;
+pub const SHADER_CONSTANT_196_Z: u32 = 0x4312;
+pub const SHADER_CONSTANT_196_W: u32 = 0x4313;
+pub const SHADER_CONSTANT_197_X: u32 = 0x4314;
+pub const SHADER_CONSTANT_197_Y: u32 = 0x4315;
+pub const SHADER_CONSTANT_197_Z: u32 = 0x4316;
+pub const SHADER_CONSTANT_197_W: u32 = 0x4317;
+pub const SHADER_CONSTANT_198_X: u32 = 0x4318;
+pub const SHADER_CONSTANT_198_Y: u32 = 0x4319;
+pub const SHADER_CONSTANT_198_Z: u32 = 0x431A;
+pub const SHADER_CONSTANT_198_W: u32 = 0x431B;
+pub const SHADER_CONSTANT_199_X: u32 = 0x431C;
+pub const SHADER_CONSTANT_199_Y: u32 = 0x431D;
+pub const SHADER_CONSTANT_199_Z: u32 = 0x431E;
+pub const SHADER_CONSTANT_199_W: u32 = 0x431F;
+pub const SHADER_CONSTANT_200_X: u32 = 0x4320;
+pub const SHADER_CONSTANT_200_Y: u32 = 0x4321;
+pub const SHADER_CONSTANT_200_Z: u32 = 0x4322;
+pub const SHADER_CONSTANT_200_W: u32 = 0x4323;
+pub const SHADER_CONSTANT_201_X: u32 = 0x4324;
+pub const SHADER_CONSTANT_201_Y: u32 = 0x4325;
+pub const SHADER_CONSTANT_201_Z: u32 = 0x4326;
+pub const SHADER_CONSTANT_201_W: u32 = 0x4327;
+pub const SHADER_CONSTANT_202_X: u32 = 0x4328;
+pub const SHADER_CONSTANT_202_Y: u32 = 0x4329;
+pub const SHADER_CONSTANT_202_Z: u32 = 0x432A;
+pub const SHADER_CONSTANT_202_W: u32 = 0x432B;
+pub const SHADER_CONSTANT_203_X: u32 = 0x432C;
+pub const SHADER_CONSTANT_203_Y: u32 = 0x432D;
+pub const SHADER_CONSTANT_203_Z: u32 = 0x432E;
+pub const SHADER_CONSTANT_203_W: u32 = 0x432F;
+pub const SHADER_CONSTANT_204_X: u32 = 0x4330;
+pub const SHADER_CONSTANT_204_Y: u32 = 0x4331;
+pub const SHADER_CONSTANT_204_Z: u32 = 0x4332;
+pub const SHADER_CONSTANT_204_W: u32 = 0x4333;
+pub const SHADER_CONSTANT_205_X: u32 = 0x4334;
+pub const SHADER_CONSTANT_205_Y: u32 = 0x4335;
+pub const SHADER_CONSTANT_205_Z: u32 = 0x4336;
+pub const SHADER_CONSTANT_205_W: u32 = 0x4337;
+pub const SHADER_CONSTANT_206_X: u32 = 0x4338;
+pub const SHADER_CONSTANT_206_Y: u32 = 0x4339;
+pub const SHADER_CONSTANT_206_Z: u32 = 0x433A;
+pub const SHADER_CONSTANT_206_W: u32 = 0x433B;
+pub const SHADER_CONSTANT_207_X: u32 = 0x433C;
+pub const SHADER_CONSTANT_207_Y: u32 = 0x433D;
+pub const SHADER_CONSTANT_207_Z: u32 = 0x433E;
+pub const SHADER_CONSTANT_207_W: u32 = 0x433F;
+pub const SHADER_CONSTANT_208_X: u32 = 0x4340;
+pub const SHADER_CONSTANT_208_Y: u32 = 0x4341;
+pub const SHADER_CONSTANT_208_Z: u32 = 0x4342;
+pub const SHADER_CONSTANT_208_W: u32 = 0x4343;
+pub const SHADER_CONSTANT_209_X: u32 = 0x4344;
+pub const SHADER_CONSTANT_209_Y: u32 = 0x4345;
+pub const SHADER_CONSTANT_209_Z: u32 = 0x4346;
+pub const SHADER_CONSTANT_209_W: u32 = 0x4347;
+pub const SHADER_CONSTANT_210_X: u32 = 0x4348;
+pub const SHADER_CONSTANT_210_Y: u32 = 0x4349;
+pub const SHADER_CONSTANT_210_Z: u32 = 0x434A;
+pub const SHADER_CONSTANT_210_W: u32 = 0x434B;
+pub const SHADER_CONSTANT_211_X: u32 = 0x434C;
+pub const SHADER_CONSTANT_211_Y: u32 = 0x434D;
+pub const SHADER_CONSTANT_211_Z: u32 = 0x434E;
+pub const SHADER_CONSTANT_211_W: u32 = 0x434F;
+pub const SHADER_CONSTANT_212_X: u32 = 0x4350;
+pub const SHADER_CONSTANT_212_Y: u32 = 0x4351;
+pub const SHADER_CONSTANT_212_Z: u32 = 0x4352;
+pub const SHADER_CONSTANT_212_W: u32 = 0x4353;
+pub const SHADER_CONSTANT_213_X: u32 = 0x4354;
+pub const SHADER_CONSTANT_213_Y: u32 = 0x4355;
+pub const SHADER_CONSTANT_213_Z: u32 = 0x4356;
+pub const SHADER_CONSTANT_213_W: u32 = 0x4357;
+pub const SHADER_CONSTANT_214_X: u32 = 0x4358;
+pub const SHADER_CONSTANT_214_Y: u32 = 0x4359;
+pub const SHADER_CONSTANT_214_Z: u32 = 0x435A;
+pub const SHADER_CONSTANT_214_W: u32 = 0x435B;
+pub const SHADER_CONSTANT_215_X: u32 = 0x435C;
+pub const SHADER_CONSTANT_215_Y: u32 = 0x435D;
+pub const SHADER_CONSTANT_215_Z: u32 = 0x435E;
+pub const SHADER_CONSTANT_215_W: u32 = 0x435F;
+pub const SHADER_CONSTANT_216_X: u32 = 0x4360;
+pub const SHADER_CONSTANT_216_Y: u32 = 0x4361;
+pub const SHADER_CONSTANT_216_Z: u32 = 0x4362;
+pub const SHADER_CONSTANT_216_W: u32 = 0x4363;
+pub const SHADER_CONSTANT_217_X: u32 = 0x4364;
+pub const SHADER_CONSTANT_217_Y: u32 = 0x4365;
+pub const SHADER_CONSTANT_217_Z: u32 = 0x4366;
+pub const SHADER_CONSTANT_217_W: u32 = 0x4367;
+pub const SHADER_CONSTANT_218_X: u32 = 0x4368;
+pub const SHADER_CONSTANT_218_Y: u32 = 0x4369;
+pub const SHADER_CONSTANT_218_Z: u32 = 0x436A;
+pub const SHADER_CONSTANT_218_W: u32 = 0x436B;
+pub const SHADER_CONSTANT_219_X: u32 = 0x436C;
+pub const SHADER_CONSTANT_219_Y: u32 = 0x436D;
+pub const SHADER_CONSTANT_219_Z: u32 = 0x436E;
+pub const SHADER_CONSTANT_219_W: u32 = 0x436F;
+pub const SHADER_CONSTANT_220_X: u32 = 0x4370;
+pub const SHADER_CONSTANT_220_Y: u32 = 0x4371;
+pub const SHADER_CONSTANT_220_Z: u32 = 0x4372;
+pub const SHADER_CONSTANT_220_W: u32 = 0x4373;
+pub const SHADER_CONSTANT_221_X: u32 = 0x4374;
+pub const SHADER_CONSTANT_221_Y: u32 = 0x4375;
+pub const SHADER_CONSTANT_221_Z: u32 = 0x4376;
+pub const SHADER_CONSTANT_221_W: u32 = 0x4377;
+pub const SHADER_CONSTANT_222_X: u32 = 0x4378;
+pub const SHADER_CONSTANT_222_Y: u32 = 0x4379;
+pub const SHADER_CONSTANT_222_Z: u32 = 0x437A;
+pub const SHADER_CONSTANT_222_W: u32 = 0x437B;
+pub const SHADER_CONSTANT_223_X: u32 = 0x437C;
+pub const SHADER_CONSTANT_223_Y: u32 = 0x437D;
+pub const SHADER_CONSTANT_223_Z: u32 = 0x437E;
+pub const SHADER_CONSTANT_223_W: u32 = 0x437F;
+pub const SHADER_CONSTANT_224_X: u32 = 0x4380;
+pub const SHADER_CONSTANT_224_Y: u32 = 0x4381;
+pub const SHADER_CONSTANT_224_Z: u32 = 0x4382;
+pub const SHADER_CONSTANT_224_W: u32 = 0x4383;
+pub const SHADER_CONSTANT_225_X: u32 = 0x4384;
+pub const SHADER_CONSTANT_225_Y: u32 = 0x4385;
+pub const SHADER_CONSTANT_225_Z: u32 = 0x4386;
+pub const SHADER_CONSTANT_225_W: u32 = 0x4387;
+pub const SHADER_CONSTANT_226_X: u32 = 0x4388;
+pub const SHADER_CONSTANT_226_Y: u32 = 0x4389;
+pub const SHADER_CONSTANT_226_Z: u32 = 0x438A;
+pub const SHADER_CONSTANT_226_W: u32 = 0x438B;
+pub const SHADER_CONSTANT_227_X: u32 = 0x438C;
+pub const SHADER_CONSTANT_227_Y: u32 = 0x438D;
+pub const SHADER_CONSTANT_227_Z: u32 = 0x438E;
+pub const SHADER_CONSTANT_227_W: u32 = 0x438F;
+pub const SHADER_CONSTANT_228_X: u32 = 0x4390;
+pub const SHADER_CONSTANT_228_Y: u32 = 0x4391;
+pub const SHADER_CONSTANT_228_Z: u32 = 0x4392;
+pub const SHADER_CONSTANT_228_W: u32 = 0x4393;
+pub const SHADER_CONSTANT_229_X: u32 = 0x4394;
+pub const SHADER_CONSTANT_229_Y: u32 = 0x4395;
+pub const SHADER_CONSTANT_229_Z: u32 = 0x4396;
+pub const SHADER_CONSTANT_229_W: u32 = 0x4397;
+pub const SHADER_CONSTANT_230_X: u32 = 0x4398;
+pub const SHADER_CONSTANT_230_Y: u32 = 0x4399;
+pub const SHADER_CONSTANT_230_Z: u32 = 0x439A;
+pub const SHADER_CONSTANT_230_W: u32 = 0x439B;
+pub const SHADER_CONSTANT_231_X: u32 = 0x439C;
+pub const SHADER_CONSTANT_231_Y: u32 = 0x439D;
+pub const SHADER_CONSTANT_231_Z: u32 = 0x439E;
+pub const SHADER_CONSTANT_231_W: u32 = 0x439F;
+pub const SHADER_CONSTANT_232_X: u32 = 0x43A0;
+pub const SHADER_CONSTANT_232_Y: u32 = 0x43A1;
+pub const SHADER_CONSTANT_232_Z: u32 = 0x43A2;
+pub const SHADER_CONSTANT_232_W: u32 = 0x43A3;
+pub const SHADER_CONSTANT_233_X: u32 = 0x43A4;
+pub const SHADER_CONSTANT_233_Y: u32 = 0x43A5;
+pub const SHADER_CONSTANT_233_Z: u32 = 0x43A6;
+pub const SHADER_CONSTANT_233_W: u32 = 0x43A7;
+pub const SHADER_CONSTANT_234_X: u32 = 0x43A8;
+pub const SHADER_CONSTANT_234_Y: u32 = 0x43A9;
+pub const SHADER_CONSTANT_234_Z: u32 = 0x43AA;
+pub const SHADER_CONSTANT_234_W: u32 = 0x43AB;
+pub const SHADER_CONSTANT_235_X: u32 = 0x43AC;
+pub const SHADER_CONSTANT_235_Y: u32 = 0x43AD;
+pub const SHADER_CONSTANT_235_Z: u32 = 0x43AE;
+pub const SHADER_CONSTANT_235_W: u32 = 0x43AF;
+pub const SHADER_CONSTANT_236_X: u32 = 0x43B0;
+pub const SHADER_CONSTANT_236_Y: u32 = 0x43B1;
+pub const SHADER_CONSTANT_236_Z: u32 = 0x43B2;
+pub const SHADER_CONSTANT_236_W: u32 = 0x43B3;
+pub const SHADER_CONSTANT_237_X: u32 = 0x43B4;
+pub const SHADER_CONSTANT_237_Y: u32 = 0x43B5;
+pub const SHADER_CONSTANT_237_Z: u32 = 0x43B6;
+pub const SHADER_CONSTANT_237_W: u32 = 0x43B7;
+pub const SHADER_CONSTANT_238_X: u32 = 0x43B8;
+pub const SHADER_CONSTANT_238_Y: u32 = 0x43B9;
+pub const SHADER_CONSTANT_238_Z: u32 = 0x43BA;
+pub const SHADER_CONSTANT_238_W: u32 = 0x43BB;
+pub const SHADER_CONSTANT_239_X: u32 = 0x43BC;
+pub const SHADER_CONSTANT_239_Y: u32 = 0x43BD;
+pub const SHADER_CONSTANT_239_Z: u32 = 0x43BE;
+pub const SHADER_CONSTANT_239_W: u32 = 0x43BF;
+pub const SHADER_CONSTANT_240_X: u32 = 0x43C0;
+pub const SHADER_CONSTANT_240_Y: u32 = 0x43C1;
+pub const SHADER_CONSTANT_240_Z: u32 = 0x43C2;
+pub const SHADER_CONSTANT_240_W: u32 = 0x43C3;
+pub const SHADER_CONSTANT_241_X: u32 = 0x43C4;
+pub const SHADER_CONSTANT_241_Y: u32 = 0x43C5;
+pub const SHADER_CONSTANT_241_Z: u32 = 0x43C6;
+pub const SHADER_CONSTANT_241_W: u32 = 0x43C7;
+pub const SHADER_CONSTANT_242_X: u32 = 0x43C8;
+pub const SHADER_CONSTANT_242_Y: u32 = 0x43C9;
+pub const SHADER_CONSTANT_242_Z: u32 = 0x43CA;
+pub const SHADER_CONSTANT_242_W: u32 = 0x43CB;
+pub const SHADER_CONSTANT_243_X: u32 = 0x43CC;
+pub const SHADER_CONSTANT_243_Y: u32 = 0x43CD;
+pub const SHADER_CONSTANT_243_Z: u32 = 0x43CE;
+pub const SHADER_CONSTANT_243_W: u32 = 0x43CF;
+pub const SHADER_CONSTANT_244_X: u32 = 0x43D0;
+pub const SHADER_CONSTANT_244_Y: u32 = 0x43D1;
+pub const SHADER_CONSTANT_244_Z: u32 = 0x43D2;
+pub const SHADER_CONSTANT_244_W: u32 = 0x43D3;
+pub const SHADER_CONSTANT_245_X: u32 = 0x43D4;
+pub const SHADER_CONSTANT_245_Y: u32 = 0x43D5;
+pub const SHADER_CONSTANT_245_Z: u32 = 0x43D6;
+pub const SHADER_CONSTANT_245_W: u32 = 0x43D7;
+pub const SHADER_CONSTANT_246_X: u32 = 0x43D8;
+pub const SHADER_CONSTANT_246_Y: u32 = 0x43D9;
+pub const SHADER_CONSTANT_246_Z: u32 = 0x43DA;
+pub const SHADER_CONSTANT_246_W: u32 = 0x43DB;
+pub const SHADER_CONSTANT_247_X: u32 = 0x43DC;
+pub const SHADER_CONSTANT_247_Y: u32 = 0x43DD;
+pub const SHADER_CONSTANT_247_Z: u32 = 0x43DE;
+pub const SHADER_CONSTANT_247_W: u32 = 0x43DF;
+pub const SHADER_CONSTANT_248_X: u32 = 0x43E0;
+pub const SHADER_CONSTANT_248_Y: u32 = 0x43E1;
+pub const SHADER_CONSTANT_248_Z: u32 = 0x43E2;
+pub const SHADER_CONSTANT_248_W: u32 = 0x43E3;
+pub const SHADER_CONSTANT_249_X: u32 = 0x43E4;
+pub const SHADER_CONSTANT_249_Y: u32 = 0x43E5;
+pub const SHADER_CONSTANT_249_Z: u32 = 0x43E6;
+pub const SHADER_CONSTANT_249_W: u32 = 0x43E7;
+pub const SHADER_CONSTANT_250_X: u32 = 0x43E8;
+pub const SHADER_CONSTANT_250_Y: u32 = 0x43E9;
+pub const SHADER_CONSTANT_250_Z: u32 = 0x43EA;
+pub const SHADER_CONSTANT_250_W: u32 = 0x43EB;
+pub const SHADER_CONSTANT_251_X: u32 = 0x43EC;
+pub const SHADER_CONSTANT_251_Y: u32 = 0x43ED;
+pub const SHADER_CONSTANT_251_Z: u32 = 0x43EE;
+pub const SHADER_CONSTANT_251_W: u32 = 0x43EF;
+pub const SHADER_CONSTANT_252_X: u32 = 0x43F0;
+pub const SHADER_CONSTANT_252_Y: u32 = 0x43F1;
+pub const SHADER_CONSTANT_252_Z: u32 = 0x43F2;
+pub const SHADER_CONSTANT_252_W: u32 = 0x43F3;
+pub const SHADER_CONSTANT_253_X: u32 = 0x43F4;
+pub const SHADER_CONSTANT_253_Y: u32 = 0x43F5;
+pub const SHADER_CONSTANT_253_Z: u32 = 0x43F6;
+pub const SHADER_CONSTANT_253_W: u32 = 0x43F7;
+pub const SHADER_CONSTANT_254_X: u32 = 0x43F8;
+pub const SHADER_CONSTANT_254_Y: u32 = 0x43F9;
+pub const SHADER_CONSTANT_254_Z: u32 = 0x43FA;
+pub const SHADER_CONSTANT_254_W: u32 = 0x43FB;
+pub const SHADER_CONSTANT_255_X: u32 = 0x43FC;
+pub const SHADER_CONSTANT_255_Y: u32 = 0x43FD;
+pub const SHADER_CONSTANT_255_Z: u32 = 0x43FE;
+pub const SHADER_CONSTANT_255_W: u32 = 0x43FF;
+pub const SHADER_CONSTANT_256_X: u32 = 0x4400;
+pub const SHADER_CONSTANT_256_Y: u32 = 0x4401;
+pub const SHADER_CONSTANT_256_Z: u32 = 0x4402;
+pub const SHADER_CONSTANT_256_W: u32 = 0x4403;
+pub const SHADER_CONSTANT_257_X: u32 = 0x4404;
+pub const SHADER_CONSTANT_257_Y: u32 = 0x4405;
+pub const SHADER_CONSTANT_257_Z: u32 = 0x4406;
+pub const SHADER_CONSTANT_257_W: u32 = 0x4407;
+pub const SHADER_CONSTANT_258_X: u32 = 0x4408;
+pub const SHADER_CONSTANT_258_Y: u32 = 0x4409;
+pub const SHADER_CONSTANT_258_Z: u32 = 0x440A;
+pub const SHADER_CONSTANT_258_W: u32 = 0x440B;
+pub const SHADER_CONSTANT_259_X: u32 = 0x440C;
+pub const SHADER_CONSTANT_259_Y: u32 = 0x440D;
+pub const SHADER_CONSTANT_259_Z: u32 = 0x440E;
+pub const SHADER_CONSTANT_259_W: u32 = 0x440F;
+pub const SHADER_CONSTANT_260_X: u32 = 0x4410;
+pub const SHADER_CONSTANT_260_Y: u32 = 0x4411;
+pub const SHADER_CONSTANT_260_Z: u32 = 0x4412;
+pub const SHADER_CONSTANT_260_W: u32 = 0x4413;
+pub const SHADER_CONSTANT_261_X: u32 = 0x4414;
+pub const SHADER_CONSTANT_261_Y: u32 = 0x4415;
+pub const SHADER_CONSTANT_261_Z: u32 = 0x4416;
+pub const SHADER_CONSTANT_261_W: u32 = 0x4417;
+pub const SHADER_CONSTANT_262_X: u32 = 0x4418;
+pub const SHADER_CONSTANT_262_Y: u32 = 0x4419;
+pub const SHADER_CONSTANT_262_Z: u32 = 0x441A;
+pub const SHADER_CONSTANT_262_W: u32 = 0x441B;
+pub const SHADER_CONSTANT_263_X: u32 = 0x441C;
+pub const SHADER_CONSTANT_263_Y: u32 = 0x441D;
+pub const SHADER_CONSTANT_263_Z: u32 = 0x441E;
+pub const SHADER_CONSTANT_263_W: u32 = 0x441F;
+pub const SHADER_CONSTANT_264_X: u32 = 0x4420;
+pub const SHADER_CONSTANT_264_Y: u32 = 0x4421;
+pub const SHADER_CONSTANT_264_Z: u32 = 0x4422;
+pub const SHADER_CONSTANT_264_W: u32 = 0x4423;
+pub const SHADER_CONSTANT_265_X: u32 = 0x4424;
+pub const SHADER_CONSTANT_265_Y: u32 = 0x4425;
+pub const SHADER_CONSTANT_265_Z: u32 = 0x4426;
+pub const SHADER_CONSTANT_265_W: u32 = 0x4427;
+pub const SHADER_CONSTANT_266_X: u32 = 0x4428;
+pub const SHADER_CONSTANT_266_Y: u32 = 0x4429;
+pub const SHADER_CONSTANT_266_Z: u32 = 0x442A;
+pub const SHADER_CONSTANT_266_W: u32 = 0x442B;
+pub const SHADER_CONSTANT_267_X: u32 = 0x442C;
+pub const SHADER_CONSTANT_267_Y: u32 = 0x442D;
+pub const SHADER_CONSTANT_267_Z: u32 = 0x442E;
+pub const SHADER_CONSTANT_267_W: u32 = 0x442F;
+pub const SHADER_CONSTANT_268_X: u32 = 0x4430;
+pub const SHADER_CONSTANT_268_Y: u32 = 0x4431;
+pub const SHADER_CONSTANT_268_Z: u32 = 0x4432;
+pub const SHADER_CONSTANT_268_W: u32 = 0x4433;
+pub const SHADER_CONSTANT_269_X: u32 = 0x4434;
+pub const SHADER_CONSTANT_269_Y: u32 = 0x4435;
+pub const SHADER_CONSTANT_269_Z: u32 = 0x4436;
+pub const SHADER_CONSTANT_269_W: u32 = 0x4437;
+pub const SHADER_CONSTANT_270_X: u32 = 0x4438;
+pub const SHADER_CONSTANT_270_Y: u32 = 0x4439;
+pub const SHADER_CONSTANT_270_Z: u32 = 0x443A;
+pub const SHADER_CONSTANT_270_W: u32 = 0x443B;
+pub const SHADER_CONSTANT_271_X: u32 = 0x443C;
+pub const SHADER_CONSTANT_271_Y: u32 = 0x443D;
+pub const SHADER_CONSTANT_271_Z: u32 = 0x443E;
+pub const SHADER_CONSTANT_271_W: u32 = 0x443F;
+pub const SHADER_CONSTANT_272_X: u32 = 0x4440;
+pub const SHADER_CONSTANT_272_Y: u32 = 0x4441;
+pub const SHADER_CONSTANT_272_Z: u32 = 0x4442;
+pub const SHADER_CONSTANT_272_W: u32 = 0x4443;
+pub const SHADER_CONSTANT_273_X: u32 = 0x4444;
+pub const SHADER_CONSTANT_273_Y: u32 = 0x4445;
+pub const SHADER_CONSTANT_273_Z: u32 = 0x4446;
+pub const SHADER_CONSTANT_273_W: u32 = 0x4447;
+pub const SHADER_CONSTANT_274_X: u32 = 0x4448;
+pub const SHADER_CONSTANT_274_Y: u32 = 0x4449;
+pub const SHADER_CONSTANT_274_Z: u32 = 0x444A;
+pub const SHADER_CONSTANT_274_W: u32 = 0x444B;
+pub const SHADER_CONSTANT_275_X: u32 = 0x444C;
+pub const SHADER_CONSTANT_275_Y: u32 = 0x444D;
+pub const SHADER_CONSTANT_275_Z: u32 = 0x444E;
+pub const SHADER_CONSTANT_275_W: u32 = 0x444F;
+pub const SHADER_CONSTANT_276_X: u32 = 0x4450;
+pub const SHADER_CONSTANT_276_Y: u32 = 0x4451;
+pub const SHADER_CONSTANT_276_Z: u32 = 0x4452;
+pub const SHADER_CONSTANT_276_W: u32 = 0x4453;
+pub const SHADER_CONSTANT_277_X: u32 = 0x4454;
+pub const SHADER_CONSTANT_277_Y: u32 = 0x4455;
+pub const SHADER_CONSTANT_277_Z: u32 = 0x4456;
+pub const SHADER_CONSTANT_277_W: u32 = 0x4457;
+pub const SHADER_CONSTANT_278_X: u32 = 0x4458;
+pub const SHADER_CONSTANT_278_Y: u32 = 0x4459;
+pub const SHADER_CONSTANT_278_Z: u32 = 0x445A;
+pub const SHADER_CONSTANT_278_W: u32 = 0x445B;
+pub const SHADER_CONSTANT_279_X: u32 = 0x445C;
+pub const SHADER_CONSTANT_279_Y: u32 = 0x445D;
+pub const SHADER_CONSTANT_279_Z: u32 = 0x445E;
+pub const SHADER_CONSTANT_279_W: u32 = 0x445F;
+pub const SHADER_CONSTANT_280_X: u32 = 0x4460;
+pub const SHADER_CONSTANT_280_Y: u32 = 0x4461;
+pub const SHADER_CONSTANT_280_Z: u32 = 0x4462;
+pub const SHADER_CONSTANT_280_W: u32 = 0x4463;
+pub const SHADER_CONSTANT_281_X: u32 = 0x4464;
+pub const SHADER_CONSTANT_281_Y: u32 = 0x4465;
+pub const SHADER_CONSTANT_281_Z: u32 = 0x4466;
+pub const SHADER_CONSTANT_281_W: u32 = 0x4467;
+pub const SHADER_CONSTANT_282_X: u32 = 0x4468;
+pub const SHADER_CONSTANT_282_Y: u32 = 0x4469;
+pub const SHADER_CONSTANT_282_Z: u32 = 0x446A;
+pub const SHADER_CONSTANT_282_W: u32 = 0x446B;
+pub const SHADER_CONSTANT_283_X: u32 = 0x446C;
+pub const SHADER_CONSTANT_283_Y: u32 = 0x446D;
+pub const SHADER_CONSTANT_283_Z: u32 = 0x446E;
+pub const SHADER_CONSTANT_283_W: u32 = 0x446F;
+pub const SHADER_CONSTANT_284_X: u32 = 0x4470;
+pub const SHADER_CONSTANT_284_Y: u32 = 0x4471;
+pub const SHADER_CONSTANT_284_Z: u32 = 0x4472;
+pub const SHADER_CONSTANT_284_W: u32 = 0x4473;
+pub const SHADER_CONSTANT_285_X: u32 = 0x4474;
+pub const SHADER_CONSTANT_285_Y: u32 = 0x4475;
+pub const SHADER_CONSTANT_285_Z: u32 = 0x4476;
+pub const SHADER_CONSTANT_285_W: u32 = 0x4477;
+pub const SHADER_CONSTANT_286_X: u32 = 0x4478;
+pub const SHADER_CONSTANT_286_Y: u32 = 0x4479;
+pub const SHADER_CONSTANT_286_Z: u32 = 0x447A;
+pub const SHADER_CONSTANT_286_W: u32 = 0x447B;
+pub const SHADER_CONSTANT_287_X: u32 = 0x447C;
+pub const SHADER_CONSTANT_287_Y: u32 = 0x447D;
+pub const SHADER_CONSTANT_287_Z: u32 = 0x447E;
+pub const SHADER_CONSTANT_287_W: u32 = 0x447F;
+pub const SHADER_CONSTANT_288_X: u32 = 0x4480;
+pub const SHADER_CONSTANT_288_Y: u32 = 0x4481;
+pub const SHADER_CONSTANT_288_Z: u32 = 0x4482;
+pub const SHADER_CONSTANT_288_W: u32 = 0x4483;
+pub const SHADER_CONSTANT_289_X: u32 = 0x4484;
+pub const SHADER_CONSTANT_289_Y: u32 = 0x4485;
+pub const SHADER_CONSTANT_289_Z: u32 = 0x4486;
+pub const SHADER_CONSTANT_289_W: u32 = 0x4487;
+pub const SHADER_CONSTANT_290_X: u32 = 0x4488;
+pub const SHADER_CONSTANT_290_Y: u32 = 0x4489;
+pub const SHADER_CONSTANT_290_Z: u32 = 0x448A;
+pub const SHADER_CONSTANT_290_W: u32 = 0x448B;
+pub const SHADER_CONSTANT_291_X: u32 = 0x448C;
+pub const SHADER_CONSTANT_291_Y: u32 = 0x448D;
+pub const SHADER_CONSTANT_291_Z: u32 = 0x448E;
+pub const SHADER_CONSTANT_291_W: u32 = 0x448F;
+pub const SHADER_CONSTANT_292_X: u32 = 0x4490;
+pub const SHADER_CONSTANT_292_Y: u32 = 0x4491;
+pub const SHADER_CONSTANT_292_Z: u32 = 0x4492;
+pub const SHADER_CONSTANT_292_W: u32 = 0x4493;
+pub const SHADER_CONSTANT_293_X: u32 = 0x4494;
+pub const SHADER_CONSTANT_293_Y: u32 = 0x4495;
+pub const SHADER_CONSTANT_293_Z: u32 = 0x4496;
+pub const SHADER_CONSTANT_293_W: u32 = 0x4497;
+pub const SHADER_CONSTANT_294_X: u32 = 0x4498;
+pub const SHADER_CONSTANT_294_Y: u32 = 0x4499;
+pub const SHADER_CONSTANT_294_Z: u32 = 0x449A;
+pub const SHADER_CONSTANT_294_W: u32 = 0x449B;
+pub const SHADER_CONSTANT_295_X: u32 = 0x449C;
+pub const SHADER_CONSTANT_295_Y: u32 = 0x449D;
+pub const SHADER_CONSTANT_295_Z: u32 = 0x449E;
+pub const SHADER_CONSTANT_295_W: u32 = 0x449F;
+pub const SHADER_CONSTANT_296_X: u32 = 0x44A0;
+pub const SHADER_CONSTANT_296_Y: u32 = 0x44A1;
+pub const SHADER_CONSTANT_296_Z: u32 = 0x44A2;
+pub const SHADER_CONSTANT_296_W: u32 = 0x44A3;
+pub const SHADER_CONSTANT_297_X: u32 = 0x44A4;
+pub const SHADER_CONSTANT_297_Y: u32 = 0x44A5;
+pub const SHADER_CONSTANT_297_Z: u32 = 0x44A6;
+pub const SHADER_CONSTANT_297_W: u32 = 0x44A7;
+pub const SHADER_CONSTANT_298_X: u32 = 0x44A8;
+pub const SHADER_CONSTANT_298_Y: u32 = 0x44A9;
+pub const SHADER_CONSTANT_298_Z: u32 = 0x44AA;
+pub const SHADER_CONSTANT_298_W: u32 = 0x44AB;
+pub const SHADER_CONSTANT_299_X: u32 = 0x44AC;
+pub const SHADER_CONSTANT_299_Y: u32 = 0x44AD;
+pub const SHADER_CONSTANT_299_Z: u32 = 0x44AE;
+pub const SHADER_CONSTANT_299_W: u32 = 0x44AF;
+pub const SHADER_CONSTANT_300_X: u32 = 0x44B0;
+pub const SHADER_CONSTANT_300_Y: u32 = 0x44B1;
+pub const SHADER_CONSTANT_300_Z: u32 = 0x44B2;
+pub const SHADER_CONSTANT_300_W: u32 = 0x44B3;
+pub const SHADER_CONSTANT_301_X: u32 = 0x44B4;
+pub const SHADER_CONSTANT_301_Y: u32 = 0x44B5;
+pub const SHADER_CONSTANT_301_Z: u32 = 0x44B6;
+pub const SHADER_CONSTANT_301_W: u32 = 0x44B7;
+pub const SHADER_CONSTANT_302_X: u32 = 0x44B8;
+pub const SHADER_CONSTANT_302_Y: u32 = 0x44B9;
+pub const SHADER_CONSTANT_302_Z: u32 = 0x44BA;
+pub const SHADER_CONSTANT_302_W: u32 = 0x44BB;
+pub const SHADER_CONSTANT_303_X: u32 = 0x44BC;
+pub const SHADER_CONSTANT_303_Y: u32 = 0x44BD;
+pub const SHADER_CONSTANT_303_Z: u32 = 0x44BE;
+pub const SHADER_CONSTANT_303_W: u32 = 0x44BF;
+pub const SHADER_CONSTANT_304_X: u32 = 0x44C0;
+pub const SHADER_CONSTANT_304_Y: u32 = 0x44C1;
+pub const SHADER_CONSTANT_304_Z: u32 = 0x44C2;
+pub const SHADER_CONSTANT_304_W: u32 = 0x44C3;
+pub const SHADER_CONSTANT_305_X: u32 = 0x44C4;
+pub const SHADER_CONSTANT_305_Y: u32 = 0x44C5;
+pub const SHADER_CONSTANT_305_Z: u32 = 0x44C6;
+pub const SHADER_CONSTANT_305_W: u32 = 0x44C7;
+pub const SHADER_CONSTANT_306_X: u32 = 0x44C8;
+pub const SHADER_CONSTANT_306_Y: u32 = 0x44C9;
+pub const SHADER_CONSTANT_306_Z: u32 = 0x44CA;
+pub const SHADER_CONSTANT_306_W: u32 = 0x44CB;
+pub const SHADER_CONSTANT_307_X: u32 = 0x44CC;
+pub const SHADER_CONSTANT_307_Y: u32 = 0x44CD;
+pub const SHADER_CONSTANT_307_Z: u32 = 0x44CE;
+pub const SHADER_CONSTANT_307_W: u32 = 0x44CF;
+pub const SHADER_CONSTANT_308_X: u32 = 0x44D0;
+pub const SHADER_CONSTANT_308_Y: u32 = 0x44D1;
+pub const SHADER_CONSTANT_308_Z: u32 = 0x44D2;
+pub const SHADER_CONSTANT_308_W: u32 = 0x44D3;
+pub const SHADER_CONSTANT_309_X: u32 = 0x44D4;
+pub const SHADER_CONSTANT_309_Y: u32 = 0x44D5;
+pub const SHADER_CONSTANT_309_Z: u32 = 0x44D6;
+pub const SHADER_CONSTANT_309_W: u32 = 0x44D7;
+pub const SHADER_CONSTANT_310_X: u32 = 0x44D8;
+pub const SHADER_CONSTANT_310_Y: u32 = 0x44D9;
+pub const SHADER_CONSTANT_310_Z: u32 = 0x44DA;
+pub const SHADER_CONSTANT_310_W: u32 = 0x44DB;
+pub const SHADER_CONSTANT_311_X: u32 = 0x44DC;
+pub const SHADER_CONSTANT_311_Y: u32 = 0x44DD;
+pub const SHADER_CONSTANT_311_Z: u32 = 0x44DE;
+pub const SHADER_CONSTANT_311_W: u32 = 0x44DF;
+pub const SHADER_CONSTANT_312_X: u32 = 0x44E0;
+pub const SHADER_CONSTANT_312_Y: u32 = 0x44E1;
+pub const SHADER_CONSTANT_312_Z: u32 = 0x44E2;
+pub const SHADER_CONSTANT_312_W: u32 = 0x44E3;
+pub const SHADER_CONSTANT_313_X: u32 = 0x44E4;
+pub const SHADER_CONSTANT_313_Y: u32 = 0x44E5;
+pub const SHADER_CONSTANT_313_Z: u32 = 0x44E6;
+pub const SHADER_CONSTANT_313_W: u32 = 0x44E7;
+pub const SHADER_CONSTANT_314_X: u32 = 0x44E8;
+pub const SHADER_CONSTANT_314_Y: u32 = 0x44E9;
+pub const SHADER_CONSTANT_314_Z: u32 = 0x44EA;
+pub const SHADER_CONSTANT_314_W: u32 = 0x44EB;
+pub const SHADER_CONSTANT_315_X: u32 = 0x44EC;
+pub const SHADER_CONSTANT_315_Y: u32 = 0x44ED;
+pub const SHADER_CONSTANT_315_Z: u32 = 0x44EE;
+pub const SHADER_CONSTANT_315_W: u32 = 0x44EF;
+pub const SHADER_CONSTANT_316_X: u32 = 0x44F0;
+pub const SHADER_CONSTANT_316_Y: u32 = 0x44F1;
+pub const SHADER_CONSTANT_316_Z: u32 = 0x44F2;
+pub const SHADER_CONSTANT_316_W: u32 = 0x44F3;
+pub const SHADER_CONSTANT_317_X: u32 = 0x44F4;
+pub const SHADER_CONSTANT_317_Y: u32 = 0x44F5;
+pub const SHADER_CONSTANT_317_Z: u32 = 0x44F6;
+pub const SHADER_CONSTANT_317_W: u32 = 0x44F7;
+pub const SHADER_CONSTANT_318_X: u32 = 0x44F8;
+pub const SHADER_CONSTANT_318_Y: u32 = 0x44F9;
+pub const SHADER_CONSTANT_318_Z: u32 = 0x44FA;
+pub const SHADER_CONSTANT_318_W: u32 = 0x44FB;
+pub const SHADER_CONSTANT_319_X: u32 = 0x44FC;
+pub const SHADER_CONSTANT_319_Y: u32 = 0x44FD;
+pub const SHADER_CONSTANT_319_Z: u32 = 0x44FE;
+pub const SHADER_CONSTANT_319_W: u32 = 0x44FF;
+pub const SHADER_CONSTANT_320_X: u32 = 0x4500;
+pub const SHADER_CONSTANT_320_Y: u32 = 0x4501;
+pub const SHADER_CONSTANT_320_Z: u32 = 0x4502;
+pub const SHADER_CONSTANT_320_W: u32 = 0x4503;
+pub const SHADER_CONSTANT_321_X: u32 = 0x4504;
+pub const SHADER_CONSTANT_321_Y: u32 = 0x4505;
+pub const SHADER_CONSTANT_321_Z: u32 = 0x4506;
+pub const SHADER_CONSTANT_321_W: u32 = 0x4507;
+pub const SHADER_CONSTANT_322_X: u32 = 0x4508;
+pub const SHADER_CONSTANT_322_Y: u32 = 0x4509;
+pub const SHADER_CONSTANT_322_Z: u32 = 0x450A;
+pub const SHADER_CONSTANT_322_W: u32 = 0x450B;
+pub const SHADER_CONSTANT_323_X: u32 = 0x450C;
+pub const SHADER_CONSTANT_323_Y: u32 = 0x450D;
+pub const SHADER_CONSTANT_323_Z: u32 = 0x450E;
+pub const SHADER_CONSTANT_323_W: u32 = 0x450F;
+pub const SHADER_CONSTANT_324_X: u32 = 0x4510;
+pub const SHADER_CONSTANT_324_Y: u32 = 0x4511;
+pub const SHADER_CONSTANT_324_Z: u32 = 0x4512;
+pub const SHADER_CONSTANT_324_W: u32 = 0x4513;
+pub const SHADER_CONSTANT_325_X: u32 = 0x4514;
+pub const SHADER_CONSTANT_325_Y: u32 = 0x4515;
+pub const SHADER_CONSTANT_325_Z: u32 = 0x4516;
+pub const SHADER_CONSTANT_325_W: u32 = 0x4517;
+pub const SHADER_CONSTANT_326_X: u32 = 0x4518;
+pub const SHADER_CONSTANT_326_Y: u32 = 0x4519;
+pub const SHADER_CONSTANT_326_Z: u32 = 0x451A;
+pub const SHADER_CONSTANT_326_W: u32 = 0x451B;
+pub const SHADER_CONSTANT_327_X: u32 = 0x451C;
+pub const SHADER_CONSTANT_327_Y: u32 = 0x451D;
+pub const SHADER_CONSTANT_327_Z: u32 = 0x451E;
+pub const SHADER_CONSTANT_327_W: u32 = 0x451F;
+pub const SHADER_CONSTANT_328_X: u32 = 0x4520;
+pub const SHADER_CONSTANT_328_Y: u32 = 0x4521;
+pub const SHADER_CONSTANT_328_Z: u32 = 0x4522;
+pub const SHADER_CONSTANT_328_W: u32 = 0x4523;
+pub const SHADER_CONSTANT_329_X: u32 = 0x4524;
+pub const SHADER_CONSTANT_329_Y: u32 = 0x4525;
+pub const SHADER_CONSTANT_329_Z: u32 = 0x4526;
+pub const SHADER_CONSTANT_329_W: u32 = 0x4527;
+pub const SHADER_CONSTANT_330_X: u32 = 0x4528;
+pub const SHADER_CONSTANT_330_Y: u32 = 0x4529;
+pub const SHADER_CONSTANT_330_Z: u32 = 0x452A;
+pub const SHADER_CONSTANT_330_W: u32 = 0x452B;
+pub const SHADER_CONSTANT_331_X: u32 = 0x452C;
+pub const SHADER_CONSTANT_331_Y: u32 = 0x452D;
+pub const SHADER_CONSTANT_331_Z: u32 = 0x452E;
+pub const SHADER_CONSTANT_331_W: u32 = 0x452F;
+pub const SHADER_CONSTANT_332_X: u32 = 0x4530;
+pub const SHADER_CONSTANT_332_Y: u32 = 0x4531;
+pub const SHADER_CONSTANT_332_Z: u32 = 0x4532;
+pub const SHADER_CONSTANT_332_W: u32 = 0x4533;
+pub const SHADER_CONSTANT_333_X: u32 = 0x4534;
+pub const SHADER_CONSTANT_333_Y: u32 = 0x4535;
+pub const SHADER_CONSTANT_333_Z: u32 = 0x4536;
+pub const SHADER_CONSTANT_333_W: u32 = 0x4537;
+pub const SHADER_CONSTANT_334_X: u32 = 0x4538;
+pub const SHADER_CONSTANT_334_Y: u32 = 0x4539;
+pub const SHADER_CONSTANT_334_Z: u32 = 0x453A;
+pub const SHADER_CONSTANT_334_W: u32 = 0x453B;
+pub const SHADER_CONSTANT_335_X: u32 = 0x453C;
+pub const SHADER_CONSTANT_335_Y: u32 = 0x453D;
+pub const SHADER_CONSTANT_335_Z: u32 = 0x453E;
+pub const SHADER_CONSTANT_335_W: u32 = 0x453F;
+pub const SHADER_CONSTANT_336_X: u32 = 0x4540;
+pub const SHADER_CONSTANT_336_Y: u32 = 0x4541;
+pub const SHADER_CONSTANT_336_Z: u32 = 0x4542;
+pub const SHADER_CONSTANT_336_W: u32 = 0x4543;
+pub const SHADER_CONSTANT_337_X: u32 = 0x4544;
+pub const SHADER_CONSTANT_337_Y: u32 = 0x4545;
+pub const SHADER_CONSTANT_337_Z: u32 = 0x4546;
+pub const SHADER_CONSTANT_337_W: u32 = 0x4547;
+pub const SHADER_CONSTANT_338_X: u32 = 0x4548;
+pub const SHADER_CONSTANT_338_Y: u32 = 0x4549;
+pub const SHADER_CONSTANT_338_Z: u32 = 0x454A;
+pub const SHADER_CONSTANT_338_W: u32 = 0x454B;
+pub const SHADER_CONSTANT_339_X: u32 = 0x454C;
+pub const SHADER_CONSTANT_339_Y: u32 = 0x454D;
+pub const SHADER_CONSTANT_339_Z: u32 = 0x454E;
+pub const SHADER_CONSTANT_339_W: u32 = 0x454F;
+pub const SHADER_CONSTANT_340_X: u32 = 0x4550;
+pub const SHADER_CONSTANT_340_Y: u32 = 0x4551;
+pub const SHADER_CONSTANT_340_Z: u32 = 0x4552;
+pub const SHADER_CONSTANT_340_W: u32 = 0x4553;
+pub const SHADER_CONSTANT_341_X: u32 = 0x4554;
+pub const SHADER_CONSTANT_341_Y: u32 = 0x4555;
+pub const SHADER_CONSTANT_341_Z: u32 = 0x4556;
+pub const SHADER_CONSTANT_341_W: u32 = 0x4557;
+pub const SHADER_CONSTANT_342_X: u32 = 0x4558;
+pub const SHADER_CONSTANT_342_Y: u32 = 0x4559;
+pub const SHADER_CONSTANT_342_Z: u32 = 0x455A;
+pub const SHADER_CONSTANT_342_W: u32 = 0x455B;
+pub const SHADER_CONSTANT_343_X: u32 = 0x455C;
+pub const SHADER_CONSTANT_343_Y: u32 = 0x455D;
+pub const SHADER_CONSTANT_343_Z: u32 = 0x455E;
+pub const SHADER_CONSTANT_343_W: u32 = 0x455F;
+pub const SHADER_CONSTANT_344_X: u32 = 0x4560;
+pub const SHADER_CONSTANT_344_Y: u32 = 0x4561;
+pub const SHADER_CONSTANT_344_Z: u32 = 0x4562;
+pub const SHADER_CONSTANT_344_W: u32 = 0x4563;
+pub const SHADER_CONSTANT_345_X: u32 = 0x4564;
+pub const SHADER_CONSTANT_345_Y: u32 = 0x4565;
+pub const SHADER_CONSTANT_345_Z: u32 = 0x4566;
+pub const SHADER_CONSTANT_345_W: u32 = 0x4567;
+pub const SHADER_CONSTANT_346_X: u32 = 0x4568;
+pub const SHADER_CONSTANT_346_Y: u32 = 0x4569;
+pub const SHADER_CONSTANT_346_Z: u32 = 0x456A;
+pub const SHADER_CONSTANT_346_W: u32 = 0x456B;
+pub const SHADER_CONSTANT_347_X: u32 = 0x456C;
+pub const SHADER_CONSTANT_347_Y: u32 = 0x456D;
+pub const SHADER_CONSTANT_347_Z: u32 = 0x456E;
+pub const SHADER_CONSTANT_347_W: u32 = 0x456F;
+pub const SHADER_CONSTANT_348_X: u32 = 0x4570;
+pub const SHADER_CONSTANT_348_Y: u32 = 0x4571;
+pub const SHADER_CONSTANT_348_Z: u32 = 0x4572;
+pub const SHADER_CONSTANT_348_W: u32 = 0x4573;
+pub const SHADER_CONSTANT_349_X: u32 = 0x4574;
+pub const SHADER_CONSTANT_349_Y: u32 = 0x4575;
+pub const SHADER_CONSTANT_349_Z: u32 = 0x4576;
+pub const SHADER_CONSTANT_349_W: u32 = 0x4577;
+pub const SHADER_CONSTANT_350_X: u32 = 0x4578;
+pub const SHADER_CONSTANT_350_Y: u32 = 0x4579;
+pub const SHADER_CONSTANT_350_Z: u32 = 0x457A;
+pub const SHADER_CONSTANT_350_W: u32 = 0x457B;
+pub const SHADER_CONSTANT_351_X: u32 = 0x457C;
+pub const SHADER_CONSTANT_351_Y: u32 = 0x457D;
+pub const SHADER_CONSTANT_351_Z: u32 = 0x457E;
+pub const SHADER_CONSTANT_351_W: u32 = 0x457F;
+pub const SHADER_CONSTANT_352_X: u32 = 0x4580;
+pub const SHADER_CONSTANT_352_Y: u32 = 0x4581;
+pub const SHADER_CONSTANT_352_Z: u32 = 0x4582;
+pub const SHADER_CONSTANT_352_W: u32 = 0x4583;
+pub const SHADER_CONSTANT_353_X: u32 = 0x4584;
+pub const SHADER_CONSTANT_353_Y: u32 = 0x4585;
+pub const SHADER_CONSTANT_353_Z: u32 = 0x4586;
+pub const SHADER_CONSTANT_353_W: u32 = 0x4587;
+pub const SHADER_CONSTANT_354_X: u32 = 0x4588;
+pub const SHADER_CONSTANT_354_Y: u32 = 0x4589;
+pub const SHADER_CONSTANT_354_Z: u32 = 0x458A;
+pub const SHADER_CONSTANT_354_W: u32 = 0x458B;
+pub const SHADER_CONSTANT_355_X: u32 = 0x458C;
+pub const SHADER_CONSTANT_355_Y: u32 = 0x458D;
+pub const SHADER_CONSTANT_355_Z: u32 = 0x458E;
+pub const SHADER_CONSTANT_355_W: u32 = 0x458F;
+pub const SHADER_CONSTANT_356_X: u32 = 0x4590;
+pub const SHADER_CONSTANT_356_Y: u32 = 0x4591;
+pub const SHADER_CONSTANT_356_Z: u32 = 0x4592;
+pub const SHADER_CONSTANT_356_W: u32 = 0x4593;
+pub const SHADER_CONSTANT_357_X: u32 = 0x4594;
+pub const SHADER_CONSTANT_357_Y: u32 = 0x4595;
+pub const SHADER_CONSTANT_357_Z: u32 = 0x4596;
+pub const SHADER_CONSTANT_357_W: u32 = 0x4597;
+pub const SHADER_CONSTANT_358_X: u32 = 0x4598;
+pub const SHADER_CONSTANT_358_Y: u32 = 0x4599;
+pub const SHADER_CONSTANT_358_Z: u32 = 0x459A;
+pub const SHADER_CONSTANT_358_W: u32 = 0x459B;
+pub const SHADER_CONSTANT_359_X: u32 = 0x459C;
+pub const SHADER_CONSTANT_359_Y: u32 = 0x459D;
+pub const SHADER_CONSTANT_359_Z: u32 = 0x459E;
+pub const SHADER_CONSTANT_359_W: u32 = 0x459F;
+pub const SHADER_CONSTANT_360_X: u32 = 0x45A0;
+pub const SHADER_CONSTANT_360_Y: u32 = 0x45A1;
+pub const SHADER_CONSTANT_360_Z: u32 = 0x45A2;
+pub const SHADER_CONSTANT_360_W: u32 = 0x45A3;
+pub const SHADER_CONSTANT_361_X: u32 = 0x45A4;
+pub const SHADER_CONSTANT_361_Y: u32 = 0x45A5;
+pub const SHADER_CONSTANT_361_Z: u32 = 0x45A6;
+pub const SHADER_CONSTANT_361_W: u32 = 0x45A7;
+pub const SHADER_CONSTANT_362_X: u32 = 0x45A8;
+pub const SHADER_CONSTANT_362_Y: u32 = 0x45A9;
+pub const SHADER_CONSTANT_362_Z: u32 = 0x45AA;
+pub const SHADER_CONSTANT_362_W: u32 = 0x45AB;
+pub const SHADER_CONSTANT_363_X: u32 = 0x45AC;
+pub const SHADER_CONSTANT_363_Y: u32 = 0x45AD;
+pub const SHADER_CONSTANT_363_Z: u32 = 0x45AE;
+pub const SHADER_CONSTANT_363_W: u32 = 0x45AF;
+pub const SHADER_CONSTANT_364_X: u32 = 0x45B0;
+pub const SHADER_CONSTANT_364_Y: u32 = 0x45B1;
+pub const SHADER_CONSTANT_364_Z: u32 = 0x45B2;
+pub const SHADER_CONSTANT_364_W: u32 = 0x45B3;
+pub const SHADER_CONSTANT_365_X: u32 = 0x45B4;
+pub const SHADER_CONSTANT_365_Y: u32 = 0x45B5;
+pub const SHADER_CONSTANT_365_Z: u32 = 0x45B6;
+pub const SHADER_CONSTANT_365_W: u32 = 0x45B7;
+pub const SHADER_CONSTANT_366_X: u32 = 0x45B8;
+pub const SHADER_CONSTANT_366_Y: u32 = 0x45B9;
+pub const SHADER_CONSTANT_366_Z: u32 = 0x45BA;
+pub const SHADER_CONSTANT_366_W: u32 = 0x45BB;
+pub const SHADER_CONSTANT_367_X: u32 = 0x45BC;
+pub const SHADER_CONSTANT_367_Y: u32 = 0x45BD;
+pub const SHADER_CONSTANT_367_Z: u32 = 0x45BE;
+pub const SHADER_CONSTANT_367_W: u32 = 0x45BF;
+pub const SHADER_CONSTANT_368_X: u32 = 0x45C0;
+pub const SHADER_CONSTANT_368_Y: u32 = 0x45C1;
+pub const SHADER_CONSTANT_368_Z: u32 = 0x45C2;
+pub const SHADER_CONSTANT_368_W: u32 = 0x45C3;
+pub const SHADER_CONSTANT_369_X: u32 = 0x45C4;
+pub const SHADER_CONSTANT_369_Y: u32 = 0x45C5;
+pub const SHADER_CONSTANT_369_Z: u32 = 0x45C6;
+pub const SHADER_CONSTANT_369_W: u32 = 0x45C7;
+pub const SHADER_CONSTANT_370_X: u32 = 0x45C8;
+pub const SHADER_CONSTANT_370_Y: u32 = 0x45C9;
+pub const SHADER_CONSTANT_370_Z: u32 = 0x45CA;
+pub const SHADER_CONSTANT_370_W: u32 = 0x45CB;
+pub const SHADER_CONSTANT_371_X: u32 = 0x45CC;
+pub const SHADER_CONSTANT_371_Y: u32 = 0x45CD;
+pub const SHADER_CONSTANT_371_Z: u32 = 0x45CE;
+pub const SHADER_CONSTANT_371_W: u32 = 0x45CF;
+pub const SHADER_CONSTANT_372_X: u32 = 0x45D0;
+pub const SHADER_CONSTANT_372_Y: u32 = 0x45D1;
+pub const SHADER_CONSTANT_372_Z: u32 = 0x45D2;
+pub const SHADER_CONSTANT_372_W: u32 = 0x45D3;
+pub const SHADER_CONSTANT_373_X: u32 = 0x45D4;
+pub const SHADER_CONSTANT_373_Y: u32 = 0x45D5;
+pub const SHADER_CONSTANT_373_Z: u32 = 0x45D6;
+pub const SHADER_CONSTANT_373_W: u32 = 0x45D7;
+pub const SHADER_CONSTANT_374_X: u32 = 0x45D8;
+pub const SHADER_CONSTANT_374_Y: u32 = 0x45D9;
+pub const SHADER_CONSTANT_374_Z: u32 = 0x45DA;
+pub const SHADER_CONSTANT_374_W: u32 = 0x45DB;
+pub const SHADER_CONSTANT_375_X: u32 = 0x45DC;
+pub const SHADER_CONSTANT_375_Y: u32 = 0x45DD;
+pub const SHADER_CONSTANT_375_Z: u32 = 0x45DE;
+pub const SHADER_CONSTANT_375_W: u32 = 0x45DF;
+pub const SHADER_CONSTANT_376_X: u32 = 0x45E0;
+pub const SHADER_CONSTANT_376_Y: u32 = 0x45E1;
+pub const SHADER_CONSTANT_376_Z: u32 = 0x45E2;
+pub const SHADER_CONSTANT_376_W: u32 = 0x45E3;
+pub const SHADER_CONSTANT_377_X: u32 = 0x45E4;
+pub const SHADER_CONSTANT_377_Y: u32 = 0x45E5;
+pub const SHADER_CONSTANT_377_Z: u32 = 0x45E6;
+pub const SHADER_CONSTANT_377_W: u32 = 0x45E7;
+pub const SHADER_CONSTANT_378_X: u32 = 0x45E8;
+pub const SHADER_CONSTANT_378_Y: u32 = 0x45E9;
+pub const SHADER_CONSTANT_378_Z: u32 = 0x45EA;
+pub const SHADER_CONSTANT_378_W: u32 = 0x45EB;
+pub const SHADER_CONSTANT_379_X: u32 = 0x45EC;
+pub const SHADER_CONSTANT_379_Y: u32 = 0x45ED;
+pub const SHADER_CONSTANT_379_Z: u32 = 0x45EE;
+pub const SHADER_CONSTANT_379_W: u32 = 0x45EF;
+pub const SHADER_CONSTANT_380_X: u32 = 0x45F0;
+pub const SHADER_CONSTANT_380_Y: u32 = 0x45F1;
+pub const SHADER_CONSTANT_380_Z: u32 = 0x45F2;
+pub const SHADER_CONSTANT_380_W: u32 = 0x45F3;
+pub const SHADER_CONSTANT_381_X: u32 = 0x45F4;
+pub const SHADER_CONSTANT_381_Y: u32 = 0x45F5;
+pub const SHADER_CONSTANT_381_Z: u32 = 0x45F6;
+pub const SHADER_CONSTANT_381_W: u32 = 0x45F7;
+pub const SHADER_CONSTANT_382_X: u32 = 0x45F8;
+pub const SHADER_CONSTANT_382_Y: u32 = 0x45F9;
+pub const SHADER_CONSTANT_382_Z: u32 = 0x45FA;
+pub const SHADER_CONSTANT_382_W: u32 = 0x45FB;
+pub const SHADER_CONSTANT_383_X: u32 = 0x45FC;
+pub const SHADER_CONSTANT_383_Y: u32 = 0x45FD;
+pub const SHADER_CONSTANT_383_Z: u32 = 0x45FE;
+pub const SHADER_CONSTANT_383_W: u32 = 0x45FF;
+pub const SHADER_CONSTANT_384_X: u32 = 0x4600;
+pub const SHADER_CONSTANT_384_Y: u32 = 0x4601;
+pub const SHADER_CONSTANT_384_Z: u32 = 0x4602;
+pub const SHADER_CONSTANT_384_W: u32 = 0x4603;
+pub const SHADER_CONSTANT_385_X: u32 = 0x4604;
+pub const SHADER_CONSTANT_385_Y: u32 = 0x4605;
+pub const SHADER_CONSTANT_385_Z: u32 = 0x4606;
+pub const SHADER_CONSTANT_385_W: u32 = 0x4607;
+pub const SHADER_CONSTANT_386_X: u32 = 0x4608;
+pub const SHADER_CONSTANT_386_Y: u32 = 0x4609;
+pub const SHADER_CONSTANT_386_Z: u32 = 0x460A;
+pub const SHADER_CONSTANT_386_W: u32 = 0x460B;
+pub const SHADER_CONSTANT_387_X: u32 = 0x460C;
+pub const SHADER_CONSTANT_387_Y: u32 = 0x460D;
+pub const SHADER_CONSTANT_387_Z: u32 = 0x460E;
+pub const SHADER_CONSTANT_387_W: u32 = 0x460F;
+pub const SHADER_CONSTANT_388_X: u32 = 0x4610;
+pub const SHADER_CONSTANT_388_Y: u32 = 0x4611;
+pub const SHADER_CONSTANT_388_Z: u32 = 0x4612;
+pub const SHADER_CONSTANT_388_W: u32 = 0x4613;
+pub const SHADER_CONSTANT_389_X: u32 = 0x4614;
+pub const SHADER_CONSTANT_389_Y: u32 = 0x4615;
+pub const SHADER_CONSTANT_389_Z: u32 = 0x4616;
+pub const SHADER_CONSTANT_389_W: u32 = 0x4617;
+pub const SHADER_CONSTANT_390_X: u32 = 0x4618;
+pub const SHADER_CONSTANT_390_Y: u32 = 0x4619;
+pub const SHADER_CONSTANT_390_Z: u32 = 0x461A;
+pub const SHADER_CONSTANT_390_W: u32 = 0x461B;
+pub const SHADER_CONSTANT_391_X: u32 = 0x461C;
+pub const SHADER_CONSTANT_391_Y: u32 = 0x461D;
+pub const SHADER_CONSTANT_391_Z: u32 = 0x461E;
+pub const SHADER_CONSTANT_391_W: u32 = 0x461F;
+pub const SHADER_CONSTANT_392_X: u32 = 0x4620;
+pub const SHADER_CONSTANT_392_Y: u32 = 0x4621;
+pub const SHADER_CONSTANT_392_Z: u32 = 0x4622;
+pub const SHADER_CONSTANT_392_W: u32 = 0x4623;
+pub const SHADER_CONSTANT_393_X: u32 = 0x4624;
+pub const SHADER_CONSTANT_393_Y: u32 = 0x4625;
+pub const SHADER_CONSTANT_393_Z: u32 = 0x4626;
+pub const SHADER_CONSTANT_393_W: u32 = 0x4627;
+pub const SHADER_CONSTANT_394_X: u32 = 0x4628;
+pub const SHADER_CONSTANT_394_Y: u32 = 0x4629;
+pub const SHADER_CONSTANT_394_Z: u32 = 0x462A;
+pub const SHADER_CONSTANT_394_W: u32 = 0x462B;
+pub const SHADER_CONSTANT_395_X: u32 = 0x462C;
+pub const SHADER_CONSTANT_395_Y: u32 = 0x462D;
+pub const SHADER_CONSTANT_395_Z: u32 = 0x462E;
+pub const SHADER_CONSTANT_395_W: u32 = 0x462F;
+pub const SHADER_CONSTANT_396_X: u32 = 0x4630;
+pub const SHADER_CONSTANT_396_Y: u32 = 0x4631;
+pub const SHADER_CONSTANT_396_Z: u32 = 0x4632;
+pub const SHADER_CONSTANT_396_W: u32 = 0x4633;
+pub const SHADER_CONSTANT_397_X: u32 = 0x4634;
+pub const SHADER_CONSTANT_397_Y: u32 = 0x4635;
+pub const SHADER_CONSTANT_397_Z: u32 = 0x4636;
+pub const SHADER_CONSTANT_397_W: u32 = 0x4637;
+pub const SHADER_CONSTANT_398_X: u32 = 0x4638;
+pub const SHADER_CONSTANT_398_Y: u32 = 0x4639;
+pub const SHADER_CONSTANT_398_Z: u32 = 0x463A;
+pub const SHADER_CONSTANT_398_W: u32 = 0x463B;
+pub const SHADER_CONSTANT_399_X: u32 = 0x463C;
+pub const SHADER_CONSTANT_399_Y: u32 = 0x463D;
+pub const SHADER_CONSTANT_399_Z: u32 = 0x463E;
+pub const SHADER_CONSTANT_399_W: u32 = 0x463F;
+pub const SHADER_CONSTANT_400_X: u32 = 0x4640;
+pub const SHADER_CONSTANT_400_Y: u32 = 0x4641;
+pub const SHADER_CONSTANT_400_Z: u32 = 0x4642;
+pub const SHADER_CONSTANT_400_W: u32 = 0x4643;
+pub const SHADER_CONSTANT_401_X: u32 = 0x4644;
+pub const SHADER_CONSTANT_401_Y: u32 = 0x4645;
+pub const SHADER_CONSTANT_401_Z: u32 = 0x4646;
+pub const SHADER_CONSTANT_401_W: u32 = 0x4647;
+pub const SHADER_CONSTANT_402_X: u32 = 0x4648;
+pub const SHADER_CONSTANT_402_Y: u32 = 0x4649;
+pub const SHADER_CONSTANT_402_Z: u32 = 0x464A;
+pub const SHADER_CONSTANT_402_W: u32 = 0x464B;
+pub const SHADER_CONSTANT_403_X: u32 = 0x464C;
+pub const SHADER_CONSTANT_403_Y: u32 = 0x464D;
+pub const SHADER_CONSTANT_403_Z: u32 = 0x464E;
+pub const SHADER_CONSTANT_403_W: u32 = 0x464F;
+pub const SHADER_CONSTANT_404_X: u32 = 0x4650;
+pub const SHADER_CONSTANT_404_Y: u32 = 0x4651;
+pub const SHADER_CONSTANT_404_Z: u32 = 0x4652;
+pub const SHADER_CONSTANT_404_W: u32 = 0x4653;
+pub const SHADER_CONSTANT_405_X: u32 = 0x4654;
+pub const SHADER_CONSTANT_405_Y: u32 = 0x4655;
+pub const SHADER_CONSTANT_405_Z: u32 = 0x4656;
+pub const SHADER_CONSTANT_405_W: u32 = 0x4657;
+pub const SHADER_CONSTANT_406_X: u32 = 0x4658;
+pub const SHADER_CONSTANT_406_Y: u32 = 0x4659;
+pub const SHADER_CONSTANT_406_Z: u32 = 0x465A;
+pub const SHADER_CONSTANT_406_W: u32 = 0x465B;
+pub const SHADER_CONSTANT_407_X: u32 = 0x465C;
+pub const SHADER_CONSTANT_407_Y: u32 = 0x465D;
+pub const SHADER_CONSTANT_407_Z: u32 = 0x465E;
+pub const SHADER_CONSTANT_407_W: u32 = 0x465F;
+pub const SHADER_CONSTANT_408_X: u32 = 0x4660;
+pub const SHADER_CONSTANT_408_Y: u32 = 0x4661;
+pub const SHADER_CONSTANT_408_Z: u32 = 0x4662;
+pub const SHADER_CONSTANT_408_W: u32 = 0x4663;
+pub const SHADER_CONSTANT_409_X: u32 = 0x4664;
+pub const SHADER_CONSTANT_409_Y: u32 = 0x4665;
+pub const SHADER_CONSTANT_409_Z: u32 = 0x4666;
+pub const SHADER_CONSTANT_409_W: u32 = 0x4667;
+pub const SHADER_CONSTANT_410_X: u32 = 0x4668;
+pub const SHADER_CONSTANT_410_Y: u32 = 0x4669;
+pub const SHADER_CONSTANT_410_Z: u32 = 0x466A;
+pub const SHADER_CONSTANT_410_W: u32 = 0x466B;
+pub const SHADER_CONSTANT_411_X: u32 = 0x466C;
+pub const SHADER_CONSTANT_411_Y: u32 = 0x466D;
+pub const SHADER_CONSTANT_411_Z: u32 = 0x466E;
+pub const SHADER_CONSTANT_411_W: u32 = 0x466F;
+pub const SHADER_CONSTANT_412_X: u32 = 0x4670;
+pub const SHADER_CONSTANT_412_Y: u32 = 0x4671;
+pub const SHADER_CONSTANT_412_Z: u32 = 0x4672;
+pub const SHADER_CONSTANT_412_W: u32 = 0x4673;
+pub const SHADER_CONSTANT_413_X: u32 = 0x4674;
+pub const SHADER_CONSTANT_413_Y: u32 = 0x4675;
+pub const SHADER_CONSTANT_413_Z: u32 = 0x4676;
+pub const SHADER_CONSTANT_413_W: u32 = 0x4677;
+pub const SHADER_CONSTANT_414_X: u32 = 0x4678;
+pub const SHADER_CONSTANT_414_Y: u32 = 0x4679;
+pub const SHADER_CONSTANT_414_Z: u32 = 0x467A;
+pub const SHADER_CONSTANT_414_W: u32 = 0x467B;
+pub const SHADER_CONSTANT_415_X: u32 = 0x467C;
+pub const SHADER_CONSTANT_415_Y: u32 = 0x467D;
+pub const SHADER_CONSTANT_415_Z: u32 = 0x467E;
+pub const SHADER_CONSTANT_415_W: u32 = 0x467F;
+pub const SHADER_CONSTANT_416_X: u32 = 0x4680;
+pub const SHADER_CONSTANT_416_Y: u32 = 0x4681;
+pub const SHADER_CONSTANT_416_Z: u32 = 0x4682;
+pub const SHADER_CONSTANT_416_W: u32 = 0x4683;
+pub const SHADER_CONSTANT_417_X: u32 = 0x4684;
+pub const SHADER_CONSTANT_417_Y: u32 = 0x4685;
+pub const SHADER_CONSTANT_417_Z: u32 = 0x4686;
+pub const SHADER_CONSTANT_417_W: u32 = 0x4687;
+pub const SHADER_CONSTANT_418_X: u32 = 0x4688;
+pub const SHADER_CONSTANT_418_Y: u32 = 0x4689;
+pub const SHADER_CONSTANT_418_Z: u32 = 0x468A;
+pub const SHADER_CONSTANT_418_W: u32 = 0x468B;
+pub const SHADER_CONSTANT_419_X: u32 = 0x468C;
+pub const SHADER_CONSTANT_419_Y: u32 = 0x468D;
+pub const SHADER_CONSTANT_419_Z: u32 = 0x468E;
+pub const SHADER_CONSTANT_419_W: u32 = 0x468F;
+pub const SHADER_CONSTANT_420_X: u32 = 0x4690;
+pub const SHADER_CONSTANT_420_Y: u32 = 0x4691;
+pub const SHADER_CONSTANT_420_Z: u32 = 0x4692;
+pub const SHADER_CONSTANT_420_W: u32 = 0x4693;
+pub const SHADER_CONSTANT_421_X: u32 = 0x4694;
+pub const SHADER_CONSTANT_421_Y: u32 = 0x4695;
+pub const SHADER_CONSTANT_421_Z: u32 = 0x4696;
+pub const SHADER_CONSTANT_421_W: u32 = 0x4697;
+pub const SHADER_CONSTANT_422_X: u32 = 0x4698;
+pub const SHADER_CONSTANT_422_Y: u32 = 0x4699;
+pub const SHADER_CONSTANT_422_Z: u32 = 0x469A;
+pub const SHADER_CONSTANT_422_W: u32 = 0x469B;
+pub const SHADER_CONSTANT_423_X: u32 = 0x469C;
+pub const SHADER_CONSTANT_423_Y: u32 = 0x469D;
+pub const SHADER_CONSTANT_423_Z: u32 = 0x469E;
+pub const SHADER_CONSTANT_423_W: u32 = 0x469F;
+pub const SHADER_CONSTANT_424_X: u32 = 0x46A0;
+pub const SHADER_CONSTANT_424_Y: u32 = 0x46A1;
+pub const SHADER_CONSTANT_424_Z: u32 = 0x46A2;
+pub const SHADER_CONSTANT_424_W: u32 = 0x46A3;
+pub const SHADER_CONSTANT_425_X: u32 = 0x46A4;
+pub const SHADER_CONSTANT_425_Y: u32 = 0x46A5;
+pub const SHADER_CONSTANT_425_Z: u32 = 0x46A6;
+pub const SHADER_CONSTANT_425_W: u32 = 0x46A7;
+pub const SHADER_CONSTANT_426_X: u32 = 0x46A8;
+pub const SHADER_CONSTANT_426_Y: u32 = 0x46A9;
+pub const SHADER_CONSTANT_426_Z: u32 = 0x46AA;
+pub const SHADER_CONSTANT_426_W: u32 = 0x46AB;
+pub const SHADER_CONSTANT_427_X: u32 = 0x46AC;
+pub const SHADER_CONSTANT_427_Y: u32 = 0x46AD;
+pub const SHADER_CONSTANT_427_Z: u32 = 0x46AE;
+pub const SHADER_CONSTANT_427_W: u32 = 0x46AF;
+pub const SHADER_CONSTANT_428_X: u32 = 0x46B0;
+pub const SHADER_CONSTANT_428_Y: u32 = 0x46B1;
+pub const SHADER_CONSTANT_428_Z: u32 = 0x46B2;
+pub const SHADER_CONSTANT_428_W: u32 = 0x46B3;
+pub const SHADER_CONSTANT_429_X: u32 = 0x46B4;
+pub const SHADER_CONSTANT_429_Y: u32 = 0x46B5;
+pub const SHADER_CONSTANT_429_Z: u32 = 0x46B6;
+pub const SHADER_CONSTANT_429_W: u32 = 0x46B7;
+pub const SHADER_CONSTANT_430_X: u32 = 0x46B8;
+pub const SHADER_CONSTANT_430_Y: u32 = 0x46B9;
+pub const SHADER_CONSTANT_430_Z: u32 = 0x46BA;
+pub const SHADER_CONSTANT_430_W: u32 = 0x46BB;
+pub const SHADER_CONSTANT_431_X: u32 = 0x46BC;
+pub const SHADER_CONSTANT_431_Y: u32 = 0x46BD;
+pub const SHADER_CONSTANT_431_Z: u32 = 0x46BE;
+pub const SHADER_CONSTANT_431_W: u32 = 0x46BF;
+pub const SHADER_CONSTANT_432_X: u32 = 0x46C0;
+pub const SHADER_CONSTANT_432_Y: u32 = 0x46C1;
+pub const SHADER_CONSTANT_432_Z: u32 = 0x46C2;
+pub const SHADER_CONSTANT_432_W: u32 = 0x46C3;
+pub const SHADER_CONSTANT_433_X: u32 = 0x46C4;
+pub const SHADER_CONSTANT_433_Y: u32 = 0x46C5;
+pub const SHADER_CONSTANT_433_Z: u32 = 0x46C6;
+pub const SHADER_CONSTANT_433_W: u32 = 0x46C7;
+pub const SHADER_CONSTANT_434_X: u32 = 0x46C8;
+pub const SHADER_CONSTANT_434_Y: u32 = 0x46C9;
+pub const SHADER_CONSTANT_434_Z: u32 = 0x46CA;
+pub const SHADER_CONSTANT_434_W: u32 = 0x46CB;
+pub const SHADER_CONSTANT_435_X: u32 = 0x46CC;
+pub const SHADER_CONSTANT_435_Y: u32 = 0x46CD;
+pub const SHADER_CONSTANT_435_Z: u32 = 0x46CE;
+pub const SHADER_CONSTANT_435_W: u32 = 0x46CF;
+pub const SHADER_CONSTANT_436_X: u32 = 0x46D0;
+pub const SHADER_CONSTANT_436_Y: u32 = 0x46D1;
+pub const SHADER_CONSTANT_436_Z: u32 = 0x46D2;
+pub const SHADER_CONSTANT_436_W: u32 = 0x46D3;
+pub const SHADER_CONSTANT_437_X: u32 = 0x46D4;
+pub const SHADER_CONSTANT_437_Y: u32 = 0x46D5;
+pub const SHADER_CONSTANT_437_Z: u32 = 0x46D6;
+pub const SHADER_CONSTANT_437_W: u32 = 0x46D7;
+pub const SHADER_CONSTANT_438_X: u32 = 0x46D8;
+pub const SHADER_CONSTANT_438_Y: u32 = 0x46D9;
+pub const SHADER_CONSTANT_438_Z: u32 = 0x46DA;
+pub const SHADER_CONSTANT_438_W: u32 = 0x46DB;
+pub const SHADER_CONSTANT_439_X: u32 = 0x46DC;
+pub const SHADER_CONSTANT_439_Y: u32 = 0x46DD;
+pub const SHADER_CONSTANT_439_Z: u32 = 0x46DE;
+pub const SHADER_CONSTANT_439_W: u32 = 0x46DF;
+pub const SHADER_CONSTANT_440_X: u32 = 0x46E0;
+pub const SHADER_CONSTANT_440_Y: u32 = 0x46E1;
+pub const SHADER_CONSTANT_440_Z: u32 = 0x46E2;
+pub const SHADER_CONSTANT_440_W: u32 = 0x46E3;
+pub const SHADER_CONSTANT_441_X: u32 = 0x46E4;
+pub const SHADER_CONSTANT_441_Y: u32 = 0x46E5;
+pub const SHADER_CONSTANT_441_Z: u32 = 0x46E6;
+pub const SHADER_CONSTANT_441_W: u32 = 0x46E7;
+pub const SHADER_CONSTANT_442_X: u32 = 0x46E8;
+pub const SHADER_CONSTANT_442_Y: u32 = 0x46E9;
+pub const SHADER_CONSTANT_442_Z: u32 = 0x46EA;
+pub const SHADER_CONSTANT_442_W: u32 = 0x46EB;
+pub const SHADER_CONSTANT_443_X: u32 = 0x46EC;
+pub const SHADER_CONSTANT_443_Y: u32 = 0x46ED;
+pub const SHADER_CONSTANT_443_Z: u32 = 0x46EE;
+pub const SHADER_CONSTANT_443_W: u32 = 0x46EF;
+pub const SHADER_CONSTANT_444_X: u32 = 0x46F0;
+pub const SHADER_CONSTANT_444_Y: u32 = 0x46F1;
+pub const SHADER_CONSTANT_444_Z: u32 = 0x46F2;
+pub const SHADER_CONSTANT_444_W: u32 = 0x46F3;
+pub const SHADER_CONSTANT_445_X: u32 = 0x46F4;
+pub const SHADER_CONSTANT_445_Y: u32 = 0x46F5;
+pub const SHADER_CONSTANT_445_Z: u32 = 0x46F6;
+pub const SHADER_CONSTANT_445_W: u32 = 0x46F7;
+pub const SHADER_CONSTANT_446_X: u32 = 0x46F8;
+pub const SHADER_CONSTANT_446_Y: u32 = 0x46F9;
+pub const SHADER_CONSTANT_446_Z: u32 = 0x46FA;
+pub const SHADER_CONSTANT_446_W: u32 = 0x46FB;
+pub const SHADER_CONSTANT_447_X: u32 = 0x46FC;
+pub const SHADER_CONSTANT_447_Y: u32 = 0x46FD;
+pub const SHADER_CONSTANT_447_Z: u32 = 0x46FE;
+pub const SHADER_CONSTANT_447_W: u32 = 0x46FF;
+pub const SHADER_CONSTANT_448_X: u32 = 0x4700;
+pub const SHADER_CONSTANT_448_Y: u32 = 0x4701;
+pub const SHADER_CONSTANT_448_Z: u32 = 0x4702;
+pub const SHADER_CONSTANT_448_W: u32 = 0x4703;
+pub const SHADER_CONSTANT_449_X: u32 = 0x4704;
+pub const SHADER_CONSTANT_449_Y: u32 = 0x4705;
+pub const SHADER_CONSTANT_449_Z: u32 = 0x4706;
+pub const SHADER_CONSTANT_449_W: u32 = 0x4707;
+pub const SHADER_CONSTANT_450_X: u32 = 0x4708;
+pub const SHADER_CONSTANT_450_Y: u32 = 0x4709;
+pub const SHADER_CONSTANT_450_Z: u32 = 0x470A;
+pub const SHADER_CONSTANT_450_W: u32 = 0x470B;
+pub const SHADER_CONSTANT_451_X: u32 = 0x470C;
+pub const SHADER_CONSTANT_451_Y: u32 = 0x470D;
+pub const SHADER_CONSTANT_451_Z: u32 = 0x470E;
+pub const SHADER_CONSTANT_451_W: u32 = 0x470F;
+pub const SHADER_CONSTANT_452_X: u32 = 0x4710;
+pub const SHADER_CONSTANT_452_Y: u32 = 0x4711;
+pub const SHADER_CONSTANT_452_Z: u32 = 0x4712;
+pub const SHADER_CONSTANT_452_W: u32 = 0x4713;
+pub const SHADER_CONSTANT_453_X: u32 = 0x4714;
+pub const SHADER_CONSTANT_453_Y: u32 = 0x4715;
+pub const SHADER_CONSTANT_453_Z: u32 = 0x4716;
+pub const SHADER_CONSTANT_453_W: u32 = 0x4717;
+pub const SHADER_CONSTANT_454_X: u32 = 0x4718;
+pub const SHADER_CONSTANT_454_Y: u32 = 0x4719;
+pub const SHADER_CONSTANT_454_Z: u32 = 0x471A;
+pub const SHADER_CONSTANT_454_W: u32 = 0x471B;
+pub const SHADER_CONSTANT_455_X: u32 = 0x471C;
+pub const SHADER_CONSTANT_455_Y: u32 = 0x471D;
+pub const SHADER_CONSTANT_455_Z: u32 = 0x471E;
+pub const SHADER_CONSTANT_455_W: u32 = 0x471F;
+pub const SHADER_CONSTANT_456_X: u32 = 0x4720;
+pub const SHADER_CONSTANT_456_Y: u32 = 0x4721;
+pub const SHADER_CONSTANT_456_Z: u32 = 0x4722;
+pub const SHADER_CONSTANT_456_W: u32 = 0x4723;
+pub const SHADER_CONSTANT_457_X: u32 = 0x4724;
+pub const SHADER_CONSTANT_457_Y: u32 = 0x4725;
+pub const SHADER_CONSTANT_457_Z: u32 = 0x4726;
+pub const SHADER_CONSTANT_457_W: u32 = 0x4727;
+pub const SHADER_CONSTANT_458_X: u32 = 0x4728;
+pub const SHADER_CONSTANT_458_Y: u32 = 0x4729;
+pub const SHADER_CONSTANT_458_Z: u32 = 0x472A;
+pub const SHADER_CONSTANT_458_W: u32 = 0x472B;
+pub const SHADER_CONSTANT_459_X: u32 = 0x472C;
+pub const SHADER_CONSTANT_459_Y: u32 = 0x472D;
+pub const SHADER_CONSTANT_459_Z: u32 = 0x472E;
+pub const SHADER_CONSTANT_459_W: u32 = 0x472F;
+pub const SHADER_CONSTANT_460_X: u32 = 0x4730;
+pub const SHADER_CONSTANT_460_Y: u32 = 0x4731;
+pub const SHADER_CONSTANT_460_Z: u32 = 0x4732;
+pub const SHADER_CONSTANT_460_W: u32 = 0x4733;
+pub const SHADER_CONSTANT_461_X: u32 = 0x4734;
+pub const SHADER_CONSTANT_461_Y: u32 = 0x4735;
+pub const SHADER_CONSTANT_461_Z: u32 = 0x4736;
+pub const SHADER_CONSTANT_461_W: u32 = 0x4737;
+pub const SHADER_CONSTANT_462_X: u32 = 0x4738;
+pub const SHADER_CONSTANT_462_Y: u32 = 0x4739;
+pub const SHADER_CONSTANT_462_Z: u32 = 0x473A;
+pub const SHADER_CONSTANT_462_W: u32 = 0x473B;
+pub const SHADER_CONSTANT_463_X: u32 = 0x473C;
+pub const SHADER_CONSTANT_463_Y: u32 = 0x473D;
+pub const SHADER_CONSTANT_463_Z: u32 = 0x473E;
+pub const SHADER_CONSTANT_463_W: u32 = 0x473F;
+pub const SHADER_CONSTANT_464_X: u32 = 0x4740;
+pub const SHADER_CONSTANT_464_Y: u32 = 0x4741;
+pub const SHADER_CONSTANT_464_Z: u32 = 0x4742;
+pub const SHADER_CONSTANT_464_W: u32 = 0x4743;
+pub const SHADER_CONSTANT_465_X: u32 = 0x4744;
+pub const SHADER_CONSTANT_465_Y: u32 = 0x4745;
+pub const SHADER_CONSTANT_465_Z: u32 = 0x4746;
+pub const SHADER_CONSTANT_465_W: u32 = 0x4747;
+pub const SHADER_CONSTANT_466_X: u32 = 0x4748;
+pub const SHADER_CONSTANT_466_Y: u32 = 0x4749;
+pub const SHADER_CONSTANT_466_Z: u32 = 0x474A;
+pub const SHADER_CONSTANT_466_W: u32 = 0x474B;
+pub const SHADER_CONSTANT_467_X: u32 = 0x474C;
+pub const SHADER_CONSTANT_467_Y: u32 = 0x474D;
+pub const SHADER_CONSTANT_467_Z: u32 = 0x474E;
+pub const SHADER_CONSTANT_467_W: u32 = 0x474F;
+pub const SHADER_CONSTANT_468_X: u32 = 0x4750;
+pub const SHADER_CONSTANT_468_Y: u32 = 0x4751;
+pub const SHADER_CONSTANT_468_Z: u32 = 0x4752;
+pub const SHADER_CONSTANT_468_W: u32 = 0x4753;
+pub const SHADER_CONSTANT_469_X: u32 = 0x4754;
+pub const SHADER_CONSTANT_469_Y: u32 = 0x4755;
+pub const SHADER_CONSTANT_469_Z: u32 = 0x4756;
+pub const SHADER_CONSTANT_469_W: u32 = 0x4757;
+pub const SHADER_CONSTANT_470_X: u32 = 0x4758;
+pub const SHADER_CONSTANT_470_Y: u32 = 0x4759;
+pub const SHADER_CONSTANT_470_Z: u32 = 0x475A;
+pub const SHADER_CONSTANT_470_W: u32 = 0x475B;
+pub const SHADER_CONSTANT_471_X: u32 = 0x475C;
+pub const SHADER_CONSTANT_471_Y: u32 = 0x475D;
+pub const SHADER_CONSTANT_471_Z: u32 = 0x475E;
+pub const SHADER_CONSTANT_471_W: u32 = 0x475F;
+pub const SHADER_CONSTANT_472_X: u32 = 0x4760;
+pub const SHADER_CONSTANT_472_Y: u32 = 0x4761;
+pub const SHADER_CONSTANT_472_Z: u32 = 0x4762;
+pub const SHADER_CONSTANT_472_W: u32 = 0x4763;
+pub const SHADER_CONSTANT_473_X: u32 = 0x4764;
+pub const SHADER_CONSTANT_473_Y: u32 = 0x4765;
+pub const SHADER_CONSTANT_473_Z: u32 = 0x4766;
+pub const SHADER_CONSTANT_473_W: u32 = 0x4767;
+pub const SHADER_CONSTANT_474_X: u32 = 0x4768;
+pub const SHADER_CONSTANT_474_Y: u32 = 0x4769;
+pub const SHADER_CONSTANT_474_Z: u32 = 0x476A;
+pub const SHADER_CONSTANT_474_W: u32 = 0x476B;
+pub const SHADER_CONSTANT_475_X: u32 = 0x476C;
+pub const SHADER_CONSTANT_475_Y: u32 = 0x476D;
+pub const SHADER_CONSTANT_475_Z: u32 = 0x476E;
+pub const SHADER_CONSTANT_475_W: u32 = 0x476F;
+pub const SHADER_CONSTANT_476_X: u32 = 0x4770;
+pub const SHADER_CONSTANT_476_Y: u32 = 0x4771;
+pub const SHADER_CONSTANT_476_Z: u32 = 0x4772;
+pub const SHADER_CONSTANT_476_W: u32 = 0x4773;
+pub const SHADER_CONSTANT_477_X: u32 = 0x4774;
+pub const SHADER_CONSTANT_477_Y: u32 = 0x4775;
+pub const SHADER_CONSTANT_477_Z: u32 = 0x4776;
+pub const SHADER_CONSTANT_477_W: u32 = 0x4777;
+pub const SHADER_CONSTANT_478_X: u32 = 0x4778;
+pub const SHADER_CONSTANT_478_Y: u32 = 0x4779;
+pub const SHADER_CONSTANT_478_Z: u32 = 0x477A;
+pub const SHADER_CONSTANT_478_W: u32 = 0x477B;
+pub const SHADER_CONSTANT_479_X: u32 = 0x477C;
+pub const SHADER_CONSTANT_479_Y: u32 = 0x477D;
+pub const SHADER_CONSTANT_479_Z: u32 = 0x477E;
+pub const SHADER_CONSTANT_479_W: u32 = 0x477F;
+pub const SHADER_CONSTANT_480_X: u32 = 0x4780;
+pub const SHADER_CONSTANT_480_Y: u32 = 0x4781;
+pub const SHADER_CONSTANT_480_Z: u32 = 0x4782;
+pub const SHADER_CONSTANT_480_W: u32 = 0x4783;
+pub const SHADER_CONSTANT_481_X: u32 = 0x4784;
+pub const SHADER_CONSTANT_481_Y: u32 = 0x4785;
+pub const SHADER_CONSTANT_481_Z: u32 = 0x4786;
+pub const SHADER_CONSTANT_481_W: u32 = 0x4787;
+pub const SHADER_CONSTANT_482_X: u32 = 0x4788;
+pub const SHADER_CONSTANT_482_Y: u32 = 0x4789;
+pub const SHADER_CONSTANT_482_Z: u32 = 0x478A;
+pub const SHADER_CONSTANT_482_W: u32 = 0x478B;
+pub const SHADER_CONSTANT_483_X: u32 = 0x478C;
+pub const SHADER_CONSTANT_483_Y: u32 = 0x478D;
+pub const SHADER_CONSTANT_483_Z: u32 = 0x478E;
+pub const SHADER_CONSTANT_483_W: u32 = 0x478F;
+pub const SHADER_CONSTANT_484_X: u32 = 0x4790;
+pub const SHADER_CONSTANT_484_Y: u32 = 0x4791;
+pub const SHADER_CONSTANT_484_Z: u32 = 0x4792;
+pub const SHADER_CONSTANT_484_W: u32 = 0x4793;
+pub const SHADER_CONSTANT_485_X: u32 = 0x4794;
+pub const SHADER_CONSTANT_485_Y: u32 = 0x4795;
+pub const SHADER_CONSTANT_485_Z: u32 = 0x4796;
+pub const SHADER_CONSTANT_485_W: u32 = 0x4797;
+pub const SHADER_CONSTANT_486_X: u32 = 0x4798;
+pub const SHADER_CONSTANT_486_Y: u32 = 0x4799;
+pub const SHADER_CONSTANT_486_Z: u32 = 0x479A;
+pub const SHADER_CONSTANT_486_W: u32 = 0x479B;
+pub const SHADER_CONSTANT_487_X: u32 = 0x479C;
+pub const SHADER_CONSTANT_487_Y: u32 = 0x479D;
+pub const SHADER_CONSTANT_487_Z: u32 = 0x479E;
+pub const SHADER_CONSTANT_487_W: u32 = 0x479F;
+pub const SHADER_CONSTANT_488_X: u32 = 0x47A0;
+pub const SHADER_CONSTANT_488_Y: u32 = 0x47A1;
+pub const SHADER_CONSTANT_488_Z: u32 = 0x47A2;
+pub const SHADER_CONSTANT_488_W: u32 = 0x47A3;
+pub const SHADER_CONSTANT_489_X: u32 = 0x47A4;
+pub const SHADER_CONSTANT_489_Y: u32 = 0x47A5;
+pub const SHADER_CONSTANT_489_Z: u32 = 0x47A6;
+pub const SHADER_CONSTANT_489_W: u32 = 0x47A7;
+pub const SHADER_CONSTANT_490_X: u32 = 0x47A8;
+pub const SHADER_CONSTANT_490_Y: u32 = 0x47A9;
+pub const SHADER_CONSTANT_490_Z: u32 = 0x47AA;
+pub const SHADER_CONSTANT_490_W: u32 = 0x47AB;
+pub const SHADER_CONSTANT_491_X: u32 = 0x47AC;
+pub const SHADER_CONSTANT_491_Y: u32 = 0x47AD;
+pub const SHADER_CONSTANT_491_Z: u32 = 0x47AE;
+pub const SHADER_CONSTANT_491_W: u32 = 0x47AF;
+pub const SHADER_CONSTANT_492_X: u32 = 0x47B0;
+pub const SHADER_CONSTANT_492_Y: u32 = 0x47B1;
+pub const SHADER_CONSTANT_492_Z: u32 = 0x47B2;
+pub const SHADER_CONSTANT_492_W: u32 = 0x47B3;
+pub const SHADER_CONSTANT_493_X: u32 = 0x47B4;
+pub const SHADER_CONSTANT_493_Y: u32 = 0x47B5;
+pub const SHADER_CONSTANT_493_Z: u32 = 0x47B6;
+pub const SHADER_CONSTANT_493_W: u32 = 0x47B7;
+pub const SHADER_CONSTANT_494_X: u32 = 0x47B8;
+pub const SHADER_CONSTANT_494_Y: u32 = 0x47B9;
+pub const SHADER_CONSTANT_494_Z: u32 = 0x47BA;
+pub const SHADER_CONSTANT_494_W: u32 = 0x47BB;
+pub const SHADER_CONSTANT_495_X: u32 = 0x47BC;
+pub const SHADER_CONSTANT_495_Y: u32 = 0x47BD;
+pub const SHADER_CONSTANT_495_Z: u32 = 0x47BE;
+pub const SHADER_CONSTANT_495_W: u32 = 0x47BF;
+pub const SHADER_CONSTANT_496_X: u32 = 0x47C0;
+pub const SHADER_CONSTANT_496_Y: u32 = 0x47C1;
+pub const SHADER_CONSTANT_496_Z: u32 = 0x47C2;
+pub const SHADER_CONSTANT_496_W: u32 = 0x47C3;
+pub const SHADER_CONSTANT_497_X: u32 = 0x47C4;
+pub const SHADER_CONSTANT_497_Y: u32 = 0x47C5;
+pub const SHADER_CONSTANT_497_Z: u32 = 0x47C6;
+pub const SHADER_CONSTANT_497_W: u32 = 0x47C7;
+pub const SHADER_CONSTANT_498_X: u32 = 0x47C8;
+pub const SHADER_CONSTANT_498_Y: u32 = 0x47C9;
+pub const SHADER_CONSTANT_498_Z: u32 = 0x47CA;
+pub const SHADER_CONSTANT_498_W: u32 = 0x47CB;
+pub const SHADER_CONSTANT_499_X: u32 = 0x47CC;
+pub const SHADER_CONSTANT_499_Y: u32 = 0x47CD;
+pub const SHADER_CONSTANT_499_Z: u32 = 0x47CE;
+pub const SHADER_CONSTANT_499_W: u32 = 0x47CF;
+pub const SHADER_CONSTANT_500_X: u32 = 0x47D0;
+pub const SHADER_CONSTANT_500_Y: u32 = 0x47D1;
+pub const SHADER_CONSTANT_500_Z: u32 = 0x47D2;
+pub const SHADER_CONSTANT_500_W: u32 = 0x47D3;
+pub const SHADER_CONSTANT_501_X: u32 = 0x47D4;
+pub const SHADER_CONSTANT_501_Y: u32 = 0x47D5;
+pub const SHADER_CONSTANT_501_Z: u32 = 0x47D6;
+pub const SHADER_CONSTANT_501_W: u32 = 0x47D7;
+pub const SHADER_CONSTANT_502_X: u32 = 0x47D8;
+pub const SHADER_CONSTANT_502_Y: u32 = 0x47D9;
+pub const SHADER_CONSTANT_502_Z: u32 = 0x47DA;
+pub const SHADER_CONSTANT_502_W: u32 = 0x47DB;
+pub const SHADER_CONSTANT_503_X: u32 = 0x47DC;
+pub const SHADER_CONSTANT_503_Y: u32 = 0x47DD;
+pub const SHADER_CONSTANT_503_Z: u32 = 0x47DE;
+pub const SHADER_CONSTANT_503_W: u32 = 0x47DF;
+pub const SHADER_CONSTANT_504_X: u32 = 0x47E0;
+pub const SHADER_CONSTANT_504_Y: u32 = 0x47E1;
+pub const SHADER_CONSTANT_504_Z: u32 = 0x47E2;
+pub const SHADER_CONSTANT_504_W: u32 = 0x47E3;
+pub const SHADER_CONSTANT_505_X: u32 = 0x47E4;
+pub const SHADER_CONSTANT_505_Y: u32 = 0x47E5;
+pub const SHADER_CONSTANT_505_Z: u32 = 0x47E6;
+pub const SHADER_CONSTANT_505_W: u32 = 0x47E7;
+pub const SHADER_CONSTANT_506_X: u32 = 0x47E8;
+pub const SHADER_CONSTANT_506_Y: u32 = 0x47E9;
+pub const SHADER_CONSTANT_506_Z: u32 = 0x47EA;
+pub const SHADER_CONSTANT_506_W: u32 = 0x47EB;
+pub const SHADER_CONSTANT_507_X: u32 = 0x47EC;
+pub const SHADER_CONSTANT_507_Y: u32 = 0x47ED;
+pub const SHADER_CONSTANT_507_Z: u32 = 0x47EE;
+pub const SHADER_CONSTANT_507_W: u32 = 0x47EF;
+pub const SHADER_CONSTANT_508_X: u32 = 0x47F0;
+pub const SHADER_CONSTANT_508_Y: u32 = 0x47F1;
+pub const SHADER_CONSTANT_508_Z: u32 = 0x47F2;
+pub const SHADER_CONSTANT_508_W: u32 = 0x47F3;
+pub const SHADER_CONSTANT_509_X: u32 = 0x47F4;
+pub const SHADER_CONSTANT_509_Y: u32 = 0x47F5;
+pub const SHADER_CONSTANT_509_Z: u32 = 0x47F6;
+pub const SHADER_CONSTANT_509_W: u32 = 0x47F7;
+pub const SHADER_CONSTANT_510_X: u32 = 0x47F8;
+pub const SHADER_CONSTANT_510_Y: u32 = 0x47F9;
+pub const SHADER_CONSTANT_510_Z: u32 = 0x47FA;
+pub const SHADER_CONSTANT_510_W: u32 = 0x47FB;
+pub const SHADER_CONSTANT_511_X: u32 = 0x47FC;
+pub const SHADER_CONSTANT_511_Y: u32 = 0x47FD;
+pub const SHADER_CONSTANT_511_Z: u32 = 0x47FE;
+pub const SHADER_CONSTANT_511_W: u32 = 0x47FF;
+pub const SHADER_CONSTANT_FETCH_00_0: u32 = 0x4800;
+pub const SHADER_CONSTANT_FETCH_00_1: u32 = 0x4801;
+pub const SHADER_CONSTANT_FETCH_00_2: u32 = 0x4802;
+pub const SHADER_CONSTANT_FETCH_00_3: u32 = 0x4803;
+pub const SHADER_CONSTANT_FETCH_00_4: u32 = 0x4804;
+pub const SHADER_CONSTANT_FETCH_00_5: u32 = 0x4805;
+pub const SHADER_CONSTANT_FETCH_01_0: u32 = 0x4806;
+pub const SHADER_CONSTANT_FETCH_01_1: u32 = 0x4807;
+pub const SHADER_CONSTANT_FETCH_01_2: u32 = 0x4808;
+pub const SHADER_CONSTANT_FETCH_01_3: u32 = 0x4809;
+pub const SHADER_CONSTANT_FETCH_01_4: u32 = 0x480A;
+pub const SHADER_CONSTANT_FETCH_01_5: u32 = 0x480B;
+pub const SHADER_CONSTANT_FETCH_02_0: u32 = 0x480C;
+pub const SHADER_CONSTANT_FETCH_02_1: u32 = 0x480D;
+pub const SHADER_CONSTANT_FETCH_02_2: u32 = 0x480E;
+pub const SHADER_CONSTANT_FETCH_02_3: u32 = 0x480F;
+pub const SHADER_CONSTANT_FETCH_02_4: u32 = 0x4810;
+pub const SHADER_CONSTANT_FETCH_02_5: u32 = 0x4811;
+pub const SHADER_CONSTANT_FETCH_03_0: u32 = 0x4812;
+pub const SHADER_CONSTANT_FETCH_03_1: u32 = 0x4813;
+pub const SHADER_CONSTANT_FETCH_03_2: u32 = 0x4814;
+pub const SHADER_CONSTANT_FETCH_03_3: u32 = 0x4815;
+pub const SHADER_CONSTANT_FETCH_03_4: u32 = 0x4816;
+pub const SHADER_CONSTANT_FETCH_03_5: u32 = 0x4817;
+pub const SHADER_CONSTANT_FETCH_04_0: u32 = 0x4818;
+pub const SHADER_CONSTANT_FETCH_04_1: u32 = 0x4819;
+pub const SHADER_CONSTANT_FETCH_04_2: u32 = 0x481A;
+pub const SHADER_CONSTANT_FETCH_04_3: u32 = 0x481B;
+pub const SHADER_CONSTANT_FETCH_04_4: u32 = 0x481C;
+pub const SHADER_CONSTANT_FETCH_04_5: u32 = 0x481D;
+pub const SHADER_CONSTANT_FETCH_05_0: u32 = 0x481E;
+pub const SHADER_CONSTANT_FETCH_05_1: u32 = 0x481F;
+pub const SHADER_CONSTANT_FETCH_05_2: u32 = 0x4820;
+pub const SHADER_CONSTANT_FETCH_05_3: u32 = 0x4821;
+pub const SHADER_CONSTANT_FETCH_05_4: u32 = 0x4822;
+pub const SHADER_CONSTANT_FETCH_05_5: u32 = 0x4823;
+pub const SHADER_CONSTANT_FETCH_06_0: u32 = 0x4824;
+pub const SHADER_CONSTANT_FETCH_06_1: u32 = 0x4825;
+pub const SHADER_CONSTANT_FETCH_06_2: u32 = 0x4826;
+pub const SHADER_CONSTANT_FETCH_06_3: u32 = 0x4827;
+pub const SHADER_CONSTANT_FETCH_06_4: u32 = 0x4828;
+pub const SHADER_CONSTANT_FETCH_06_5: u32 = 0x4829;
+pub const SHADER_CONSTANT_FETCH_07_0: u32 = 0x482A;
+pub const SHADER_CONSTANT_FETCH_07_1: u32 = 0x482B;
+pub const SHADER_CONSTANT_FETCH_07_2: u32 = 0x482C;
+pub const SHADER_CONSTANT_FETCH_07_3: u32 = 0x482D;
+pub const SHADER_CONSTANT_FETCH_07_4: u32 = 0x482E;
+pub const SHADER_CONSTANT_FETCH_07_5: u32 = 0x482F;
+pub const SHADER_CONSTANT_FETCH_08_0: u32 = 0x4830;
+pub const SHADER_CONSTANT_FETCH_08_1: u32 = 0x4831;
+pub const SHADER_CONSTANT_FETCH_08_2: u32 = 0x4832;
+pub const SHADER_CONSTANT_FETCH_08_3: u32 = 0x4833;
+pub const SHADER_CONSTANT_FETCH_08_4: u32 = 0x4834;
+pub const SHADER_CONSTANT_FETCH_08_5: u32 = 0x4835;
+pub const SHADER_CONSTANT_FETCH_09_0: u32 = 0x4836;
+pub const SHADER_CONSTANT_FETCH_09_1: u32 = 0x4837;
+pub const SHADER_CONSTANT_FETCH_09_2: u32 = 0x4838;
+pub const SHADER_CONSTANT_FETCH_09_3: u32 = 0x4839;
+pub const SHADER_CONSTANT_FETCH_09_4: u32 = 0x483A;
+pub const SHADER_CONSTANT_FETCH_09_5: u32 = 0x483B;
+pub const SHADER_CONSTANT_FETCH_10_0: u32 = 0x483C;
+pub const SHADER_CONSTANT_FETCH_10_1: u32 = 0x483D;
+pub const SHADER_CONSTANT_FETCH_10_2: u32 = 0x483E;
+pub const SHADER_CONSTANT_FETCH_10_3: u32 = 0x483F;
+pub const SHADER_CONSTANT_FETCH_10_4: u32 = 0x4840;
+pub const SHADER_CONSTANT_FETCH_10_5: u32 = 0x4841;
+pub const SHADER_CONSTANT_FETCH_11_0: u32 = 0x4842;
+pub const SHADER_CONSTANT_FETCH_11_1: u32 = 0x4843;
+pub const SHADER_CONSTANT_FETCH_11_2: u32 = 0x4844;
+pub const SHADER_CONSTANT_FETCH_11_3: u32 = 0x4845;
+pub const SHADER_CONSTANT_FETCH_11_4: u32 = 0x4846;
+pub const SHADER_CONSTANT_FETCH_11_5: u32 = 0x4847;
+pub const SHADER_CONSTANT_FETCH_12_0: u32 = 0x4848;
+pub const SHADER_CONSTANT_FETCH_12_1: u32 = 0x4849;
+pub const SHADER_CONSTANT_FETCH_12_2: u32 = 0x484A;
+pub const SHADER_CONSTANT_FETCH_12_3: u32 = 0x484B;
+pub const SHADER_CONSTANT_FETCH_12_4: u32 = 0x484C;
+pub const SHADER_CONSTANT_FETCH_12_5: u32 = 0x484D;
+pub const SHADER_CONSTANT_FETCH_13_0: u32 = 0x484E;
+pub const SHADER_CONSTANT_FETCH_13_1: u32 = 0x484F;
+pub const SHADER_CONSTANT_FETCH_13_2: u32 = 0x4850;
+pub const SHADER_CONSTANT_FETCH_13_3: u32 = 0x4851;
+pub const SHADER_CONSTANT_FETCH_13_4: u32 = 0x4852;
+pub const SHADER_CONSTANT_FETCH_13_5: u32 = 0x4853;
+pub const SHADER_CONSTANT_FETCH_14_0: u32 = 0x4854;
+pub const SHADER_CONSTANT_FETCH_14_1: u32 = 0x4855;
+pub const SHADER_CONSTANT_FETCH_14_2: u32 = 0x4856;
+pub const SHADER_CONSTANT_FETCH_14_3: u32 = 0x4857;
+pub const SHADER_CONSTANT_FETCH_14_4: u32 = 0x4858;
+pub const SHADER_CONSTANT_FETCH_14_5: u32 = 0x4859;
+pub const SHADER_CONSTANT_FETCH_15_0: u32 = 0x485A;
+pub const SHADER_CONSTANT_FETCH_15_1: u32 = 0x485B;
+pub const SHADER_CONSTANT_FETCH_15_2: u32 = 0x485C;
+pub const SHADER_CONSTANT_FETCH_15_3: u32 = 0x485D;
+pub const SHADER_CONSTANT_FETCH_15_4: u32 = 0x485E;
+pub const SHADER_CONSTANT_FETCH_15_5: u32 = 0x485F;
+pub const SHADER_CONSTANT_FETCH_16_0: u32 = 0x4860;
+pub const SHADER_CONSTANT_FETCH_16_1: u32 = 0x4861;
+pub const SHADER_CONSTANT_FETCH_16_2: u32 = 0x4862;
+pub const SHADER_CONSTANT_FETCH_16_3: u32 = 0x4863;
+pub const SHADER_CONSTANT_FETCH_16_4: u32 = 0x4864;
+pub const SHADER_CONSTANT_FETCH_16_5: u32 = 0x4865;
+pub const SHADER_CONSTANT_FETCH_17_0: u32 = 0x4866;
+pub const SHADER_CONSTANT_FETCH_17_1: u32 = 0x4867;
+pub const SHADER_CONSTANT_FETCH_17_2: u32 = 0x4868;
+pub const SHADER_CONSTANT_FETCH_17_3: u32 = 0x4869;
+pub const SHADER_CONSTANT_FETCH_17_4: u32 = 0x486A;
+pub const SHADER_CONSTANT_FETCH_17_5: u32 = 0x486B;
+pub const SHADER_CONSTANT_FETCH_18_0: u32 = 0x486C;
+pub const SHADER_CONSTANT_FETCH_18_1: u32 = 0x486D;
+pub const SHADER_CONSTANT_FETCH_18_2: u32 = 0x486E;
+pub const SHADER_CONSTANT_FETCH_18_3: u32 = 0x486F;
+pub const SHADER_CONSTANT_FETCH_18_4: u32 = 0x4870;
+pub const SHADER_CONSTANT_FETCH_18_5: u32 = 0x4871;
+pub const SHADER_CONSTANT_FETCH_19_0: u32 = 0x4872;
+pub const SHADER_CONSTANT_FETCH_19_1: u32 = 0x4873;
+pub const SHADER_CONSTANT_FETCH_19_2: u32 = 0x4874;
+pub const SHADER_CONSTANT_FETCH_19_3: u32 = 0x4875;
+pub const SHADER_CONSTANT_FETCH_19_4: u32 = 0x4876;
+pub const SHADER_CONSTANT_FETCH_19_5: u32 = 0x4877;
+pub const SHADER_CONSTANT_FETCH_20_0: u32 = 0x4878;
+pub const SHADER_CONSTANT_FETCH_20_1: u32 = 0x4879;
+pub const SHADER_CONSTANT_FETCH_20_2: u32 = 0x487A;
+pub const SHADER_CONSTANT_FETCH_20_3: u32 = 0x487B;
+pub const SHADER_CONSTANT_FETCH_20_4: u32 = 0x487C;
+pub const SHADER_CONSTANT_FETCH_20_5: u32 = 0x487D;
+pub const SHADER_CONSTANT_FETCH_21_0: u32 = 0x487E;
+pub const SHADER_CONSTANT_FETCH_21_1: u32 = 0x487F;
+pub const SHADER_CONSTANT_FETCH_21_2: u32 = 0x4880;
+pub const SHADER_CONSTANT_FETCH_21_3: u32 = 0x4881;
+pub const SHADER_CONSTANT_FETCH_21_4: u32 = 0x4882;
+pub const SHADER_CONSTANT_FETCH_21_5: u32 = 0x4883;
+pub const SHADER_CONSTANT_FETCH_22_0: u32 = 0x4884;
+pub const SHADER_CONSTANT_FETCH_22_1: u32 = 0x4885;
+pub const SHADER_CONSTANT_FETCH_22_2: u32 = 0x4886;
+pub const SHADER_CONSTANT_FETCH_22_3: u32 = 0x4887;
+pub const SHADER_CONSTANT_FETCH_22_4: u32 = 0x4888;
+pub const SHADER_CONSTANT_FETCH_22_5: u32 = 0x4889;
+pub const SHADER_CONSTANT_FETCH_23_0: u32 = 0x488A;
+pub const SHADER_CONSTANT_FETCH_23_1: u32 = 0x488B;
+pub const SHADER_CONSTANT_FETCH_23_2: u32 = 0x488C;
+pub const SHADER_CONSTANT_FETCH_23_3: u32 = 0x488D;
+pub const SHADER_CONSTANT_FETCH_23_4: u32 = 0x488E;
+pub const SHADER_CONSTANT_FETCH_23_5: u32 = 0x488F;
+pub const SHADER_CONSTANT_FETCH_24_0: u32 = 0x4890;
+pub const SHADER_CONSTANT_FETCH_24_1: u32 = 0x4891;
+pub const SHADER_CONSTANT_FETCH_24_2: u32 = 0x4892;
+pub const SHADER_CONSTANT_FETCH_24_3: u32 = 0x4893;
+pub const SHADER_CONSTANT_FETCH_24_4: u32 = 0x4894;
+pub const SHADER_CONSTANT_FETCH_24_5: u32 = 0x4895;
+pub const SHADER_CONSTANT_FETCH_25_0: u32 = 0x4896;
+pub const SHADER_CONSTANT_FETCH_25_1: u32 = 0x4897;
+pub const SHADER_CONSTANT_FETCH_25_2: u32 = 0x4898;
+pub const SHADER_CONSTANT_FETCH_25_3: u32 = 0x4899;
+pub const SHADER_CONSTANT_FETCH_25_4: u32 = 0x489A;
+pub const SHADER_CONSTANT_FETCH_25_5: u32 = 0x489B;
+pub const SHADER_CONSTANT_FETCH_26_0: u32 = 0x489C;
+pub const SHADER_CONSTANT_FETCH_26_1: u32 = 0x489D;
+pub const SHADER_CONSTANT_FETCH_26_2: u32 = 0x489E;
+pub const SHADER_CONSTANT_FETCH_26_3: u32 = 0x489F;
+pub const SHADER_CONSTANT_FETCH_26_4: u32 = 0x48A0;
+pub const SHADER_CONSTANT_FETCH_26_5: u32 = 0x48A1;
+pub const SHADER_CONSTANT_FETCH_27_0: u32 = 0x48A2;
+pub const SHADER_CONSTANT_FETCH_27_1: u32 = 0x48A3;
+pub const SHADER_CONSTANT_FETCH_27_2: u32 = 0x48A4;
+pub const SHADER_CONSTANT_FETCH_27_3: u32 = 0x48A5;
+pub const SHADER_CONSTANT_FETCH_27_4: u32 = 0x48A6;
+pub const SHADER_CONSTANT_FETCH_27_5: u32 = 0x48A7;
+pub const SHADER_CONSTANT_FETCH_28_0: u32 = 0x48A8;
+pub const SHADER_CONSTANT_FETCH_28_1: u32 = 0x48A9;
+pub const SHADER_CONSTANT_FETCH_28_2: u32 = 0x48AA;
+pub const SHADER_CONSTANT_FETCH_28_3: u32 = 0x48AB;
+pub const SHADER_CONSTANT_FETCH_28_4: u32 = 0x48AC;
+pub const SHADER_CONSTANT_FETCH_28_5: u32 = 0x48AD;
+pub const SHADER_CONSTANT_FETCH_29_0: u32 = 0x48AE;
+pub const SHADER_CONSTANT_FETCH_29_1: u32 = 0x48AF;
+pub const SHADER_CONSTANT_FETCH_29_2: u32 = 0x48B0;
+pub const SHADER_CONSTANT_FETCH_29_3: u32 = 0x48B1;
+pub const SHADER_CONSTANT_FETCH_29_4: u32 = 0x48B2;
+pub const SHADER_CONSTANT_FETCH_29_5: u32 = 0x48B3;
+pub const SHADER_CONSTANT_FETCH_30_0: u32 = 0x48B4;
+pub const SHADER_CONSTANT_FETCH_30_1: u32 = 0x48B5;
+pub const SHADER_CONSTANT_FETCH_30_2: u32 = 0x48B6;
+pub const SHADER_CONSTANT_FETCH_30_3: u32 = 0x48B7;
+pub const SHADER_CONSTANT_FETCH_30_4: u32 = 0x48B8;
+pub const SHADER_CONSTANT_FETCH_30_5: u32 = 0x48B9;
+pub const SHADER_CONSTANT_FETCH_31_0: u32 = 0x48BA;
+pub const SHADER_CONSTANT_FETCH_31_1: u32 = 0x48BB;
+pub const SHADER_CONSTANT_FETCH_31_2: u32 = 0x48BC;
+pub const SHADER_CONSTANT_FETCH_31_3: u32 = 0x48BD;
+pub const SHADER_CONSTANT_FETCH_31_4: u32 = 0x48BE;
+pub const SHADER_CONSTANT_FETCH_31_5: u32 = 0x48BF;
+pub const SHADER_CONSTANT_BOOL_000_031: u32 = 0x4900;
+pub const SHADER_CONSTANT_BOOL_032_063: u32 = 0x4901;
+pub const SHADER_CONSTANT_BOOL_064_095: u32 = 0x4902;
+pub const SHADER_CONSTANT_BOOL_096_127: u32 = 0x4903;
+pub const SHADER_CONSTANT_BOOL_128_159: u32 = 0x4904;
+pub const SHADER_CONSTANT_BOOL_160_191: u32 = 0x4905;
+pub const SHADER_CONSTANT_BOOL_192_223: u32 = 0x4906;
+pub const SHADER_CONSTANT_BOOL_224_255: u32 = 0x4907;
+pub const SHADER_CONSTANT_LOOP_00: u32 = 0x4908;
+pub const SHADER_CONSTANT_LOOP_01: u32 = 0x4909;
+pub const SHADER_CONSTANT_LOOP_02: u32 = 0x490A;
+pub const SHADER_CONSTANT_LOOP_03: u32 = 0x490B;
+pub const SHADER_CONSTANT_LOOP_04: u32 = 0x490C;
+pub const SHADER_CONSTANT_LOOP_05: u32 = 0x490D;
+pub const SHADER_CONSTANT_LOOP_06: u32 = 0x490E;
+pub const SHADER_CONSTANT_LOOP_07: u32 = 0x490F;
+pub const SHADER_CONSTANT_LOOP_08: u32 = 0x4910;
+pub const SHADER_CONSTANT_LOOP_09: u32 = 0x4911;
+pub const SHADER_CONSTANT_LOOP_10: u32 = 0x4912;
+pub const SHADER_CONSTANT_LOOP_11: u32 = 0x4913;
+pub const SHADER_CONSTANT_LOOP_12: u32 = 0x4914;
+pub const SHADER_CONSTANT_LOOP_13: u32 = 0x4915;
+pub const SHADER_CONSTANT_LOOP_14: u32 = 0x4916;
+pub const SHADER_CONSTANT_LOOP_15: u32 = 0x4917;
+pub const SHADER_CONSTANT_LOOP_16: u32 = 0x4918;
+pub const SHADER_CONSTANT_LOOP_17: u32 = 0x4919;
+pub const SHADER_CONSTANT_LOOP_18: u32 = 0x491A;
+pub const SHADER_CONSTANT_LOOP_19: u32 = 0x491B;
+pub const SHADER_CONSTANT_LOOP_20: u32 = 0x491C;
+pub const SHADER_CONSTANT_LOOP_21: u32 = 0x491D;
+pub const SHADER_CONSTANT_LOOP_22: u32 = 0x491E;
+pub const SHADER_CONSTANT_LOOP_23: u32 = 0x491F;
+pub const SHADER_CONSTANT_LOOP_24: u32 = 0x4920;
+pub const SHADER_CONSTANT_LOOP_25: u32 = 0x4921;
+pub const SHADER_CONSTANT_LOOP_26: u32 = 0x4922;
+pub const SHADER_CONSTANT_LOOP_27: u32 = 0x4923;
+pub const SHADER_CONSTANT_LOOP_28: u32 = 0x4924;
+pub const SHADER_CONSTANT_LOOP_29: u32 = 0x4925;
+pub const SHADER_CONSTANT_LOOP_30: u32 = 0x4926;
+pub const SHADER_CONSTANT_LOOP_31: u32 = 0x4927;
+pub const SHADER_CONSTANT_FLUSH_FETCH_0: u32 = 0x5000;
+pub const SHADER_CONSTANT_FLUSH_FETCH_1: u32 = 0x5001;
+pub const SHADER_CONSTANT_FLUSH_FETCH_2: u32 = 0x5002;
+
+/// Value interpretation of a register, as in the register table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RegisterKind {
+    /// Integer / bitfield register.
+    Dword,
+    /// IEEE 754 binary32 register.
+    Float,
+}
+
+/// Static description of one register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegisterInfo {
+    pub index: u32,
+    pub kind: RegisterKind,
+    pub name: &'static str,
+}
+
+/// Every known register, sorted by index.
+pub static REGISTERS: [RegisterInfo; 3435] = [
+    RegisterInfo { index: 0x0000, kind: RegisterKind::Dword, name: "RBBM_RTL_RELEASE" },
+    RegisterInfo { index: 0x0001, kind: RegisterKind::Dword, name: "RBBM_PATCH_RELEASE" },
+    RegisterInfo { index: 0x0002, kind: RegisterKind::Dword, name: "RBBM_AUXILIARY_CONFIG" },
+    RegisterInfo { index: 0x0004, kind: RegisterKind::Dword, name: "BIOS_0_SCRATCH" },
+    RegisterInfo { index: 0x0005, kind: RegisterKind::Dword, name: "BIOS_1_SCRATCH" },
+    RegisterInfo { index: 0x0006, kind: RegisterKind::Dword, name: "BIOS_2_SCRATCH" },
+    RegisterInfo { index: 0x0007, kind: RegisterKind::Dword, name: "BIOS_3_SCRATCH" },
+    RegisterInfo { index: 0x0008, kind: RegisterKind::Dword, name: "BIOS_4_SCRATCH" },
+    RegisterInfo { index: 0x0009, kind: RegisterKind::Dword, name: "BIOS_5_SCRATCH" },
+    RegisterInfo { index: 0x000A, kind: RegisterKind::Dword, name: "BIOS_6_SCRATCH" },
+    RegisterInfo { index: 0x000B, kind: RegisterKind::Dword, name: "BIOS_7_SCRATCH" },
+    RegisterInfo { index: 0x0038, kind: RegisterKind::Dword, name: "CONFIG_CNTL" },
+    RegisterInfo { index: 0x0039, kind: RegisterKind::Dword, name: "CONFIG_XSTRAP" },
+    RegisterInfo { index: 0x003A, kind: RegisterKind::Dword, name: "CONFIG_XSTRAP2" },
+    RegisterInfo { index: 0x003B, kind: RegisterKind::Dword, name: "RBBM_CNTL" },
+    RegisterInfo { index: 0x003C, kind: RegisterKind::Dword, name: "RBBM_SOFT_RESET" },
+    RegisterInfo { index: 0x003D, kind: RegisterKind::Dword, name: "RBBM_SKEW_CNTL" },
+    RegisterInfo { index: 0x0040, kind: RegisterKind::Dword, name: "MH_MMU_CONFIG" },
+    RegisterInfo { index: 0x0041, kind: RegisterKind::Dword, name: "MH_MMU_VA_RANGE" },
+    RegisterInfo { index: 0x0042, kind: RegisterKind::Dword, name: "MH_MMU_PT_BASE" },
+    RegisterInfo { index: 0x0043, kind: RegisterKind::Dword, name: "MH_MMU_PAGE_FAULT" },
+    RegisterInfo { index: 0x0044, kind: RegisterKind::Dword, name: "MH_MMU_TRAN_ERROR" },
+    RegisterInfo { index: 0x0045, kind: RegisterKind::Dword, name: "MH_MMU_INVALIDATE" },
+    RegisterInfo { index: 0x0046, kind: RegisterKind::Dword, name: "MH_MMU_MPU_BASE" },
+    RegisterInfo { index: 0x0047, kind: RegisterKind::Dword, name: "MH_MMU_MPU_END" },
+    RegisterInfo { index: 0x0048, kind: RegisterKind::Dword, name: "BIF_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0049, kind: RegisterKind::Dword, name: "BIF_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x004A, kind: RegisterKind::Dword, name: "BIF_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0064, kind: RegisterKind::Dword, name: "ROM_PAR_DATA_REG" },
+    RegisterInfo { index: 0x0065, kind: RegisterKind::Dword, name: "ROM_BAD_PIPE_DISABLE_REGISTER" },
+    RegisterInfo { index: 0x0066, kind: RegisterKind::Dword, name: "ROM_PAR_ADDR_REG" },
+    RegisterInfo { index: 0x0067, kind: RegisterKind::Dword, name: "ROM_CLK_REG" },
+    RegisterInfo { index: 0x0068, kind: RegisterKind::Dword, name: "ROM_BAD_PIPE_FUSE_REG" },
+    RegisterInfo { index: 0x0069, kind: RegisterKind::Dword, name: "DBG_CNTL1_REG" },
+    RegisterInfo { index: 0x006A, kind: RegisterKind::Dword, name: "ROM_SIMD_PIPE_DISABLE_REGISTER" },
+    RegisterInfo { index: 0x006B, kind: RegisterKind::Dword, name: "DBG_READ_REG" },
+    RegisterInfo { index: 0x006C, kind: RegisterKind::Dword, name: "ROM_PADS_REG" },
+    RegisterInfo { index: 0x006D, kind: RegisterKind::Dword, name: "SOFT_STRAP_CNTL" },
+    RegisterInfo { index: 0x006E, kind: RegisterKind::Dword, name: "CONFIG_XSTRAP3" },
+    RegisterInfo { index: 0x006F, kind: RegisterKind::Dword, name: "EXTERN_TRIG_CNTL" },
+    RegisterInfo { index: 0x0070, kind: RegisterKind::Dword, name: "ROM_STATUS_REG" },
+    RegisterInfo { index: 0x0071, kind: RegisterKind::Dword, name: "ROM_PORT_REG" },
+    RegisterInfo { index: 0x0080, kind: RegisterKind::Dword, name: "SCLK_PWRMGT_CNTL1_REG" },
+    RegisterInfo { index: 0x0081, kind: RegisterKind::Dword, name: "SCLK_PWRMGT_CNTL2_REG" },
+    RegisterInfo { index: 0x0082, kind: RegisterKind::Dword, name: "SCLK_PWRMGT_CNTL3_REG" },
+    RegisterInfo { index: 0x0083, kind: RegisterKind::Dword, name: "FSB_STOP_CLK_REG" },
+    RegisterInfo { index: 0x0084, kind: RegisterKind::Dword, name: "SPLL_CNTL_REG" },
+    RegisterInfo { index: 0x0085, kind: RegisterKind::Dword, name: "CG_SCRATCH1" },
+    RegisterInfo { index: 0x0086, kind: RegisterKind::Dword, name: "RCLK_PWRMGT_CNTL_REG" },
+    RegisterInfo { index: 0x0087, kind: RegisterKind::Dword, name: "PSRO_REG" },
+    RegisterInfo { index: 0x0091, kind: RegisterKind::Dword, name: "RPLL_CNTL_REG" },
+    RegisterInfo { index: 0x0092, kind: RegisterKind::Dword, name: "FPLL_CNTL_REG" },
+    RegisterInfo { index: 0x0093, kind: RegisterKind::Dword, name: "CG_INT_MASK_REG" },
+    RegisterInfo { index: 0x0094, kind: RegisterKind::Dword, name: "CG_INT_STAT_REG" },
+    RegisterInfo { index: 0x0095, kind: RegisterKind::Dword, name: "CG_INT_ACK_REG" },
+    RegisterInfo { index: 0x00A0, kind: RegisterKind::Dword, name: "MCLK_CNTL1_REG" },
+    RegisterInfo { index: 0x00A1, kind: RegisterKind::Dword, name: "MPLL_CNTL_REG" },
+    RegisterInfo { index: 0x00A2, kind: RegisterKind::Dword, name: "YCLK_CNTL1_REG" },
+    RegisterInfo { index: 0x00A3, kind: RegisterKind::Dword, name: "MDLL_CNTL1_REG" },
+    RegisterInfo { index: 0x00A6, kind: RegisterKind::Dword, name: "MCLK_PWRMGT_CNTL_REG" },
+    RegisterInfo { index: 0x00A7, kind: RegisterKind::Dword, name: "MCLK_TEST_CNTL1_REG" },
+    RegisterInfo { index: 0x00A8, kind: RegisterKind::Dword, name: "CGM_MC0_IO_CNTL" },
+    RegisterInfo { index: 0x00A9, kind: RegisterKind::Dword, name: "CGM_DRAM_CNTL_REG" },
+    RegisterInfo { index: 0x00AA, kind: RegisterKind::Dword, name: "CGM_MC1_IO_CNTL" },
+    RegisterInfo { index: 0x0128, kind: RegisterKind::Dword, name: "PCLK_SOFT_RESET" },
+    RegisterInfo { index: 0x0129, kind: RegisterKind::Dword, name: "DCCG_SCLK_R_DISP_CNTL" },
+    RegisterInfo { index: 0x012F, kind: RegisterKind::Dword, name: "SCLK_G_SCL1_CNTL" },
+    RegisterInfo { index: 0x0132, kind: RegisterKind::Dword, name: "SCLK_SOFT_RESET" },
+    RegisterInfo { index: 0x0133, kind: RegisterKind::Dword, name: "DCCG_CLK_CNTL" },
+    RegisterInfo { index: 0x0135, kind: RegisterKind::Dword, name: "TEST_COUNT_CNTL" },
+    RegisterInfo { index: 0x0136, kind: RegisterKind::Dword, name: "DCCG_TEST_CLK_SEL" },
+    RegisterInfo { index: 0x013C, kind: RegisterKind::Dword, name: "DVOACLK_CNTL" },
+    RegisterInfo { index: 0x0140, kind: RegisterKind::Dword, name: "DCCG_ONE_SHOT_CLOCKING_CNTL" },
+    RegisterInfo { index: 0x0141, kind: RegisterKind::Dword, name: "DCCG_ONE_SHOT_STOP_CLOCKS_CNTL" },
+    RegisterInfo { index: 0x0142, kind: RegisterKind::Dword, name: "DCCG_ONE_SHOT_RUN_CLOCKS_CNTL" },
+    RegisterInfo { index: 0x0143, kind: RegisterKind::Dword, name: "DCCG_ONE_SHOT_RUN_CLOCKS_COUNT" },
+    RegisterInfo { index: 0x0144, kind: RegisterKind::Dword, name: "DCCG_DEBUG" },
+    RegisterInfo { index: 0x015C, kind: RegisterKind::Dword, name: "SCLK_G_DCP_CNTL" },
+    RegisterInfo { index: 0x01C0, kind: RegisterKind::Dword, name: "CP_RB_BASE" },
+    RegisterInfo { index: 0x01C1, kind: RegisterKind::Dword, name: "CP_RB_CNTL" },
+    RegisterInfo { index: 0x01C3, kind: RegisterKind::Dword, name: "CP_RB_RPTR_ADDR" },
+    RegisterInfo { index: 0x01C4, kind: RegisterKind::Dword, name: "CP_RB_RPTR" },
+    RegisterInfo { index: 0x01C5, kind: RegisterKind::Dword, name: "CP_RB_WPTR" },
+    RegisterInfo { index: 0x01C6, kind: RegisterKind::Dword, name: "CP_RB_WPTR_DELAY" },
+    RegisterInfo { index: 0x01C7, kind: RegisterKind::Dword, name: "CP_RB_RPTR_WR" },
+    RegisterInfo { index: 0x01C8, kind: RegisterKind::Dword, name: "CP_DMA_SRC_ADDR" },
+    RegisterInfo { index: 0x01C9, kind: RegisterKind::Dword, name: "CP_DMA_DST_ADDR" },
+    RegisterInfo { index: 0x01CA, kind: RegisterKind::Dword, name: "CP_DMA_COMMAND" },
+    RegisterInfo { index: 0x01CC, kind: RegisterKind::Dword, name: "CP_IB1_BASE" },
+    RegisterInfo { index: 0x01CD, kind: RegisterKind::Dword, name: "CP_IB1_BUFSZ" },
+    RegisterInfo { index: 0x01CE, kind: RegisterKind::Dword, name: "CP_IB2_BASE" },
+    RegisterInfo { index: 0x01CF, kind: RegisterKind::Dword, name: "CP_IB2_BUFSZ" },
+    RegisterInfo { index: 0x01D0, kind: RegisterKind::Dword, name: "CP_RT_BASE" },
+    RegisterInfo { index: 0x01D1, kind: RegisterKind::Dword, name: "CP_RT_BUFSZ" },
+    RegisterInfo { index: 0x01D2, kind: RegisterKind::Dword, name: "CP_RT_ST_BASE" },
+    RegisterInfo { index: 0x01D3, kind: RegisterKind::Dword, name: "CP_RT_ST_BUFSZ" },
+    RegisterInfo { index: 0x01D5, kind: RegisterKind::Dword, name: "CP_QUEUE_THRESHOLDS" },
+    RegisterInfo { index: 0x01D6, kind: RegisterKind::Dword, name: "CP_MEQ_THRESHOLDS" },
+    RegisterInfo { index: 0x01D7, kind: RegisterKind::Dword, name: "CP_CSQ_AVAIL" },
+    RegisterInfo { index: 0x01D8, kind: RegisterKind::Dword, name: "CP_STQ_AVAIL" },
+    RegisterInfo { index: 0x01D9, kind: RegisterKind::Dword, name: "CP_MEQ_AVAIL" },
+    RegisterInfo { index: 0x01DA, kind: RegisterKind::Dword, name: "CP_CMD_INDEX" },
+    RegisterInfo { index: 0x01DB, kind: RegisterKind::Dword, name: "CP_CMD_DATA" },
+    RegisterInfo { index: 0x01DC, kind: RegisterKind::Dword, name: "SCRATCH_UMSK" },
+    RegisterInfo { index: 0x01DD, kind: RegisterKind::Dword, name: "SCRATCH_ADDR" },
+    RegisterInfo { index: 0x01DE, kind: RegisterKind::Dword, name: "SCRATCH_CMP_HI" },
+    RegisterInfo { index: 0x01DF, kind: RegisterKind::Dword, name: "SCRATCH_CMP_LO" },
+    RegisterInfo { index: 0x01E0, kind: RegisterKind::Dword, name: "CP_DMA_TABLE_ADDR" },
+    RegisterInfo { index: 0x01E1, kind: RegisterKind::Dword, name: "CP_DMA_SRC_ADDR_STAT" },
+    RegisterInfo { index: 0x01E2, kind: RegisterKind::Dword, name: "CP_DMA_DST_ADDR_STAT" },
+    RegisterInfo { index: 0x01E3, kind: RegisterKind::Dword, name: "CP_DMA_COMMAND_STAT" },
+    RegisterInfo { index: 0x01E4, kind: RegisterKind::Dword, name: "CP_DMA_STAT" },
+    RegisterInfo { index: 0x01E5, kind: RegisterKind::Dword, name: "CP_DMA_ACT_DSCR_STAT" },
+    RegisterInfo { index: 0x01E6, kind: RegisterKind::Dword, name: "CP_PERFCOUNTER_SELECT" },
+    RegisterInfo { index: 0x01E7, kind: RegisterKind::Dword, name: "CP_PERFCOUNTER_LO" },
+    RegisterInfo { index: 0x01E8, kind: RegisterKind::Dword, name: "CP_PERFCOUNTER_HI" },
+    RegisterInfo { index: 0x01E9, kind: RegisterKind::Dword, name: "SCRATCH_CMP_CNTL" },
+    RegisterInfo { index: 0x01EA, kind: RegisterKind::Dword, name: "CP_ME_RDADDR" },
+    RegisterInfo { index: 0x01EC, kind: RegisterKind::Dword, name: "CP_STATE_DEBUG_INDEX" },
+    RegisterInfo { index: 0x01ED, kind: RegisterKind::Dword, name: "CP_STATE_DEBUG_DATA" },
+    RegisterInfo { index: 0x01EE, kind: RegisterKind::Dword, name: "CP_NV_FLAGS_0" },
+    RegisterInfo { index: 0x01EF, kind: RegisterKind::Dword, name: "CP_NV_FLAGS_1" },
+    RegisterInfo { index: 0x01F0, kind: RegisterKind::Dword, name: "CP_NV_FLAGS_2" },
+    RegisterInfo { index: 0x01F1, kind: RegisterKind::Dword, name: "CP_NV_FLAGS_3" },
+    RegisterInfo { index: 0x01F2, kind: RegisterKind::Dword, name: "CP_INT_CNTL" },
+    RegisterInfo { index: 0x01F3, kind: RegisterKind::Dword, name: "CP_INT_STATUS" },
+    RegisterInfo { index: 0x01F4, kind: RegisterKind::Dword, name: "CP_INT_ACK" },
+    RegisterInfo { index: 0x01F5, kind: RegisterKind::Dword, name: "CP_PERFMON_CNTL" },
+    RegisterInfo { index: 0x01F6, kind: RegisterKind::Dword, name: "CP_ME_CNTL" },
+    RegisterInfo { index: 0x01F7, kind: RegisterKind::Dword, name: "CP_ME_STATUS" },
+    RegisterInfo { index: 0x01F8, kind: RegisterKind::Dword, name: "CP_ME_RAM_WADDR" },
+    RegisterInfo { index: 0x01F9, kind: RegisterKind::Dword, name: "CP_ME_RAM_RADDR" },
+    RegisterInfo { index: 0x01FA, kind: RegisterKind::Dword, name: "CP_ME_RAM_DATA" },
+    RegisterInfo { index: 0x01FB, kind: RegisterKind::Dword, name: "CP_SNOOP_CNTL" },
+    RegisterInfo { index: 0x01FC, kind: RegisterKind::Dword, name: "CP_DEBUG" },
+    RegisterInfo { index: 0x01FD, kind: RegisterKind::Dword, name: "CP_CSQ_RB_STAT" },
+    RegisterInfo { index: 0x01FE, kind: RegisterKind::Dword, name: "CP_CSQ_IB1_STAT" },
+    RegisterInfo { index: 0x01FF, kind: RegisterKind::Dword, name: "CP_CSQ_IB2_STAT" },
+    RegisterInfo { index: 0x0394, kind: RegisterKind::Dword, name: "NQWAIT_UNTIL" },
+    RegisterInfo { index: 0x0395, kind: RegisterKind::Dword, name: "RBBM_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0396, kind: RegisterKind::Dword, name: "RBBM_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0397, kind: RegisterKind::Dword, name: "RBBM_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0398, kind: RegisterKind::Dword, name: "RBBM_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0399, kind: RegisterKind::Dword, name: "RBBM_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x039A, kind: RegisterKind::Dword, name: "RBBM_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x039B, kind: RegisterKind::Dword, name: "RBBM_DEBUG" },
+    RegisterInfo { index: 0x039C, kind: RegisterKind::Dword, name: "RBBM_STATUS2" },
+    RegisterInfo { index: 0x039D, kind: RegisterKind::Dword, name: "RBBM_CRC32" },
+    RegisterInfo { index: 0x03A0, kind: RegisterKind::Dword, name: "RBBM_DEBUG_OUT" },
+    RegisterInfo { index: 0x03A1, kind: RegisterKind::Dword, name: "RBBM_DEBUG_CNTL" },
+    RegisterInfo { index: 0x03B2, kind: RegisterKind::Dword, name: "RBBM_WAIT_IDLE_CLOCKS" },
+    RegisterInfo { index: 0x03B3, kind: RegisterKind::Dword, name: "RBBM_READ_ERROR" },
+    RegisterInfo { index: 0x03B4, kind: RegisterKind::Dword, name: "RBBM_INT_CNTL" },
+    RegisterInfo { index: 0x03B5, kind: RegisterKind::Dword, name: "RBBM_INT_STATUS" },
+    RegisterInfo { index: 0x03B6, kind: RegisterKind::Dword, name: "RBBM_INT_ACK" },
+    RegisterInfo { index: 0x03B7, kind: RegisterKind::Dword, name: "MASTER_INT_SIGNAL" },
+    RegisterInfo { index: 0x03F9, kind: RegisterKind::Dword, name: "RBBM_PERIPHID1" },
+    RegisterInfo { index: 0x03FA, kind: RegisterKind::Dword, name: "RBBM_PERIPHID2" },
+    RegisterInfo { index: 0x0440, kind: RegisterKind::Dword, name: "CP_NON_PREFETCH_CNTRS" },
+    RegisterInfo { index: 0x0442, kind: RegisterKind::Dword, name: "CP_STQ_RT_STAT" },
+    RegisterInfo { index: 0x0443, kind: RegisterKind::Dword, name: "CP_STQ_ST_STAT" },
+    RegisterInfo { index: 0x0444, kind: RegisterKind::Dword, name: "CP_STQ_RT_ST_STAT" },
+    RegisterInfo { index: 0x0445, kind: RegisterKind::Dword, name: "CP_RT_DMA_SRC_ADDR" },
+    RegisterInfo { index: 0x0446, kind: RegisterKind::Dword, name: "CP_RT_DMA_DST_ADDR" },
+    RegisterInfo { index: 0x0447, kind: RegisterKind::Dword, name: "CP_RT_DMA_COMMAND" },
+    RegisterInfo { index: 0x0448, kind: RegisterKind::Dword, name: "CP_RT_ME_RAM_WADDR" },
+    RegisterInfo { index: 0x0449, kind: RegisterKind::Dword, name: "CP_RT_ME_RAM_RADDR" },
+    RegisterInfo { index: 0x044A, kind: RegisterKind::Dword, name: "CP_RT_ME_RAM_DATA" },
+    RegisterInfo { index: 0x044B, kind: RegisterKind::Dword, name: "CP_PROG_COUNTER" },
+    RegisterInfo { index: 0x044C, kind: RegisterKind::Dword, name: "CP_RT_ME_RDADDR" },
+    RegisterInfo { index: 0x044D, kind: RegisterKind::Dword, name: "CP_ST_BASE" },
+    RegisterInfo { index: 0x044E, kind: RegisterKind::Dword, name: "CP_ST_BUFSZ" },
+    RegisterInfo { index: 0x044F, kind: RegisterKind::Dword, name: "CP_MEQ_STAT" },
+    RegisterInfo { index: 0x0452, kind: RegisterKind::Dword, name: "CP_MIU_TAG_STAT0" },
+    RegisterInfo { index: 0x0453, kind: RegisterKind::Dword, name: "CP_MIU_TAG_STAT1" },
+    RegisterInfo { index: 0x0454, kind: RegisterKind::Dword, name: "CP_BIN_MASK_LO" },
+    RegisterInfo { index: 0x0455, kind: RegisterKind::Dword, name: "CP_BIN_MASK_HI" },
+    RegisterInfo { index: 0x0456, kind: RegisterKind::Dword, name: "CP_BIN_SELECT_LO" },
+    RegisterInfo { index: 0x0457, kind: RegisterKind::Dword, name: "CP_BIN_SELECT_HI" },
+    RegisterInfo { index: 0x0458, kind: RegisterKind::Dword, name: "CP_RT_BIN_MASK_LO" },
+    RegisterInfo { index: 0x0459, kind: RegisterKind::Dword, name: "CP_RT_BIN_MASK_HI" },
+    RegisterInfo { index: 0x045A, kind: RegisterKind::Dword, name: "CP_RT_BIN_SELECT_LO" },
+    RegisterInfo { index: 0x045B, kind: RegisterKind::Dword, name: "CP_RT_BIN_SELECT_HI" },
+    RegisterInfo { index: 0x045C, kind: RegisterKind::Dword, name: "CP_CPU_INT_CNTL" },
+    RegisterInfo { index: 0x045D, kind: RegisterKind::Dword, name: "CP_CPU_INT_STATUS" },
+    RegisterInfo { index: 0x045E, kind: RegisterKind::Dword, name: "CP_CPU_INT_ACK" },
+    RegisterInfo { index: 0x045F, kind: RegisterKind::Dword, name: "CP_PFP_UCODE_ADDR" },
+    RegisterInfo { index: 0x0460, kind: RegisterKind::Dword, name: "CP_PFP_UCODE_DATA" },
+    RegisterInfo { index: 0x0461, kind: RegisterKind::Dword, name: "CP_PFP_RT_UCODE_ADDR" },
+    RegisterInfo { index: 0x0462, kind: RegisterKind::Dword, name: "CP_PFP_RT_UCODE_DATA" },
+    RegisterInfo { index: 0x047E, kind: RegisterKind::Dword, name: "CP_RT_STAT" },
+    RegisterInfo { index: 0x047F, kind: RegisterKind::Dword, name: "CP_STAT" },
+    RegisterInfo { index: 0x04C0, kind: RegisterKind::Dword, name: "CP_RT0_COMMAND" },
+    RegisterInfo { index: 0x04C1, kind: RegisterKind::Dword, name: "CP_RT0_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04C2, kind: RegisterKind::Dword, name: "CP_RT0_REFERENCE" },
+    RegisterInfo { index: 0x04C3, kind: RegisterKind::Dword, name: "CP_RT0_MASK" },
+    RegisterInfo { index: 0x04C4, kind: RegisterKind::Dword, name: "CP_RT0_BADR" },
+    RegisterInfo { index: 0x04C5, kind: RegisterKind::Dword, name: "CP_RT0_SIZE" },
+    RegisterInfo { index: 0x04C6, kind: RegisterKind::Dword, name: "CP_RT1_COMMAND" },
+    RegisterInfo { index: 0x04C7, kind: RegisterKind::Dword, name: "CP_RT1_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04C8, kind: RegisterKind::Dword, name: "CP_RT1_REFERENCE" },
+    RegisterInfo { index: 0x04C9, kind: RegisterKind::Dword, name: "CP_RT1_MASK" },
+    RegisterInfo { index: 0x04CA, kind: RegisterKind::Dword, name: "CP_RT1_BADR" },
+    RegisterInfo { index: 0x04CB, kind: RegisterKind::Dword, name: "CP_RT1_SIZE" },
+    RegisterInfo { index: 0x04CC, kind: RegisterKind::Dword, name: "CP_RT2_COMMAND" },
+    RegisterInfo { index: 0x04CD, kind: RegisterKind::Dword, name: "CP_RT2_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04CE, kind: RegisterKind::Dword, name: "CP_RT2_REFERENCE" },
+    RegisterInfo { index: 0x04CF, kind: RegisterKind::Dword, name: "CP_RT2_MASK" },
+    RegisterInfo { index: 0x04D0, kind: RegisterKind::Dword, name: "CP_RT2_BADR" },
+    RegisterInfo { index: 0x04D1, kind: RegisterKind::Dword, name: "CP_RT2_SIZE" },
+    RegisterInfo { index: 0x04D2, kind: RegisterKind::Dword, name: "CP_RT3_COMMAND" },
+    RegisterInfo { index: 0x04D3, kind: RegisterKind::Dword, name: "CP_RT3_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04D4, kind: RegisterKind::Dword, name: "CP_RT3_REFERENCE" },
+    RegisterInfo { index: 0x04D5, kind: RegisterKind::Dword, name: "CP_RT3_MASK" },
+    RegisterInfo { index: 0x04D6, kind: RegisterKind::Dword, name: "CP_RT3_BADR" },
+    RegisterInfo { index: 0x04D7, kind: RegisterKind::Dword, name: "CP_RT3_SIZE" },
+    RegisterInfo { index: 0x04D8, kind: RegisterKind::Dword, name: "CP_RT4_COMMAND" },
+    RegisterInfo { index: 0x04D9, kind: RegisterKind::Dword, name: "CP_RT4_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04DA, kind: RegisterKind::Dword, name: "CP_RT4_REFERENCE" },
+    RegisterInfo { index: 0x04DB, kind: RegisterKind::Dword, name: "CP_RT4_MASK" },
+    RegisterInfo { index: 0x04DC, kind: RegisterKind::Dword, name: "CP_RT4_BADR" },
+    RegisterInfo { index: 0x04DD, kind: RegisterKind::Dword, name: "CP_RT4_SIZE" },
+    RegisterInfo { index: 0x04DE, kind: RegisterKind::Dword, name: "CP_RT5_COMMAND" },
+    RegisterInfo { index: 0x04DF, kind: RegisterKind::Dword, name: "CP_RT5_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04E0, kind: RegisterKind::Dword, name: "CP_RT5_REFERENCE" },
+    RegisterInfo { index: 0x04E1, kind: RegisterKind::Dword, name: "CP_RT5_MASK" },
+    RegisterInfo { index: 0x04E2, kind: RegisterKind::Dword, name: "CP_RT5_BADR" },
+    RegisterInfo { index: 0x04E3, kind: RegisterKind::Dword, name: "CP_RT5_SIZE" },
+    RegisterInfo { index: 0x04E4, kind: RegisterKind::Dword, name: "CP_RT6_COMMAND" },
+    RegisterInfo { index: 0x04E5, kind: RegisterKind::Dword, name: "CP_RT6_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04E6, kind: RegisterKind::Dword, name: "CP_RT6_REFERENCE" },
+    RegisterInfo { index: 0x04E7, kind: RegisterKind::Dword, name: "CP_RT6_MASK" },
+    RegisterInfo { index: 0x04E8, kind: RegisterKind::Dword, name: "CP_RT6_BADR" },
+    RegisterInfo { index: 0x04E9, kind: RegisterKind::Dword, name: "CP_RT6_SIZE" },
+    RegisterInfo { index: 0x04EA, kind: RegisterKind::Dword, name: "CP_RT7_COMMAND" },
+    RegisterInfo { index: 0x04EB, kind: RegisterKind::Dword, name: "CP_RT7_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04EC, kind: RegisterKind::Dword, name: "CP_RT7_REFERENCE" },
+    RegisterInfo { index: 0x04ED, kind: RegisterKind::Dword, name: "CP_RT7_MASK" },
+    RegisterInfo { index: 0x04EE, kind: RegisterKind::Dword, name: "CP_RT7_BADR" },
+    RegisterInfo { index: 0x04EF, kind: RegisterKind::Dword, name: "CP_RT7_SIZE" },
+    RegisterInfo { index: 0x04F0, kind: RegisterKind::Dword, name: "CP_RT8_COMMAND" },
+    RegisterInfo { index: 0x04F1, kind: RegisterKind::Dword, name: "CP_RT8_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04F2, kind: RegisterKind::Dword, name: "CP_RT8_REFERENCE" },
+    RegisterInfo { index: 0x04F3, kind: RegisterKind::Dword, name: "CP_RT8_MASK" },
+    RegisterInfo { index: 0x04F4, kind: RegisterKind::Dword, name: "CP_RT8_BADR" },
+    RegisterInfo { index: 0x04F5, kind: RegisterKind::Dword, name: "CP_RT8_SIZE" },
+    RegisterInfo { index: 0x04F6, kind: RegisterKind::Dword, name: "CP_RT9_COMMAND" },
+    RegisterInfo { index: 0x04F7, kind: RegisterKind::Dword, name: "CP_RT9_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04F8, kind: RegisterKind::Dword, name: "CP_RT9_REFERENCE" },
+    RegisterInfo { index: 0x04F9, kind: RegisterKind::Dword, name: "CP_RT9_MASK" },
+    RegisterInfo { index: 0x04FA, kind: RegisterKind::Dword, name: "CP_RT9_BADR" },
+    RegisterInfo { index: 0x04FB, kind: RegisterKind::Dword, name: "CP_RT9_SIZE" },
+    RegisterInfo { index: 0x04FC, kind: RegisterKind::Dword, name: "CP_RT10_COMMAND" },
+    RegisterInfo { index: 0x04FD, kind: RegisterKind::Dword, name: "CP_RT10_POLL_ADDRESS" },
+    RegisterInfo { index: 0x04FE, kind: RegisterKind::Dword, name: "CP_RT10_REFERENCE" },
+    RegisterInfo { index: 0x04FF, kind: RegisterKind::Dword, name: "CP_RT10_MASK" },
+    RegisterInfo { index: 0x0500, kind: RegisterKind::Dword, name: "CP_RT10_BADR" },
+    RegisterInfo { index: 0x0501, kind: RegisterKind::Dword, name: "CP_RT10_SIZE" },
+    RegisterInfo { index: 0x0502, kind: RegisterKind::Dword, name: "CP_RT11_COMMAND" },
+    RegisterInfo { index: 0x0503, kind: RegisterKind::Dword, name: "CP_RT11_POLL_ADDRESS" },
+    RegisterInfo { index: 0x0504, kind: RegisterKind::Dword, name: "CP_RT11_REFERENCE" },
+    RegisterInfo { index: 0x0505, kind: RegisterKind::Dword, name: "CP_RT11_MASK" },
+    RegisterInfo { index: 0x0506, kind: RegisterKind::Dword, name: "CP_RT11_BADR" },
+    RegisterInfo { index: 0x0507, kind: RegisterKind::Dword, name: "CP_RT11_SIZE" },
+    RegisterInfo { index: 0x0508, kind: RegisterKind::Dword, name: "CP_RT12_COMMAND" },
+    RegisterInfo { index: 0x0509, kind: RegisterKind::Dword, name: "CP_RT12_POLL_ADDRESS" },
+    RegisterInfo { index: 0x050A, kind: RegisterKind::Dword, name: "CP_RT12_REFERENCE" },
+    RegisterInfo { index: 0x050B, kind: RegisterKind::Dword, name: "CP_RT12_MASK" },
+    RegisterInfo { index: 0x050C, kind: RegisterKind::Dword, name: "CP_RT12_BADR" },
+    RegisterInfo { index: 0x050D, kind: RegisterKind::Dword, name: "CP_RT12_SIZE" },
+    RegisterInfo { index: 0x050E, kind: RegisterKind::Dword, name: "CP_RT13_COMMAND" },
+    RegisterInfo { index: 0x050F, kind: RegisterKind::Dword, name: "CP_RT13_POLL_ADDRESS" },
+    RegisterInfo { index: 0x0510, kind: RegisterKind::Dword, name: "CP_RT13_REFERENCE" },
+    RegisterInfo { index: 0x0511, kind: RegisterKind::Dword, name: "CP_RT13_MASK" },
+    RegisterInfo { index: 0x0512, kind: RegisterKind::Dword, name: "CP_RT13_BADR" },
+    RegisterInfo { index: 0x0513, kind: RegisterKind::Dword, name: "CP_RT13_SIZE" },
+    RegisterInfo { index: 0x0514, kind: RegisterKind::Dword, name: "CP_RT14_COMMAND" },
+    RegisterInfo { index: 0x0515, kind: RegisterKind::Dword, name: "CP_RT14_POLL_ADDRESS" },
+    RegisterInfo { index: 0x0516, kind: RegisterKind::Dword, name: "CP_RT14_REFERENCE" },
+    RegisterInfo { index: 0x0517, kind: RegisterKind::Dword, name: "CP_RT14_MASK" },
+    RegisterInfo { index: 0x0518, kind: RegisterKind::Dword, name: "CP_RT14_RADR" },
+    RegisterInfo { index: 0x0519, kind: RegisterKind::Dword, name: "CP_RT14_SIZE" },
+    RegisterInfo { index: 0x051A, kind: RegisterKind::Dword, name: "CP_RT15_COMMAND" },
+    RegisterInfo { index: 0x051B, kind: RegisterKind::Dword, name: "CP_RT15_POLL_ADDRESS" },
+    RegisterInfo { index: 0x051C, kind: RegisterKind::Dword, name: "CP_RT15_REFERENCE" },
+    RegisterInfo { index: 0x051D, kind: RegisterKind::Dword, name: "CP_RT15_MASK" },
+    RegisterInfo { index: 0x051E, kind: RegisterKind::Dword, name: "CP_RT15_BADR" },
+    RegisterInfo { index: 0x051F, kind: RegisterKind::Dword, name: "CP_RT15_SIZE" },
+    RegisterInfo { index: 0x0520, kind: RegisterKind::Dword, name: "CP_RT_POLL_INTERVAL" },
+    RegisterInfo { index: 0x0521, kind: RegisterKind::Dword, name: "CP_VIP_EOL_EOF_COUNTER" },
+    RegisterInfo { index: 0x0522, kind: RegisterKind::Dword, name: "CP_D1_EOL_SOF_COUNTER" },
+    RegisterInfo { index: 0x0523, kind: RegisterKind::Dword, name: "CP_D2_EOL_SOF_COUNTER" },
+    RegisterInfo { index: 0x0578, kind: RegisterKind::Dword, name: "SCRATCH_REG0" },
+    RegisterInfo { index: 0x0579, kind: RegisterKind::Dword, name: "SCRATCH_REG1" },
+    RegisterInfo { index: 0x057A, kind: RegisterKind::Dword, name: "SCRATCH_REG2" },
+    RegisterInfo { index: 0x057B, kind: RegisterKind::Dword, name: "SCRATCH_REG3" },
+    RegisterInfo { index: 0x057C, kind: RegisterKind::Dword, name: "SCRATCH_REG4" },
+    RegisterInfo { index: 0x057D, kind: RegisterKind::Dword, name: "SCRATCH_REG5" },
+    RegisterInfo { index: 0x057E, kind: RegisterKind::Dword, name: "SCRATCH_REG6" },
+    RegisterInfo { index: 0x057F, kind: RegisterKind::Dword, name: "SCRATCH_REG7" },
+    RegisterInfo { index: 0x0580, kind: RegisterKind::Dword, name: "BIOS_8_SCRATCH" },
+    RegisterInfo { index: 0x0581, kind: RegisterKind::Dword, name: "BIOS_9_SCRATCH" },
+    RegisterInfo { index: 0x0582, kind: RegisterKind::Dword, name: "BIOS_10_SCRATCH" },
+    RegisterInfo { index: 0x0583, kind: RegisterKind::Dword, name: "BIOS_11_SCRATCH" },
+    RegisterInfo { index: 0x0584, kind: RegisterKind::Dword, name: "BIOS_12_SCRATCH" },
+    RegisterInfo { index: 0x0585, kind: RegisterKind::Dword, name: "BIOS_13_SCRATCH" },
+    RegisterInfo { index: 0x0586, kind: RegisterKind::Dword, name: "BIOS_14_SCRATCH" },
+    RegisterInfo { index: 0x0587, kind: RegisterKind::Dword, name: "BIOS_15_SCRATCH" },
+    RegisterInfo { index: 0x05C8, kind: RegisterKind::Dword, name: "WAIT_UNTIL" },
+    RegisterInfo { index: 0x05C9, kind: RegisterKind::Dword, name: "RBBM_ISYNC_CNTL" },
+    RegisterInfo { index: 0x05F0, kind: RegisterKind::Dword, name: "CP_IB2D_BASE" },
+    RegisterInfo { index: 0x05F1, kind: RegisterKind::Dword, name: "CP_IB2D_BUFSZ" },
+    RegisterInfo { index: 0x05F2, kind: RegisterKind::Dword, name: "CP_DEFAULT_PITCH_OFFSET" },
+    RegisterInfo { index: 0x05F3, kind: RegisterKind::Dword, name: "CP_DEFAULT2_PITCH_OFFSET" },
+    RegisterInfo { index: 0x05F4, kind: RegisterKind::Dword, name: "CP_DEFAULT_SC_BOTTOM_RIGHT" },
+    RegisterInfo { index: 0x05F5, kind: RegisterKind::Dword, name: "CP_DEFAULT2_SC_BOTTOM_RIGHT" },
+    RegisterInfo { index: 0x05F6, kind: RegisterKind::Dword, name: "CP_2D_BRUSH_BASE" },
+    RegisterInfo { index: 0x05F7, kind: RegisterKind::Dword, name: "CP_2D_PALETTE_BASE" },
+    RegisterInfo { index: 0x05F8, kind: RegisterKind::Dword, name: "CP_2D_IMMD_BASE" },
+    RegisterInfo { index: 0x05F9, kind: RegisterKind::Dword, name: "CP_2D_BOOLEANS" },
+    RegisterInfo { index: 0x0600, kind: RegisterKind::Dword, name: "CP_ME_VS_EVENT_SRC" },
+    RegisterInfo { index: 0x0601, kind: RegisterKind::Dword, name: "CP_ME_VS_EVENT_ADDR" },
+    RegisterInfo { index: 0x0602, kind: RegisterKind::Dword, name: "CP_ME_VS_EVENT_DATA" },
+    RegisterInfo { index: 0x0603, kind: RegisterKind::Dword, name: "CP_ME_VS_EVENT_ADDR_SWM" },
+    RegisterInfo { index: 0x0604, kind: RegisterKind::Dword, name: "CP_ME_VS_EVENT_DATA_SWM" },
+    RegisterInfo { index: 0x0605, kind: RegisterKind::Dword, name: "CP_ME_PS_EVENT_SRC" },
+    RegisterInfo { index: 0x0606, kind: RegisterKind::Dword, name: "CP_ME_PS_EVENT_ADDR" },
+    RegisterInfo { index: 0x0607, kind: RegisterKind::Dword, name: "CP_ME_PS_EVENT_DATA" },
+    RegisterInfo { index: 0x0608, kind: RegisterKind::Dword, name: "CP_ME_PS_EVENT_ADDR_SWM" },
+    RegisterInfo { index: 0x0609, kind: RegisterKind::Dword, name: "CP_ME_PS_EVENT_DATA_SWM" },
+    RegisterInfo { index: 0x060A, kind: RegisterKind::Dword, name: "CP_ME_CF_EVENT_SRC" },
+    RegisterInfo { index: 0x060B, kind: RegisterKind::Dword, name: "CP_ME_CF_EVENT_ADDR" },
+    RegisterInfo { index: 0x060C, kind: RegisterKind::Dword, name: "CP_ME_CF_EVENT_DATA" },
+    RegisterInfo { index: 0x060D, kind: RegisterKind::Dword, name: "CP_ME_NRT_ADDR" },
+    RegisterInfo { index: 0x060E, kind: RegisterKind::Dword, name: "CP_ME_NRT_DATA" },
+    RegisterInfo { index: 0x060F, kind: RegisterKind::Dword, name: "CP_ME_RT_ADDR" },
+    RegisterInfo { index: 0x0610, kind: RegisterKind::Dword, name: "CP_ME_RT_DATA" },
+    RegisterInfo { index: 0x0611, kind: RegisterKind::Dword, name: "CP_ME_SCREEN_EXT_RPT_ADDR" },
+    RegisterInfo { index: 0x0612, kind: RegisterKind::Dword, name: "CP_ME_VS_FETCH_DONE_SRC" },
+    RegisterInfo { index: 0x0613, kind: RegisterKind::Dword, name: "CP_ME_VS_FETCH_DONE_ADDR" },
+    RegisterInfo { index: 0x0614, kind: RegisterKind::Dword, name: "CP_ME_VS_FETCH_DONE_DATA" },
+    RegisterInfo { index: 0x0800, kind: RegisterKind::Dword, name: "MC0_CNTL" },
+    RegisterInfo { index: 0x0801, kind: RegisterKind::Dword, name: "MC0_DRAM_CONFIG" },
+    RegisterInfo { index: 0x0802, kind: RegisterKind::Dword, name: "MC0_BSB_SNOOPED_TIMER_CNTL" },
+    RegisterInfo { index: 0x0803, kind: RegisterKind::Dword, name: "MC0_TUNING_0" },
+    RegisterInfo { index: 0x0804, kind: RegisterKind::Dword, name: "MC0_TUNING_1" },
+    RegisterInfo { index: 0x0805, kind: RegisterKind::Dword, name: "MC0_RD_BUFFER_CNTL_0" },
+    RegisterInfo { index: 0x0806, kind: RegisterKind::Dword, name: "MC0_ARBITRATION_CNTL" },
+    RegisterInfo { index: 0x0807, kind: RegisterKind::Dword, name: "MC0_TIMING_CNTL_0" },
+    RegisterInfo { index: 0x0808, kind: RegisterKind::Dword, name: "MC0_TIMING_CNTL_1" },
+    RegisterInfo { index: 0x0809, kind: RegisterKind::Dword, name: "MC0_TIMING_CNTL_2" },
+    RegisterInfo { index: 0x080A, kind: RegisterKind::Dword, name: "MC0_PAD_CAL_CNTL" },
+    RegisterInfo { index: 0x080B, kind: RegisterKind::Dword, name: "MC0_DRAM_CMD" },
+    RegisterInfo { index: 0x080C, kind: RegisterKind::Dword, name: "MC0_DRAM_DATA" },
+    RegisterInfo { index: 0x080D, kind: RegisterKind::Dword, name: "MC0_POINTER" },
+    RegisterInfo { index: 0x080E, kind: RegisterKind::Dword, name: "MC0_RDBUF_DATA" },
+    RegisterInfo { index: 0x080F, kind: RegisterKind::Dword, name: "MC0_DRAM_DQ" },
+    RegisterInfo { index: 0x0810, kind: RegisterKind::Dword, name: "MC0_STATUS_0" },
+    RegisterInfo { index: 0x0811, kind: RegisterKind::Dword, name: "MC0_STATUS_1" },
+    RegisterInfo { index: 0x0812, kind: RegisterKind::Dword, name: "MC0_CRC_CNTL" },
+    RegisterInfo { index: 0x0813, kind: RegisterKind::Dword, name: "MC0_DEBUG" },
+    RegisterInfo { index: 0x0814, kind: RegisterKind::Dword, name: "MC0_CRC_READ" },
+    RegisterInfo { index: 0x0815, kind: RegisterKind::Dword, name: "MC0_PERFCOUNTER0_CNTL" },
+    RegisterInfo { index: 0x0816, kind: RegisterKind::Dword, name: "MC0_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0817, kind: RegisterKind::Dword, name: "MC0_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0818, kind: RegisterKind::Dword, name: "MC0_PERFCOUNTER1_CNTL" },
+    RegisterInfo { index: 0x0819, kind: RegisterKind::Dword, name: "MC0_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x081A, kind: RegisterKind::Dword, name: "MC0_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x081B, kind: RegisterKind::Dword, name: "MC0_INTERRUPT_MASK" },
+    RegisterInfo { index: 0x081C, kind: RegisterKind::Dword, name: "MC0_INTERRUPT_STATUS" },
+    RegisterInfo { index: 0x081D, kind: RegisterKind::Dword, name: "MC0_INTERRUPT_ACK" },
+    RegisterInfo { index: 0x081E, kind: RegisterKind::Dword, name: "MC0_SECURE_MEMORY_APERTURE_LOG_MH" },
+    RegisterInfo { index: 0x081F, kind: RegisterKind::Dword, name: "MC0_SECURE_MEMORY_APERTURE_LOG_BIU" },
+    RegisterInfo { index: 0x0820, kind: RegisterKind::Dword, name: "MC0_WR_STR_DLL_0" },
+    RegisterInfo { index: 0x0821, kind: RegisterKind::Dword, name: "MC0_WR_STR_DLL_1" },
+    RegisterInfo { index: 0x0822, kind: RegisterKind::Dword, name: "MC0_DLL_MASTER_ADJ_0" },
+    RegisterInfo { index: 0x0823, kind: RegisterKind::Dword, name: "MC0_DLL_MASTER_ADJ_1" },
+    RegisterInfo { index: 0x0824, kind: RegisterKind::Dword, name: "MC0_TERM_CNTL" },
+    RegisterInfo { index: 0x0825, kind: RegisterKind::Dword, name: "MC0_WR_DATA_DLY_0" },
+    RegisterInfo { index: 0x0826, kind: RegisterKind::Dword, name: "MC0_WR_DATA_DLY_1" },
+    RegisterInfo { index: 0x0827, kind: RegisterKind::Dword, name: "MC0_RD_STR_DLY_0" },
+    RegisterInfo { index: 0x0828, kind: RegisterKind::Dword, name: "MC0_RD_STR_DLY_1" },
+    RegisterInfo { index: 0x0829, kind: RegisterKind::Dword, name: "MC0_WR_STR_DLY" },
+    RegisterInfo { index: 0x082A, kind: RegisterKind::Dword, name: "MC0_PAD_CAL_STATUS" },
+    RegisterInfo { index: 0x082B, kind: RegisterKind::Dword, name: "MC0_RD_STR_DLY_CNTL" },
+    RegisterInfo { index: 0x0830, kind: RegisterKind::Dword, name: "MC0_PAD_IF_CNTL" },
+    RegisterInfo { index: 0x0831, kind: RegisterKind::Dword, name: "MC0_PAD_IF_CNTL_2" },
+    RegisterInfo { index: 0x0832, kind: RegisterKind::Dword, name: "MC0_RD_BUFFER_CNTL_1" },
+    RegisterInfo { index: 0x0840, kind: RegisterKind::Dword, name: "MC1_CNTL" },
+    RegisterInfo { index: 0x0841, kind: RegisterKind::Dword, name: "MC1_DRAM_CONFIG" },
+    RegisterInfo { index: 0x0842, kind: RegisterKind::Dword, name: "MC1_BSB_SNOOPED_TIMER_CNTL" },
+    RegisterInfo { index: 0x0843, kind: RegisterKind::Dword, name: "MC1_TUNING_0" },
+    RegisterInfo { index: 0x0844, kind: RegisterKind::Dword, name: "MC1_TUNING_1" },
+    RegisterInfo { index: 0x0845, kind: RegisterKind::Dword, name: "MC1_RD_BUFFER_CNTL_0" },
+    RegisterInfo { index: 0x0846, kind: RegisterKind::Dword, name: "MC1_ARBITRATION_CNTL" },
+    RegisterInfo { index: 0x0847, kind: RegisterKind::Dword, name: "MC1_TIMING_CNTL_0" },
+    RegisterInfo { index: 0x0848, kind: RegisterKind::Dword, name: "MC1_TIMING_CNTL_1" },
+    RegisterInfo { index: 0x0849, kind: RegisterKind::Dword, name: "MC1_TIMING_CNTL_2" },
+    RegisterInfo { index: 0x084A, kind: RegisterKind::Dword, name: "MC1_PAD_CAL_CNTL" },
+    RegisterInfo { index: 0x084B, kind: RegisterKind::Dword, name: "MC1_DRAM_CMD" },
+    RegisterInfo { index: 0x084C, kind: RegisterKind::Dword, name: "MC1_DRAM_DATA" },
+    RegisterInfo { index: 0x084D, kind: RegisterKind::Dword, name: "MC1_POINTER" },
+    RegisterInfo { index: 0x084E, kind: RegisterKind::Dword, name: "MC1_RDBUF_DATA" },
+    RegisterInfo { index: 0x084F, kind: RegisterKind::Dword, name: "MC1_DRAM_DQ" },
+    RegisterInfo { index: 0x0850, kind: RegisterKind::Dword, name: "MC1_STATUS_0" },
+    RegisterInfo { index: 0x0851, kind: RegisterKind::Dword, name: "MC1_STATUS_1" },
+    RegisterInfo { index: 0x0852, kind: RegisterKind::Dword, name: "MC1_CRC_CNTL" },
+    RegisterInfo { index: 0x0853, kind: RegisterKind::Dword, name: "MC1_DEBUG" },
+    RegisterInfo { index: 0x0854, kind: RegisterKind::Dword, name: "MC1_CRC_READ" },
+    RegisterInfo { index: 0x0855, kind: RegisterKind::Dword, name: "MC1_PERFCOUNTER0_CNTL" },
+    RegisterInfo { index: 0x0856, kind: RegisterKind::Dword, name: "MC1_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0857, kind: RegisterKind::Dword, name: "MC1_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0858, kind: RegisterKind::Dword, name: "MC1_PERFCOUNTER1_CNTL" },
+    RegisterInfo { index: 0x0859, kind: RegisterKind::Dword, name: "MC1_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x085A, kind: RegisterKind::Dword, name: "MC1_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x085B, kind: RegisterKind::Dword, name: "MC1_INTERRUPT_MASK" },
+    RegisterInfo { index: 0x085C, kind: RegisterKind::Dword, name: "MC1_INTERRUPT_STATUS" },
+    RegisterInfo { index: 0x085D, kind: RegisterKind::Dword, name: "MC1_INTERRUPT_ACK" },
+    RegisterInfo { index: 0x085E, kind: RegisterKind::Dword, name: "MC1_SECURE_MEMORY_APERTURE_LOG_MH" },
+    RegisterInfo { index: 0x085F, kind: RegisterKind::Dword, name: "MC1_SECURE_MEMORY_APERTURE_LOG_BIU" },
+    RegisterInfo { index: 0x0860, kind: RegisterKind::Dword, name: "MC1_WR_STR_DLL_0" },
+    RegisterInfo { index: 0x0861, kind: RegisterKind::Dword, name: "MC1_WR_STR_DLL_1" },
+    RegisterInfo { index: 0x0862, kind: RegisterKind::Dword, name: "MC1_DLL_MASTER_ADJ_0" },
+    RegisterInfo { index: 0x0863, kind: RegisterKind::Dword, name: "MC1_DLL_MASTER_ADJ_1" },
+    RegisterInfo { index: 0x0864, kind: RegisterKind::Dword, name: "MC1_TERM_CNTL" },
+    RegisterInfo { index: 0x0865, kind: RegisterKind::Dword, name: "MC1_WR_DATA_DLY_0" },
+    RegisterInfo { index: 0x0866, kind: RegisterKind::Dword, name: "MC1_WR_DATA_DLY_1" },
+    RegisterInfo { index: 0x0867, kind: RegisterKind::Dword, name: "MC1_RD_STR_DLY_0" },
+    RegisterInfo { index: 0x0868, kind: RegisterKind::Dword, name: "MC1_RD_STR_DLY_1" },
+    RegisterInfo { index: 0x0869, kind: RegisterKind::Dword, name: "MC1_WR_STR_DLY" },
+    RegisterInfo { index: 0x086A, kind: RegisterKind::Dword, name: "MC1_PAD_CAL_STATUS" },
+    RegisterInfo { index: 0x086B, kind: RegisterKind::Dword, name: "MC1_RD_STR_DLY_CNTL" },
+    RegisterInfo { index: 0x0870, kind: RegisterKind::Dword, name: "MC1_PAD_IF_CNTL" },
+    RegisterInfo { index: 0x0871, kind: RegisterKind::Dword, name: "MC1_PAD_IF_CNTL_2" },
+    RegisterInfo { index: 0x0872, kind: RegisterKind::Dword, name: "MC1_RD_BUFFER_CNTL_1" },
+    RegisterInfo { index: 0x0A00, kind: RegisterKind::Dword, name: "FB_START" },
+    RegisterInfo { index: 0x0A01, kind: RegisterKind::Dword, name: "FB_SIZE" },
+    RegisterInfo { index: 0x0A02, kind: RegisterKind::Dword, name: "PG_START" },
+    RegisterInfo { index: 0x0A03, kind: RegisterKind::Dword, name: "PG_SIZE" },
+    RegisterInfo { index: 0x0A04, kind: RegisterKind::Dword, name: "WRITEBACK_START" },
+    RegisterInfo { index: 0x0A05, kind: RegisterKind::Dword, name: "WRITEBACK_SIZE" },
+    RegisterInfo { index: 0x0A06, kind: RegisterKind::Dword, name: "MH_CNTL" },
+    RegisterInfo { index: 0x0A07, kind: RegisterKind::Dword, name: "MH_STATUS" },
+    RegisterInfo { index: 0x0A08, kind: RegisterKind::Dword, name: "MH_INT_MASK" },
+    RegisterInfo { index: 0x0A09, kind: RegisterKind::Dword, name: "MH_INT_STATUS" },
+    RegisterInfo { index: 0x0A0A, kind: RegisterKind::Dword, name: "MH_INT_CLEAR" },
+    RegisterInfo { index: 0x0A0B, kind: RegisterKind::Dword, name: "MH_INT_SIGNAL" },
+    RegisterInfo { index: 0x0A0C, kind: RegisterKind::Dword, name: "PGL_CTL0" },
+    RegisterInfo { index: 0x0A0D, kind: RegisterKind::Dword, name: "PGL_CTL1" },
+    RegisterInfo { index: 0x0A10, kind: RegisterKind::Dword, name: "DC_SURFACE_0_BASE" },
+    RegisterInfo { index: 0x0A11, kind: RegisterKind::Dword, name: "DC_SURFACE_0_EXTENT" },
+    RegisterInfo { index: 0x0A12, kind: RegisterKind::Dword, name: "DC_SURFACE_0_INFO" },
+    RegisterInfo { index: 0x0A13, kind: RegisterKind::Dword, name: "DC_SURFACE_2_BASE" },
+    RegisterInfo { index: 0x0A14, kind: RegisterKind::Dword, name: "DC_SURFACE_2_EXTENT" },
+    RegisterInfo { index: 0x0A15, kind: RegisterKind::Dword, name: "DC_SURFACE_2_INFO" },
+    RegisterInfo { index: 0x0A18, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0A19, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0A1A, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0A1B, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0A1C, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0A1D, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0A1E, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0A1F, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0A20, kind: RegisterKind::Dword, name: "MH_PERFMON_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0A21, kind: RegisterKind::Dword, name: "DC_SURFACE_1_BASE" },
+    RegisterInfo { index: 0x0A22, kind: RegisterKind::Dword, name: "DC_SURFACE_1_EXTENT" },
+    RegisterInfo { index: 0x0A23, kind: RegisterKind::Dword, name: "DC_SURFACE_1_INFO" },
+    RegisterInfo { index: 0x0A29, kind: RegisterKind::Dword, name: "COHER_SIZE_PM4" },
+    RegisterInfo { index: 0x0A2A, kind: RegisterKind::Dword, name: "COHER_BASE_PM4" },
+    RegisterInfo { index: 0x0A2B, kind: RegisterKind::Dword, name: "COHER_STATUS_PM4" },
+    RegisterInfo { index: 0x0A2C, kind: RegisterKind::Dword, name: "COHER_SIZE_RT" },
+    RegisterInfo { index: 0x0A2D, kind: RegisterKind::Dword, name: "COHER_BASE_RT" },
+    RegisterInfo { index: 0x0A2E, kind: RegisterKind::Dword, name: "COHER_STATUS_RT" },
+    RegisterInfo { index: 0x0A2F, kind: RegisterKind::Dword, name: "COHER_SIZE_HOST" },
+    RegisterInfo { index: 0x0A30, kind: RegisterKind::Dword, name: "COHER_BASE_HOST" },
+    RegisterInfo { index: 0x0A31, kind: RegisterKind::Dword, name: "COHER_STATUS_HOST" },
+    RegisterInfo { index: 0x0A40, kind: RegisterKind::Dword, name: "MH_ARBITER_CONFIG" },
+    RegisterInfo { index: 0x0BFE, kind: RegisterKind::Dword, name: "MH_DEBUG_INDEX" },
+    RegisterInfo { index: 0x0BFF, kind: RegisterKind::Dword, name: "MH_DEBUG_DATA" },
+    RegisterInfo { index: 0x0C00, kind: RegisterKind::Dword, name: "RTS_INITIATOR" },
+    RegisterInfo { index: 0x0C01, kind: RegisterKind::Dword, name: "RTS_BOUNDBOX_START" },
+    RegisterInfo { index: 0x0C02, kind: RegisterKind::Dword, name: "RTS_BOUNDBOX_END" },
+    RegisterInfo { index: 0x0C03, kind: RegisterKind::Dword, name: "RTS_BARYC_REF_VTX_X" },
+    RegisterInfo { index: 0x0C04, kind: RegisterKind::Dword, name: "RTS_BARYC_REF_VTX_Y" },
+    RegisterInfo { index: 0x0C05, kind: RegisterKind::Dword, name: "RTS_I_W_DX" },
+    RegisterInfo { index: 0x0C06, kind: RegisterKind::Dword, name: "RTS_J_W_DY" },
+    RegisterInfo { index: 0x0C07, kind: RegisterKind::Dword, name: "RTS_INV_W_REF" },
+    RegisterInfo { index: 0x0C08, kind: RegisterKind::Dword, name: "RTS_INV_W_DX" },
+    RegisterInfo { index: 0x0C09, kind: RegisterKind::Dword, name: "RTS_INV_W_DY" },
+    RegisterInfo { index: 0x0C0A, kind: RegisterKind::Dword, name: "RTS_I_W_REF" },
+    RegisterInfo { index: 0x0C0B, kind: RegisterKind::Dword, name: "RTS_I_W_DY" },
+    RegisterInfo { index: 0x0C0C, kind: RegisterKind::Dword, name: "RTS_J_W_REF" },
+    RegisterInfo { index: 0x0C0D, kind: RegisterKind::Dword, name: "RTS_J_W_DX" },
+    RegisterInfo { index: 0x0C0E, kind: RegisterKind::Dword, name: "RTS_Z_REF" },
+    RegisterInfo { index: 0x0C0F, kind: RegisterKind::Dword, name: "RTS_Z_DX_MSBS" },
+    RegisterInfo { index: 0x0C10, kind: RegisterKind::Dword, name: "RTS_Z_DY_MSBS" },
+    RegisterInfo { index: 0x0C11, kind: RegisterKind::Dword, name: "RTS_Z_DX_DY_LSBS" },
+    RegisterInfo { index: 0x0C12, kind: RegisterKind::Dword, name: "RTS_Z_MIN" },
+    RegisterInfo { index: 0x0C13, kind: RegisterKind::Dword, name: "RTS_Z_MAX" },
+    RegisterInfo { index: 0x0C14, kind: RegisterKind::Dword, name: "RTS_EDGE_0_DIST_LSBS" },
+    RegisterInfo { index: 0x0C15, kind: RegisterKind::Dword, name: "RTS_EDGE_1_DIST_LSBS" },
+    RegisterInfo { index: 0x0C16, kind: RegisterKind::Dword, name: "RTS_EDGE_2_DIST_LSBS" },
+    RegisterInfo { index: 0x0C17, kind: RegisterKind::Dword, name: "RTS_EDGE_DIST_MSBS" },
+    RegisterInfo { index: 0x0C18, kind: RegisterKind::Dword, name: "RTS_WD_EDGE_0_DIST_LSBS" },
+    RegisterInfo { index: 0x0C19, kind: RegisterKind::Dword, name: "RTS_WD_EDGE_1_DIST_LSBS" },
+    RegisterInfo { index: 0x0C1A, kind: RegisterKind::Dword, name: "RTS_WD_EDGE_2_DIST_LSBS" },
+    RegisterInfo { index: 0x0C1B, kind: RegisterKind::Dword, name: "RTS_WD_EDGE_DIST_MSBS" },
+    RegisterInfo { index: 0x0C1C, kind: RegisterKind::Dword, name: "RTS_EDGE_0_DX" },
+    RegisterInfo { index: 0x0C1D, kind: RegisterKind::Dword, name: "RTS_EDGE_0_DY" },
+    RegisterInfo { index: 0x0C1E, kind: RegisterKind::Dword, name: "RTS_EDGE_1_DX" },
+    RegisterInfo { index: 0x0C1F, kind: RegisterKind::Dword, name: "RTS_EDGE_1_DY" },
+    RegisterInfo { index: 0x0C20, kind: RegisterKind::Dword, name: "RTS_EDGE_2_DX" },
+    RegisterInfo { index: 0x0C21, kind: RegisterKind::Dword, name: "RTS_EDGE_2_DY" },
+    RegisterInfo { index: 0x0C22, kind: RegisterKind::Dword, name: "RTS_MISC" },
+    RegisterInfo { index: 0x0C2C, kind: RegisterKind::Dword, name: "VGT_VTX_VECT_EJECT_REG" },
+    RegisterInfo { index: 0x0C2D, kind: RegisterKind::Dword, name: "VGT_DMA_DATA_FIFO_DEPTH" },
+    RegisterInfo { index: 0x0C2E, kind: RegisterKind::Dword, name: "VGT_DMA_REQ_FIFO_DEPTH" },
+    RegisterInfo { index: 0x0C2F, kind: RegisterKind::Dword, name: "VGT_DRAW_INIT_FIFO_DEPTH" },
+    RegisterInfo { index: 0x0C30, kind: RegisterKind::Dword, name: "VGT_LAST_COPY_STATE" },
+    RegisterInfo { index: 0x0C38, kind: RegisterKind::Dword, name: "VGT_DEBUG_CNTL" },
+    RegisterInfo { index: 0x0C39, kind: RegisterKind::Dword, name: "VGT_DEBUG_DATA" },
+    RegisterInfo { index: 0x0C3A, kind: RegisterKind::Dword, name: "VGT_CRC_SQ_DATA" },
+    RegisterInfo { index: 0x0C3B, kind: RegisterKind::Dword, name: "VGT_CRC_SQ_CTRL" },
+    RegisterInfo { index: 0x0C3C, kind: RegisterKind::Dword, name: "VGT_CNTL_STATUS" },
+    RegisterInfo { index: 0x0C40, kind: RegisterKind::Dword, name: "PA_SC_LINE_STIPPLE_STATE" },
+    RegisterInfo { index: 0x0C41, kind: RegisterKind::Dword, name: "PA_SC_MULTI_CHIP_CNTL" },
+    RegisterInfo { index: 0x0C44, kind: RegisterKind::Dword, name: "PA_SC_VIZ_QUERY_STATUS_0" },
+    RegisterInfo { index: 0x0C45, kind: RegisterKind::Dword, name: "PA_SC_VIZ_QUERY_STATUS_1" },
+    RegisterInfo { index: 0x0C48, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0C49, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0C4A, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0C4B, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER3_SELECT" },
+    RegisterInfo { index: 0x0C4C, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0C4D, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0C4E, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0C4F, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0C50, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0C51, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0C52, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER3_LOW" },
+    RegisterInfo { index: 0x0C53, kind: RegisterKind::Dword, name: "VGT_PERFCOUNTER3_HI" },
+    RegisterInfo { index: 0x0C80, kind: RegisterKind::Dword, name: "PA_SU_DEBUG_CNTL" },
+    RegisterInfo { index: 0x0C81, kind: RegisterKind::Dword, name: "PA_SU_DEBUG_DATA" },
+    RegisterInfo { index: 0x0C82, kind: RegisterKind::Dword, name: "PA_SC_DEBUG_CNTL" },
+    RegisterInfo { index: 0x0C83, kind: RegisterKind::Dword, name: "PA_SC_DEBUG_DATA" },
+    RegisterInfo { index: 0x0C84, kind: RegisterKind::Dword, name: "PA_CL_CNTL_STATUS" },
+    RegisterInfo { index: 0x0C85, kind: RegisterKind::Dword, name: "PA_CL_ENHANCE" },
+    RegisterInfo { index: 0x0C86, kind: RegisterKind::Dword, name: "PA_SU_FACE_DATA" },
+    RegisterInfo { index: 0x0C88, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0C89, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0C8A, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0C8B, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER3_SELECT" },
+    RegisterInfo { index: 0x0C8C, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0C8D, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0C8E, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0C8F, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0C90, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0C91, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0C92, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER3_LOW" },
+    RegisterInfo { index: 0x0C93, kind: RegisterKind::Dword, name: "PA_SU_PERFCOUNTER3_HI" },
+    RegisterInfo { index: 0x0C94, kind: RegisterKind::Dword, name: "PA_SU_CNTL_STATUS" },
+    RegisterInfo { index: 0x0C98, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0C99, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0C9A, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0C9B, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER3_SELECT" },
+    RegisterInfo { index: 0x0C9C, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0C9D, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0C9E, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0C9F, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0CA0, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0CA1, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0CA2, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER3_LOW" },
+    RegisterInfo { index: 0x0CA3, kind: RegisterKind::Dword, name: "PA_SC_PERFCOUNTER3_HI" },
+    RegisterInfo { index: 0x0CA4, kind: RegisterKind::Dword, name: "PA_SC_CNTL_STATUS" },
+    RegisterInfo { index: 0x0CA5, kind: RegisterKind::Dword, name: "PA_SC_ENHANCE" },
+    RegisterInfo { index: 0x0CC0, kind: RegisterKind::Dword, name: "PA_SC_FIFO_SIZE" },
+    RegisterInfo { index: 0x0D00, kind: RegisterKind::Dword, name: "SQ_GPR_MANAGEMENT" },
+    RegisterInfo { index: 0x0D01, kind: RegisterKind::Dword, name: "SQ_FLOW_CNTL" },
+    RegisterInfo { index: 0x0D02, kind: RegisterKind::Dword, name: "SQ_INST_STORE_MANAGEMENT" },
+    RegisterInfo { index: 0x0D03, kind: RegisterKind::Dword, name: "SQ_RESOURCE_MANAGMENT" },
+    RegisterInfo { index: 0x0D04, kind: RegisterKind::Dword, name: "SQ_EO_RT" },
+    RegisterInfo { index: 0x0D05, kind: RegisterKind::Dword, name: "SQ_DEBUG_MISC" },
+    RegisterInfo { index: 0x0D06, kind: RegisterKind::Dword, name: "SQ_ACTIVITY_METER_CNTL" },
+    RegisterInfo { index: 0x0D07, kind: RegisterKind::Dword, name: "SQ_ACTIVITY_METER_STATUS" },
+    RegisterInfo { index: 0x0D08, kind: RegisterKind::Dword, name: "SQ_INPUT_ARB_PRIORITY" },
+    RegisterInfo { index: 0x0D09, kind: RegisterKind::Dword, name: "SQ_THREAD_ARB_PRIORITY" },
+    RegisterInfo { index: 0x0D34, kind: RegisterKind::Dword, name: "SQ_INT_CNTL" },
+    RegisterInfo { index: 0x0D35, kind: RegisterKind::Dword, name: "SQ_INT_STATUS" },
+    RegisterInfo { index: 0x0D36, kind: RegisterKind::Dword, name: "SQ_INT_ACK" },
+    RegisterInfo { index: 0x0DAE, kind: RegisterKind::Dword, name: "SQ_DEBUG_INPUT_FSM" },
+    RegisterInfo { index: 0x0DAF, kind: RegisterKind::Dword, name: "SQ_DEBUG_CONST_MGR_FSM" },
+    RegisterInfo { index: 0x0DB0, kind: RegisterKind::Dword, name: "SQ_DEBUG_TP_FSM" },
+    RegisterInfo { index: 0x0DB1, kind: RegisterKind::Dword, name: "SQ_DEBUG_FSM_ALU_0" },
+    RegisterInfo { index: 0x0DB2, kind: RegisterKind::Dword, name: "SQ_DEBUG_FSM_ALU_1" },
+    RegisterInfo { index: 0x0DB3, kind: RegisterKind::Dword, name: "SQ_DEBUG_EXP_ALLOC" },
+    RegisterInfo { index: 0x0DB4, kind: RegisterKind::Dword, name: "SQ_DEBUG_PTR_BUFF" },
+    RegisterInfo { index: 0x0DB5, kind: RegisterKind::Dword, name: "SQ_DEBUG_GPR_VTX" },
+    RegisterInfo { index: 0x0DB6, kind: RegisterKind::Dword, name: "SQ_DEBUG_GPR_PIX" },
+    RegisterInfo { index: 0x0DB7, kind: RegisterKind::Dword, name: "SQ_DEBUG_TB_STATUS_SEL" },
+    RegisterInfo { index: 0x0DB8, kind: RegisterKind::Dword, name: "SQ_DEBUG_VTX_TB_0" },
+    RegisterInfo { index: 0x0DB9, kind: RegisterKind::Dword, name: "SQ_DEBUG_VTX_TB_1" },
+    RegisterInfo { index: 0x0DBA, kind: RegisterKind::Dword, name: "SQ_DEBUG_VTX_TB_STATUS_REG" },
+    RegisterInfo { index: 0x0DBB, kind: RegisterKind::Dword, name: "SQ_DEBUG_VTX_TB_STATE_MEM" },
+    RegisterInfo { index: 0x0DBC, kind: RegisterKind::Dword, name: "SQ_DEBUG_PIX_TB_0" },
+    RegisterInfo { index: 0x0DBD, kind: RegisterKind::Dword, name: "SQ_DEBUG_PIX_TB_STATUS_REG_0" },
+    RegisterInfo { index: 0x0DBE, kind: RegisterKind::Dword, name: "SQ_DEBUG_PIX_TB_STATUS_REG_1" },
+    RegisterInfo { index: 0x0DBF, kind: RegisterKind::Dword, name: "SQ_DEBUG_PIX_TB_STATUS_REG_2" },
+    RegisterInfo { index: 0x0DC0, kind: RegisterKind::Dword, name: "SQ_DEBUG_PIX_TB_STATUS_REG_3" },
+    RegisterInfo { index: 0x0DC1, kind: RegisterKind::Dword, name: "SQ_DEBUG_PIX_TB_STATE_MEM" },
+    RegisterInfo { index: 0x0DC8, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0DC9, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0DCA, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0DCB, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER3_SELECT" },
+    RegisterInfo { index: 0x0DCC, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0DCD, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0DCE, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0DCF, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0DD0, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0DD1, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0DD2, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER3_LOW" },
+    RegisterInfo { index: 0x0DD3, kind: RegisterKind::Dword, name: "SQ_PERFCOUNTER3_HI" },
+    RegisterInfo { index: 0x0DD4, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0DD5, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0DD6, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0DD7, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER3_SELECT" },
+    RegisterInfo { index: 0x0DD8, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0DD9, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0DDA, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0DDB, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0DDC, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0DDD, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0DDE, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER3_LOW" },
+    RegisterInfo { index: 0x0DDF, kind: RegisterKind::Dword, name: "SX_PERFCOUNTER3_HI" },
+    RegisterInfo { index: 0x0E00, kind: RegisterKind::Dword, name: "TC_CNTL_STATUS" },
+    RegisterInfo { index: 0x0E01, kind: RegisterKind::Dword, name: "TP_DEBUG0" },
+    RegisterInfo { index: 0x0E02, kind: RegisterKind::Dword, name: "TCR_CHICKEN" },
+    RegisterInfo { index: 0x0E03, kind: RegisterKind::Dword, name: "TCF_CHICKEN" },
+    RegisterInfo { index: 0x0E04, kind: RegisterKind::Dword, name: "TCM_CHICKEN" },
+    RegisterInfo { index: 0x0E05, kind: RegisterKind::Dword, name: "TCR_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0E06, kind: RegisterKind::Dword, name: "TCR_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0E07, kind: RegisterKind::Dword, name: "TCR_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0E08, kind: RegisterKind::Dword, name: "TCR_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0E09, kind: RegisterKind::Dword, name: "TCR_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0E0A, kind: RegisterKind::Dword, name: "TCR_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0E17, kind: RegisterKind::Dword, name: "TP_TC_CLKGATE_CNTL" },
+    RegisterInfo { index: 0x0E18, kind: RegisterKind::Dword, name: "TPC_CNTL_STATUS" },
+    RegisterInfo { index: 0x0E19, kind: RegisterKind::Dword, name: "TPC_DEBUG0" },
+    RegisterInfo { index: 0x0E1A, kind: RegisterKind::Dword, name: "TPC_DEBUG1" },
+    RegisterInfo { index: 0x0E1B, kind: RegisterKind::Dword, name: "TPC_CHICKEN" },
+    RegisterInfo { index: 0x0E1C, kind: RegisterKind::Dword, name: "TP0_CNTL_STATUS" },
+    RegisterInfo { index: 0x0E1D, kind: RegisterKind::Dword, name: "TP0_DEBUG" },
+    RegisterInfo { index: 0x0E1E, kind: RegisterKind::Dword, name: "TP0_CHICKEN" },
+    RegisterInfo { index: 0x0E1F, kind: RegisterKind::Dword, name: "TP0_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0E20, kind: RegisterKind::Dword, name: "TP0_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0E21, kind: RegisterKind::Dword, name: "TP0_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0E22, kind: RegisterKind::Dword, name: "TP0_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0E23, kind: RegisterKind::Dword, name: "TP0_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0E24, kind: RegisterKind::Dword, name: "TP0_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0E25, kind: RegisterKind::Dword, name: "TP1_CNTL_STATUS" },
+    RegisterInfo { index: 0x0E26, kind: RegisterKind::Dword, name: "TP1_DEBUG" },
+    RegisterInfo { index: 0x0E27, kind: RegisterKind::Dword, name: "TP1_CHICKEN" },
+    RegisterInfo { index: 0x0E28, kind: RegisterKind::Dword, name: "TP1_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0E29, kind: RegisterKind::Dword, name: "TP1_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0E2A, kind: RegisterKind::Dword, name: "TP1_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0E2B, kind: RegisterKind::Dword, name: "TP1_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0E2C, kind: RegisterKind::Dword, name: "TP1_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0E2D, kind: RegisterKind::Dword, name: "TP1_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0E2E, kind: RegisterKind::Dword, name: "TP2_CNTL_STATUS" },
+    RegisterInfo { index: 0x0E2F, kind: RegisterKind::Dword, name: "TP2_DEBUG" },
+    RegisterInfo { index: 0x0E30, kind: RegisterKind::Dword, name: "TP2_CHICKEN" },
+    RegisterInfo { index: 0x0E31, kind: RegisterKind::Dword, name: "TP2_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0E32, kind: RegisterKind::Dword, name: "TP2_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0E33, kind: RegisterKind::Dword, name: "TP2_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0E34, kind: RegisterKind::Dword, name: "TP2_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0E35, kind: RegisterKind::Dword, name: "TP2_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0E36, kind: RegisterKind::Dword, name: "TP2_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0E37, kind: RegisterKind::Dword, name: "TP3_CNTL_STATUS" },
+    RegisterInfo { index: 0x0E38, kind: RegisterKind::Dword, name: "TP3_DEBUG" },
+    RegisterInfo { index: 0x0E39, kind: RegisterKind::Dword, name: "TP3_CHICKEN" },
+    RegisterInfo { index: 0x0E3A, kind: RegisterKind::Dword, name: "TP3_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0E3B, kind: RegisterKind::Dword, name: "TP3_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0E3C, kind: RegisterKind::Dword, name: "TP3_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0E3D, kind: RegisterKind::Dword, name: "TP3_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0E3E, kind: RegisterKind::Dword, name: "TP3_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0E3F, kind: RegisterKind::Dword, name: "TP3_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0E40, kind: RegisterKind::Dword, name: "VC_CNTL" },
+    RegisterInfo { index: 0x0E41, kind: RegisterKind::Dword, name: "VC_CNTL_STATUS" },
+    RegisterInfo { index: 0x0E42, kind: RegisterKind::Dword, name: "VC_FIFO_DEPTHS" },
+    RegisterInfo { index: 0x0E43, kind: RegisterKind::Dword, name: "VC_DEBUG_CNTL" },
+    RegisterInfo { index: 0x0E44, kind: RegisterKind::Dword, name: "VC_DEBUG_DATA" },
+    RegisterInfo { index: 0x0E45, kind: RegisterKind::Dword, name: "VC_ENHANCE" },
+    RegisterInfo { index: 0x0E48, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0E49, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0E4A, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0E4B, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0E4C, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0E4D, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0E4E, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0E4F, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0E50, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0E51, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER3_SELECT" },
+    RegisterInfo { index: 0x0E52, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER3_HI" },
+    RegisterInfo { index: 0x0E53, kind: RegisterKind::Dword, name: "VC_PERFCOUNTER3_LOW" },
+    RegisterInfo { index: 0x0E54, kind: RegisterKind::Dword, name: "TCM_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0E55, kind: RegisterKind::Dword, name: "TCM_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0E56, kind: RegisterKind::Dword, name: "TCM_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0E57, kind: RegisterKind::Dword, name: "TCM_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0E58, kind: RegisterKind::Dword, name: "TCM_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0E59, kind: RegisterKind::Dword, name: "TCM_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0E5A, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0E5B, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0E5C, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0E5D, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0E5E, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0E5F, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0E60, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0E61, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0E62, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0E63, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER3_SELECT" },
+    RegisterInfo { index: 0x0E64, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER3_HI" },
+    RegisterInfo { index: 0x0E65, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER3_LOW" },
+    RegisterInfo { index: 0x0E66, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER4_SELECT" },
+    RegisterInfo { index: 0x0E67, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER4_HI" },
+    RegisterInfo { index: 0x0E68, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER4_LOW" },
+    RegisterInfo { index: 0x0E69, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER5_SELECT" },
+    RegisterInfo { index: 0x0E6A, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER5_HI" },
+    RegisterInfo { index: 0x0E6B, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER5_LOW" },
+    RegisterInfo { index: 0x0E6C, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER6_SELECT" },
+    RegisterInfo { index: 0x0E6D, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER6_HI" },
+    RegisterInfo { index: 0x0E6E, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER6_LOW" },
+    RegisterInfo { index: 0x0E6F, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER7_SELECT" },
+    RegisterInfo { index: 0x0E70, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER7_HI" },
+    RegisterInfo { index: 0x0E71, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER7_LOW" },
+    RegisterInfo { index: 0x0E72, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER8_SELECT" },
+    RegisterInfo { index: 0x0E73, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER8_HI" },
+    RegisterInfo { index: 0x0E74, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER8_LOW" },
+    RegisterInfo { index: 0x0E75, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER9_SELECT" },
+    RegisterInfo { index: 0x0E76, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER9_HI" },
+    RegisterInfo { index: 0x0E77, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER9_LOW" },
+    RegisterInfo { index: 0x0E78, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER10_SELECT" },
+    RegisterInfo { index: 0x0E79, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER10_HI" },
+    RegisterInfo { index: 0x0E7A, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER10_LOW" },
+    RegisterInfo { index: 0x0E7B, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER11_SELECT" },
+    RegisterInfo { index: 0x0E7C, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER11_HI" },
+    RegisterInfo { index: 0x0E7D, kind: RegisterKind::Dword, name: "TCF_PERFCOUNTER11_LOW" },
+    RegisterInfo { index: 0x0F01, kind: RegisterKind::Dword, name: "RB_BC_CONTROL" },
+    RegisterInfo { index: 0x0F02, kind: RegisterKind::Dword, name: "RB_EDRAM_INFO" },
+    RegisterInfo { index: 0x0F04, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x0F05, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x0F06, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER2_SELECT" },
+    RegisterInfo { index: 0x0F07, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER3_SELECT" },
+    RegisterInfo { index: 0x0F08, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x0F09, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x0F0A, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x0F0B, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x0F0C, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER2_LOW" },
+    RegisterInfo { index: 0x0F0D, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER2_HI" },
+    RegisterInfo { index: 0x0F0E, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER3_LOW" },
+    RegisterInfo { index: 0x0F0F, kind: RegisterKind::Dword, name: "BC_PERFCOUNTER3_HI" },
+    RegisterInfo { index: 0x0F10, kind: RegisterKind::Dword, name: "RB_ZPASS_SAMPLES" },
+    RegisterInfo { index: 0x0F11, kind: RegisterKind::Dword, name: "RB_ZFAIL_SAMPLES" },
+    RegisterInfo { index: 0x0F12, kind: RegisterKind::Dword, name: "RB_SFAIL_SAMPLES" },
+    RegisterInfo { index: 0x0F15, kind: RegisterKind::Dword, name: "BC_DUMMY_CRAYRB_ENUMS" },
+    RegisterInfo { index: 0x0F16, kind: RegisterKind::Dword, name: "BC_DUMMY_CRAYRB_MOREENUMS" },
+    RegisterInfo { index: 0x0F26, kind: RegisterKind::Dword, name: "RB_DEBUG_CNTL" },
+    RegisterInfo { index: 0x0F27, kind: RegisterKind::Dword, name: "RB_DEBUG_DATA" },
+    RegisterInfo { index: 0x0F28, kind: RegisterKind::Dword, name: "RB_DEBUG_0" },
+    RegisterInfo { index: 0x0F29, kind: RegisterKind::Dword, name: "RB_DEBUG_1" },
+    RegisterInfo { index: 0x0F2A, kind: RegisterKind::Dword, name: "RB_DEBUG_2" },
+    RegisterInfo { index: 0x0F2B, kind: RegisterKind::Dword, name: "RB_FLAG_CONTROL" },
+    RegisterInfo { index: 0x0F2C, kind: RegisterKind::Dword, name: "RB_BC_SPARES" },
+    RegisterInfo { index: 0x0F2D, kind: RegisterKind::Dword, name: "RB_HSIO_INTERFACE_ALIGNER_VALUE" },
+    RegisterInfo { index: 0x1004, kind: RegisterKind::Dword, name: "HZ_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x1005, kind: RegisterKind::Dword, name: "HZ_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x1006, kind: RegisterKind::Dword, name: "HZ_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x1007, kind: RegisterKind::Dword, name: "HZ_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x1008, kind: RegisterKind::Dword, name: "HZ_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x1009, kind: RegisterKind::Dword, name: "HZ_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x1800, kind: RegisterKind::Dword, name: "D1CRTC_H_TOTAL" },
+    RegisterInfo { index: 0x1801, kind: RegisterKind::Dword, name: "D1CRTC_H_BLANK_START_END" },
+    RegisterInfo { index: 0x1802, kind: RegisterKind::Dword, name: "D1CRTC_H_SYNC_A" },
+    RegisterInfo { index: 0x1803, kind: RegisterKind::Dword, name: "D1CRTC_H_SYNC_A_CNTL" },
+    RegisterInfo { index: 0x1804, kind: RegisterKind::Dword, name: "D1CRTC_V_TOTAL" },
+    RegisterInfo { index: 0x1805, kind: RegisterKind::Dword, name: "D1CRTC_V_BLANK_START_END" },
+    RegisterInfo { index: 0x1806, kind: RegisterKind::Dword, name: "D1CRTC_V_SYNC_A" },
+    RegisterInfo { index: 0x1807, kind: RegisterKind::Dword, name: "D1CRTC_V_SYNC_A_CNTL" },
+    RegisterInfo { index: 0x1808, kind: RegisterKind::Dword, name: "D1CRTC_FORCE_COUNT_NOW_CNTL" },
+    RegisterInfo { index: 0x1809, kind: RegisterKind::Dword, name: "D1CRTC_PIXEL_DATA_READBACK" },
+    RegisterInfo { index: 0x180A, kind: RegisterKind::Dword, name: "D1CRTC_CONTROL" },
+    RegisterInfo { index: 0x180B, kind: RegisterKind::Dword, name: "D1CRTC_BLANK_CONTROL" },
+    RegisterInfo { index: 0x180C, kind: RegisterKind::Dword, name: "D1CRTC_INTERLACE_CONTROL" },
+    RegisterInfo { index: 0x180D, kind: RegisterKind::Dword, name: "D1CRTC_INTERLACE_STATUS" },
+    RegisterInfo { index: 0x180E, kind: RegisterKind::Dword, name: "D1CRTC_BLANK_DATA_COLOR" },
+    RegisterInfo { index: 0x180F, kind: RegisterKind::Dword, name: "D1CRTC_OVERSCAN_COLOR" },
+    RegisterInfo { index: 0x1810, kind: RegisterKind::Dword, name: "D1CRTC_BLACK_COLOR" },
+    RegisterInfo { index: 0x1811, kind: RegisterKind::Dword, name: "D1CRTC_OVERSCAN_TOP" },
+    RegisterInfo { index: 0x1812, kind: RegisterKind::Dword, name: "D1CRTC_OVERSCAN_BOTTOM" },
+    RegisterInfo { index: 0x1813, kind: RegisterKind::Dword, name: "D1CRTC_OVERSCAN_LEFT" },
+    RegisterInfo { index: 0x1814, kind: RegisterKind::Dword, name: "D1CRTC_OVERSCAN_RIGHT" },
+    RegisterInfo { index: 0x1815, kind: RegisterKind::Dword, name: "D1CRTC_STATUS" },
+    RegisterInfo { index: 0x1816, kind: RegisterKind::Dword, name: "D1CRTC_STATUS_POSITION" },
+    RegisterInfo { index: 0x1817, kind: RegisterKind::Dword, name: "D1CRTC_FRAME_COUNT_CONTROL" },
+    RegisterInfo { index: 0x1818, kind: RegisterKind::Dword, name: "D1CRTC_STATUS_FRAME_COUNT" },
+    RegisterInfo { index: 0x1819, kind: RegisterKind::Dword, name: "D1CRTC_STATUS_VF_COUNT" },
+    RegisterInfo { index: 0x181A, kind: RegisterKind::Dword, name: "D1CRTC_STATUS_HV_COUNT" },
+    RegisterInfo { index: 0x181B, kind: RegisterKind::Dword, name: "D1CRTC_FRAME_COUNT_START" },
+    RegisterInfo { index: 0x181C, kind: RegisterKind::Dword, name: "D1CRTC_COUNT_CONTROL" },
+    RegisterInfo { index: 0x181D, kind: RegisterKind::Dword, name: "D1CRTC_STEREO_STATUS" },
+    RegisterInfo { index: 0x181E, kind: RegisterKind::Dword, name: "D1CRTC_STEREO_CONTROL" },
+    RegisterInfo { index: 0x181F, kind: RegisterKind::Dword, name: "D1CRTC_FRAME_RESET_CONTRO" },
+    RegisterInfo { index: 0x1838, kind: RegisterKind::Dword, name: "D1MODE_MASTER_UPDATE_LOCK" },
+    RegisterInfo { index: 0x1839, kind: RegisterKind::Dword, name: "D1MODE_MASTER_UPDATE_MODE" },
+    RegisterInfo { index: 0x183A, kind: RegisterKind::Dword, name: "D1CRTC_UPDATE_LOCK" },
+    RegisterInfo { index: 0x183B, kind: RegisterKind::Dword, name: "D1CRTC_DOUBLE_BUFFER_CONTROL" },
+    RegisterInfo { index: 0x183C, kind: RegisterKind::Dword, name: "CRTC_DEBUG" },
+    RegisterInfo { index: 0x1840, kind: RegisterKind::Dword, name: "D1GRPH_ENABLE" },
+    RegisterInfo { index: 0x1841, kind: RegisterKind::Dword, name: "D1GRPH_CONTROL" },
+    RegisterInfo { index: 0x1842, kind: RegisterKind::Dword, name: "D1GRPH_LUT_10BIT_BYPASS_CNTL" },
+    RegisterInfo { index: 0x1843, kind: RegisterKind::Dword, name: "D1GRPH_LUT_AFTER_CSC" },
+    RegisterInfo { index: 0x1844, kind: RegisterKind::Dword, name: "D1GRPH_PRIMARY_SURFACE_ADDRESS" },
+    RegisterInfo { index: 0x1846, kind: RegisterKind::Dword, name: "D1GRPH_SECONDARY_SURFACE_ADDRESS" },
+    RegisterInfo { index: 0x1848, kind: RegisterKind::Dword, name: "D1GRPH_PITCH" },
+    RegisterInfo { index: 0x1849, kind: RegisterKind::Dword, name: "D1GRPH_SURFACE_OFFSET_X" },
+    RegisterInfo { index: 0x184A, kind: RegisterKind::Dword, name: "D1GRPH_SURFACE_OFFSET_Y" },
+    RegisterInfo { index: 0x184B, kind: RegisterKind::Dword, name: "D1GRPH_X_START" },
+    RegisterInfo { index: 0x184C, kind: RegisterKind::Dword, name: "D1GRPH_Y_START" },
+    RegisterInfo { index: 0x184D, kind: RegisterKind::Dword, name: "D1GRPH_X_END" },
+    RegisterInfo { index: 0x184E, kind: RegisterKind::Dword, name: "D1GRPH_Y_END" },
+    RegisterInfo { index: 0x184F, kind: RegisterKind::Dword, name: "D1COLOR_SUBSAMPLE_CRCB_CNTL" },
+    RegisterInfo { index: 0x1851, kind: RegisterKind::Dword, name: "D1GRPH_UPDATE" },
+    RegisterInfo { index: 0x1852, kind: RegisterKind::Dword, name: "D1GRPH_FLIP_CONTROL" },
+    RegisterInfo { index: 0x1860, kind: RegisterKind::Dword, name: "D1OVL_ENABLE" },
+    RegisterInfo { index: 0x1861, kind: RegisterKind::Dword, name: "D1OVL_CONTROL1" },
+    RegisterInfo { index: 0x1864, kind: RegisterKind::Dword, name: "D1OVL_SURFACE_ADDRESS" },
+    RegisterInfo { index: 0x1866, kind: RegisterKind::Dword, name: "D1OVL_PITCH" },
+    RegisterInfo { index: 0x1867, kind: RegisterKind::Dword, name: "D1OVL_SURFACE_OFFSET_X" },
+    RegisterInfo { index: 0x1868, kind: RegisterKind::Dword, name: "D1OVL_SURFACE_OFFSET_Y" },
+    RegisterInfo { index: 0x1869, kind: RegisterKind::Dword, name: "D1OVL_START" },
+    RegisterInfo { index: 0x186A, kind: RegisterKind::Dword, name: "D1OVL_END" },
+    RegisterInfo { index: 0x186B, kind: RegisterKind::Dword, name: "D1OVL_UPDATE" },
+    RegisterInfo { index: 0x18C1, kind: RegisterKind::Dword, name: "D1OVL_ALPHA_OUTSIDE_OVL_WINDOW" },
+    RegisterInfo { index: 0x18C2, kind: RegisterKind::Dword, name: "D1OVL_ALPHA_INSIDE_OVL_WINDOW" },
+    RegisterInfo { index: 0x18C3, kind: RegisterKind::Dword, name: "D1OVL_ALPHA_CONTROL" },
+    RegisterInfo { index: 0x18E0, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_CNTL" },
+    RegisterInfo { index: 0x18E1, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_1_1" },
+    RegisterInfo { index: 0x18E2, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_1_2" },
+    RegisterInfo { index: 0x18E3, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_1_3" },
+    RegisterInfo { index: 0x18E4, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_1_4" },
+    RegisterInfo { index: 0x18E5, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_2_1" },
+    RegisterInfo { index: 0x18E6, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_2_2" },
+    RegisterInfo { index: 0x18E7, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_2_3" },
+    RegisterInfo { index: 0x18E8, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_2_4" },
+    RegisterInfo { index: 0x18E9, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_3_1" },
+    RegisterInfo { index: 0x18EA, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_3_2" },
+    RegisterInfo { index: 0x18EB, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_3_3" },
+    RegisterInfo { index: 0x18EC, kind: RegisterKind::Dword, name: "D1GRPH_COLOR_MATRIX_COEF_3_4" },
+    RegisterInfo { index: 0x1921, kind: RegisterKind::Dword, name: "DC_LUT_RW_MODE" },
+    RegisterInfo { index: 0x1922, kind: RegisterKind::Dword, name: "DC_LUT_RW_INDEX" },
+    RegisterInfo { index: 0x1923, kind: RegisterKind::Dword, name: "DC_LUT_SEQ_COLOR" },
+    RegisterInfo { index: 0x1924, kind: RegisterKind::Dword, name: "DC_LUT_PWL_DATA" },
+    RegisterInfo { index: 0x1925, kind: RegisterKind::Dword, name: "DC_LUT_30_COLOR" },
+    RegisterInfo { index: 0x1927, kind: RegisterKind::Dword, name: "DC_LUT_WRITE_EN_MASK" },
+    RegisterInfo { index: 0x1930, kind: RegisterKind::Dword, name: "DC_LUTA_CONTROL" },
+    RegisterInfo { index: 0x1931, kind: RegisterKind::Dword, name: "DC_LUTA_BLACK_OFFSET_BLUE" },
+    RegisterInfo { index: 0x1932, kind: RegisterKind::Dword, name: "DC_LUTA_BLACK_OFFSET_GREEN" },
+    RegisterInfo { index: 0x1933, kind: RegisterKind::Dword, name: "DC_LUTA_BLACK_OFFSET_RED" },
+    RegisterInfo { index: 0x1934, kind: RegisterKind::Dword, name: "DC_LUTA_WHITE_OFFSET_BLUE" },
+    RegisterInfo { index: 0x1935, kind: RegisterKind::Dword, name: "DC_LUTA_WHITE_OFFSET_GREEN" },
+    RegisterInfo { index: 0x1936, kind: RegisterKind::Dword, name: "DC_LUTA_WHITE_OFFSET_RED" },
+    RegisterInfo { index: 0x1949, kind: RegisterKind::Dword, name: "D1MODE_UNDERFLOW_STATUS" },
+    RegisterInfo { index: 0x194A, kind: RegisterKind::Dword, name: "D1MODE_DATA_FORMAT" },
+    RegisterInfo { index: 0x194B, kind: RegisterKind::Dword, name: "D1MODE_DESKTOP_HEIGHT" },
+    RegisterInfo { index: 0x194C, kind: RegisterKind::Dword, name: "D1MODE_V_COUNTER" },
+    RegisterInfo { index: 0x194D, kind: RegisterKind::Dword, name: "D1MODE_VBLANK_STATUS" },
+    RegisterInfo { index: 0x194E, kind: RegisterKind::Dword, name: "D1MODE_VLINE_START_END" },
+    RegisterInfo { index: 0x194F, kind: RegisterKind::Dword, name: "D1MODE_VLINE_STATUS" },
+    RegisterInfo { index: 0x1950, kind: RegisterKind::Dword, name: "D1MODE_INT_MASK" },
+    RegisterInfo { index: 0x1951, kind: RegisterKind::Dword, name: "D1MODE_VBLANK_VLINE_STATUS" },
+    RegisterInfo { index: 0x1952, kind: RegisterKind::Dword, name: "D1MODE_MAX_CHUNK_SIZE" },
+    RegisterInfo { index: 0x1953, kind: RegisterKind::Dword, name: "D1MODE_CHUNK_SIZE_DEBUG" },
+    RegisterInfo { index: 0x1954, kind: RegisterKind::Dword, name: "D1MODE_PRIORITY_A_CNT" },
+    RegisterInfo { index: 0x1955, kind: RegisterKind::Dword, name: "D1MODE_URGENCY_STAT" },
+    RegisterInfo { index: 0x195E, kind: RegisterKind::Dword, name: "D1SCL_COEF_RAM_SELECT" },
+    RegisterInfo { index: 0x195F, kind: RegisterKind::Dword, name: "D1SCL_COEF_RAM_TAP_DATA" },
+    RegisterInfo { index: 0x1960, kind: RegisterKind::Dword, name: "D1MODE_VIEWPORT_START" },
+    RegisterInfo { index: 0x1961, kind: RegisterKind::Dword, name: "D1MODE_VIEWPORT_SIZE" },
+    RegisterInfo { index: 0x1964, kind: RegisterKind::Dword, name: "D1SCL_SCALER_ENABLE" },
+    RegisterInfo { index: 0x1965, kind: RegisterKind::Dword, name: "D1SCL_TAP_CONTROL" },
+    RegisterInfo { index: 0x1968, kind: RegisterKind::Dword, name: "D1SCL_MANUAL_REPLICATE_CONTROL" },
+    RegisterInfo { index: 0x196C, kind: RegisterKind::Dword, name: "D1SCL_HORZ_FILTER_CONTROL" },
+    RegisterInfo { index: 0x196D, kind: RegisterKind::Dword, name: "D1SCL_HORZ_FILTER_SCALE_RATIO" },
+    RegisterInfo { index: 0x196E, kind: RegisterKind::Dword, name: "D1SCL_HORZ_FILTER_INIT_RGB_LUMA" },
+    RegisterInfo { index: 0x196F, kind: RegisterKind::Dword, name: "D1SCL_HORZ_FILTER_INIT_CHROMA" },
+    RegisterInfo { index: 0x1970, kind: RegisterKind::Dword, name: "D1SCL_VERT_FILTER_CONTROL" },
+    RegisterInfo { index: 0x1971, kind: RegisterKind::Dword, name: "D1SCL_VERT_FILTER_SCALE_RATIO" },
+    RegisterInfo { index: 0x1972, kind: RegisterKind::Dword, name: "D1SCL_VERT_FILTER_INIT" },
+    RegisterInfo { index: 0x1973, kind: RegisterKind::Dword, name: "D1SCL_UPDATE" },
+    RegisterInfo { index: 0x1974, kind: RegisterKind::Dword, name: "D1SCL_UNDERFLOW_STATUS" },
+    RegisterInfo { index: 0x1977, kind: RegisterKind::Dword, name: "D1SCL_VERT_FILTER_INIT_BOT" },
+    RegisterInfo { index: 0x1978, kind: RegisterKind::Dword, name: "D1SCL_COEF_RAM_CONFLICT_STATUS" },
+    RegisterInfo { index: 0x1979, kind: RegisterKind::Dword, name: "D1SCL_ONE_SHOT_WATERMARK" },
+    RegisterInfo { index: 0x197A, kind: RegisterKind::Dword, name: "D1MODE_LB_PITCH_IN_WORDS" },
+    RegisterInfo { index: 0x198C, kind: RegisterKind::Dword, name: "DISP_RBBMIF_RDWR_TIMEOUT" },
+    RegisterInfo { index: 0x19BA, kind: RegisterKind::Dword, name: "D1SCL_CRC_ENABLE" },
+    RegisterInfo { index: 0x19BC, kind: RegisterKind::Dword, name: "D1SCL_CRC_SOURCE_SEL" },
+    RegisterInfo { index: 0x19BD, kind: RegisterKind::Dword, name: "D1SCL_CRC_MAS" },
+    RegisterInfo { index: 0x19BE, kind: RegisterKind::Dword, name: "D1SCL_CRC_CURRENT" },
+    RegisterInfo { index: 0x19BF, kind: RegisterKind::Dword, name: "D1SCL_CRC_LAST" },
+    RegisterInfo { index: 0x1B20, kind: RegisterKind::Dword, name: "DCP_CRC_CONTROL" },
+    RegisterInfo { index: 0x1B21, kind: RegisterKind::Dword, name: "DCP_CRC_MASK" },
+    RegisterInfo { index: 0x1B22, kind: RegisterKind::Dword, name: "DCP_CRC_P0_CURRENT" },
+    RegisterInfo { index: 0x1B24, kind: RegisterKind::Dword, name: "DCP_CRC_P0_LAST" },
+    RegisterInfo { index: 0x1B25, kind: RegisterKind::Dword, name: "DCP_DEBUG" },
+    RegisterInfo { index: 0x1B2E, kind: RegisterKind::Dword, name: "DMIF_STATUS" },
+    RegisterInfo { index: 0x1B2F, kind: RegisterKind::Dword, name: "DCP_LB_DATA_GAP_BETWEEN_CHUNK" },
+    RegisterInfo { index: 0x1C46, kind: RegisterKind::Dword, name: "DC_LB_MEM_SIZE" },
+    RegisterInfo { index: 0x1E40, kind: RegisterKind::Dword, name: "XDVO_ENABLE" },
+    RegisterInfo { index: 0x1E43, kind: RegisterKind::Dword, name: "XDVO_BIT_DEPTH_CONTROL" },
+    RegisterInfo { index: 0x1E44, kind: RegisterKind::Dword, name: "XDVO_CLOCK_INV" },
+    RegisterInfo { index: 0x1E45, kind: RegisterKind::Dword, name: "XDVO_CONTROL" },
+    RegisterInfo { index: 0x1E46, kind: RegisterKind::Dword, name: "XDVO_CRC_EN" },
+    RegisterInfo { index: 0x1E47, kind: RegisterKind::Dword, name: "XDVO_CRC_CNTL" },
+    RegisterInfo { index: 0x1E48, kind: RegisterKind::Dword, name: "XDVO_CRC_MASK_SIG_RGB" },
+    RegisterInfo { index: 0x1E49, kind: RegisterKind::Dword, name: "XDVO_CRC_MASK_SIG_CNTL" },
+    RegisterInfo { index: 0x1E4A, kind: RegisterKind::Dword, name: "XDVO_CRC_SIG_RGB" },
+    RegisterInfo { index: 0x1E4B, kind: RegisterKind::Dword, name: "XDVO_CRC_SIG_CNTL" },
+    RegisterInfo { index: 0x1E4C, kind: RegisterKind::Dword, name: "XDVO_STRENGTH_CONTROL" },
+    RegisterInfo { index: 0x1E4D, kind: RegisterKind::Dword, name: "XDVO_DATA_STRENGTH_CONTROL" },
+    RegisterInfo { index: 0x1E4E, kind: RegisterKind::Dword, name: "XDVO_FORCE_OUTPUT_CNTL" },
+    RegisterInfo { index: 0x1E4F, kind: RegisterKind::Dword, name: "XDVO_FORCE_DATA" },
+    RegisterInfo { index: 0x1E50, kind: RegisterKind::Dword, name: "XDVO_2ND_CRC_EN" },
+    RegisterInfo { index: 0x1E51, kind: RegisterKind::Dword, name: "XDVO_2ND_CRC_CNTL" },
+    RegisterInfo { index: 0x1E52, kind: RegisterKind::Dword, name: "XDVO_2ND_CRC_MASK_SIG" },
+    RegisterInfo { index: 0x1E53, kind: RegisterKind::Dword, name: "XDVO_2ND_CRC_SIG" },
+    RegisterInfo { index: 0x1E54, kind: RegisterKind::Dword, name: "XDVO_REGISTER_INDEX" },
+    RegisterInfo { index: 0x1E55, kind: RegisterKind::Dword, name: "XDVO_REGISTER_DATA" },
+    RegisterInfo { index: 0x1F98, kind: RegisterKind::Dword, name: "DC_GPIO_XDVODATA_MASK" },
+    RegisterInfo { index: 0x1F99, kind: RegisterKind::Dword, name: "DC_GPIO_XDVODATA_A" },
+    RegisterInfo { index: 0x1F9A, kind: RegisterKind::Dword, name: "DC_GPIO_XDVODATA_EN" },
+    RegisterInfo { index: 0x1F9B, kind: RegisterKind::Dword, name: "DC_GPIO_XDVODATA_Y" },
+    RegisterInfo { index: 0x1F9C, kind: RegisterKind::Dword, name: "DC_HSYNC_DEBUG_TEST" },
+    RegisterInfo { index: 0x1FB4, kind: RegisterKind::Dword, name: "CAPTURE_START_STATUS" },
+    RegisterInfo { index: 0x1FB7, kind: RegisterKind::Dword, name: "DISP_INTERRUPT_STATUS" },
+    RegisterInfo { index: 0x1FB8, kind: RegisterKind::Dword, name: "DOUT_DEBUG" },
+    RegisterInfo { index: 0x1FC0, kind: RegisterKind::Dword, name: "DO_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x1FC1, kind: RegisterKind::Dword, name: "DO_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x1FC2, kind: RegisterKind::Dword, name: "DO_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x1FC3, kind: RegisterKind::Dword, name: "DO_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x1FC4, kind: RegisterKind::Dword, name: "DO_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x1FC5, kind: RegisterKind::Dword, name: "DO_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x1FC8, kind: RegisterKind::Dword, name: "DC_PERFCOUNTER0_SELECT" },
+    RegisterInfo { index: 0x1FC9, kind: RegisterKind::Dword, name: "DC_PERFCOUNTER0_HI" },
+    RegisterInfo { index: 0x1FCA, kind: RegisterKind::Dword, name: "DC_PERFCOUNTER0_LOW" },
+    RegisterInfo { index: 0x1FCB, kind: RegisterKind::Dword, name: "DC_PERFCOUNTER1_SELECT" },
+    RegisterInfo { index: 0x1FCC, kind: RegisterKind::Dword, name: "DC_PERFCOUNTER1_HI" },
+    RegisterInfo { index: 0x1FCD, kind: RegisterKind::Dword, name: "DC_PERFCOUNTER1_LOW" },
+    RegisterInfo { index: 0x1FCE, kind: RegisterKind::Dword, name: "DC_PERFMON_CNTL" },
+    RegisterInfo { index: 0x1FD0, kind: RegisterKind::Dword, name: "DC_DOUT_DEBUG_MUX_CNTL" },
+    RegisterInfo { index: 0x1FE6, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_BUS_CLK1_SEL" },
+    RegisterInfo { index: 0x1FE7, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_OUT_PIN_MASK" },
+    RegisterInfo { index: 0x1FE8, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_TRIGGER_CNTL" },
+    RegisterInfo { index: 0x1FE9, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_TRIGGER_STAT" },
+    RegisterInfo { index: 0x1FEA, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_EDGE_TRIGGER_MASK" },
+    RegisterInfo { index: 0x1FEB, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_EDGE_TRIGGER_PATTERN" },
+    RegisterInfo { index: 0x1FEC, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_DATA_TRIGGER_MASK" },
+    RegisterInfo { index: 0x1FED, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_DATA_TRIGGER_PATTERN" },
+    RegisterInfo { index: 0x1FEE, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_OUT_TEST_DATA" },
+    RegisterInfo { index: 0x1FEF, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_OUT_CNTL" },
+    RegisterInfo { index: 0x1FF2, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_BUS_CLK1_SEL" },
+    RegisterInfo { index: 0x1FF3, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_OUT_PIN_MASK" },
+    RegisterInfo { index: 0x1FF4, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_TRIGGER_CNTL" },
+    RegisterInfo { index: 0x1FF5, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_TRIGGER_STAT" },
+    RegisterInfo { index: 0x1FF6, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_EDGE_TRIGGER_MASK" },
+    RegisterInfo { index: 0x1FF7, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_EDGE_TRIGGER_PATTERN" },
+    RegisterInfo { index: 0x1FF8, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_DATA_TRIGGER_MASK" },
+    RegisterInfo { index: 0x1FF9, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_DATA_TRIGGER_PATTERN" },
+    RegisterInfo { index: 0x1FFA, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_OUT_TEST_DATA" },
+    RegisterInfo { index: 0x1FFB, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_OUT_CNTL" },
+    RegisterInfo { index: 0x1FFC, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_INDEX" },
+    RegisterInfo { index: 0x1FFD, kind: RegisterKind::Dword, name: "DC_TEST_DEBUG_DATA" },
+    RegisterInfo { index: 0x1FFE, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_INDEX" },
+    RegisterInfo { index: 0x1FFF, kind: RegisterKind::Dword, name: "DO_TEST_DEBUG_DATA" },
+    RegisterInfo { index: 0x2000, kind: RegisterKind::Dword, name: "RB_SURFACE_INFO" },
+    RegisterInfo { index: 0x2001, kind: RegisterKind::Dword, name: "RB_COLOR_INFO" },
+    RegisterInfo { index: 0x2002, kind: RegisterKind::Dword, name: "RB_DEPTH_INFO" },
+    RegisterInfo { index: 0x2003, kind: RegisterKind::Dword, name: "RB_COLOR1_INFO" },
+    RegisterInfo { index: 0x2004, kind: RegisterKind::Dword, name: "RB_COLOR2_INFO" },
+    RegisterInfo { index: 0x2005, kind: RegisterKind::Dword, name: "RB_COLOR3_INFO" },
+    RegisterInfo { index: 0x2006, kind: RegisterKind::Dword, name: "COHER_DEST_BASE_0" },
+    RegisterInfo { index: 0x2007, kind: RegisterKind::Dword, name: "COHER_DEST_BASE_1" },
+    RegisterInfo { index: 0x2008, kind: RegisterKind::Dword, name: "COHER_DEST_BASE_2" },
+    RegisterInfo { index: 0x2009, kind: RegisterKind::Dword, name: "COHER_DEST_BASE_3" },
+    RegisterInfo { index: 0x200A, kind: RegisterKind::Dword, name: "COHER_DEST_BASE_4" },
+    RegisterInfo { index: 0x200B, kind: RegisterKind::Dword, name: "COHER_DEST_BASE_5" },
+    RegisterInfo { index: 0x200C, kind: RegisterKind::Dword, name: "COHER_DEST_BASE_6" },
+    RegisterInfo { index: 0x200D, kind: RegisterKind::Dword, name: "COHER_DEST_BASE_7" },
+    RegisterInfo { index: 0x200E, kind: RegisterKind::Dword, name: "PA_SC_SCREEN_SCISSOR_TL" },
+    RegisterInfo { index: 0x200F, kind: RegisterKind::Dword, name: "PA_SC_SCREEN_SCISSOR_BR" },
+    RegisterInfo { index: 0x2080, kind: RegisterKind::Dword, name: "PA_SC_WINDOW_OFFSET" },
+    RegisterInfo { index: 0x2081, kind: RegisterKind::Dword, name: "PA_SC_WINDOW_SCISSOR_TL" },
+    RegisterInfo { index: 0x2082, kind: RegisterKind::Dword, name: "PA_SC_WINDOW_SCISSOR_BR" },
+    RegisterInfo { index: 0x2083, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_RULE" },
+    RegisterInfo { index: 0x2084, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_0_TL" },
+    RegisterInfo { index: 0x2085, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_0_BR" },
+    RegisterInfo { index: 0x2086, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_1_TL" },
+    RegisterInfo { index: 0x2087, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_1_BR" },
+    RegisterInfo { index: 0x2088, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_2_TL" },
+    RegisterInfo { index: 0x2089, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_2_BR" },
+    RegisterInfo { index: 0x208A, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_3_TL" },
+    RegisterInfo { index: 0x208B, kind: RegisterKind::Dword, name: "PA_SC_CLIPRECT_3_BR" },
+    RegisterInfo { index: 0x2100, kind: RegisterKind::Dword, name: "VGT_MAX_VTX_INDX" },
+    RegisterInfo { index: 0x2101, kind: RegisterKind::Dword, name: "VGT_MIN_VTX_INDX" },
+    RegisterInfo { index: 0x2102, kind: RegisterKind::Dword, name: "VGT_INDX_OFFSET" },
+    RegisterInfo { index: 0x2103, kind: RegisterKind::Dword, name: "VGT_MULTI_PRIM_IB_RESET_INDX" },
+    RegisterInfo { index: 0x2104, kind: RegisterKind::Dword, name: "RB_COLOR_MASK" },
+    RegisterInfo { index: 0x2105, kind: RegisterKind::Float, name: "RB_BLEND_RED" },
+    RegisterInfo { index: 0x2106, kind: RegisterKind::Float, name: "RB_BLEND_GREEN" },
+    RegisterInfo { index: 0x2107, kind: RegisterKind::Float, name: "RB_BLEND_BLUE" },
+    RegisterInfo { index: 0x2108, kind: RegisterKind::Float, name: "RB_BLEND_ALPHA" },
+    RegisterInfo { index: 0x2109, kind: RegisterKind::Float, name: "RB_FOG_COLOR_RED" },
+    RegisterInfo { index: 0x210A, kind: RegisterKind::Float, name: "RB_FOG_COLOR_GREEN" },
+    RegisterInfo { index: 0x210B, kind: RegisterKind::Float, name: "RB_FOG_COLOR_BLUE" },
+    RegisterInfo { index: 0x210C, kind: RegisterKind::Dword, name: "RB_STENCILREFMASK_BF" },
+    RegisterInfo { index: 0x210D, kind: RegisterKind::Dword, name: "RB_STENCILREFMASK" },
+    RegisterInfo { index: 0x210E, kind: RegisterKind::Float, name: "RB_ALPHA_REF" },
+    RegisterInfo { index: 0x210F, kind: RegisterKind::Float, name: "PA_CL_VPORT_XSCALE" },
+    RegisterInfo { index: 0x2110, kind: RegisterKind::Float, name: "PA_CL_VPORT_XOFFSET" },
+    RegisterInfo { index: 0x2111, kind: RegisterKind::Float, name: "PA_CL_VPORT_YSCALE" },
+    RegisterInfo { index: 0x2112, kind: RegisterKind::Float, name: "PA_CL_VPORT_YOFFSET" },
+    RegisterInfo { index: 0x2113, kind: RegisterKind::Float, name: "PA_CL_VPORT_ZSCALE" },
+    RegisterInfo { index: 0x2114, kind: RegisterKind::Float, name: "PA_CL_VPORT_ZOFFSET" },
+    RegisterInfo { index: 0x2180, kind: RegisterKind::Dword, name: "SQ_PROGRAM_CNTL" },
+    RegisterInfo { index: 0x2181, kind: RegisterKind::Dword, name: "SQ_CONTEXT_MISC" },
+    RegisterInfo { index: 0x2182, kind: RegisterKind::Dword, name: "SQ_INTERPOLATOR_CNTL" },
+    RegisterInfo { index: 0x2183, kind: RegisterKind::Dword, name: "SQ_WRAPPING_0" },
+    RegisterInfo { index: 0x2184, kind: RegisterKind::Dword, name: "SQ_WRAPPING_1" },
+    RegisterInfo { index: 0x21F4, kind: RegisterKind::Dword, name: "GFX_COPY_STATE" },
+    RegisterInfo { index: 0x21F5, kind: RegisterKind::Dword, name: "SQ_CF_RD_BASE" },
+    RegisterInfo { index: 0x21F6, kind: RegisterKind::Dword, name: "SQ_PS_PROGRAM" },
+    RegisterInfo { index: 0x21F7, kind: RegisterKind::Dword, name: "SQ_VS_PROGRAM" },
+    RegisterInfo { index: 0x21F9, kind: RegisterKind::Dword, name: "VGT_EVENT_INITIATOR" },
+    RegisterInfo { index: 0x21FA, kind: RegisterKind::Dword, name: "VGT_DMA_BASE" },
+    RegisterInfo { index: 0x21FB, kind: RegisterKind::Dword, name: "VGT_DMA_SIZE" },
+    RegisterInfo { index: 0x21FC, kind: RegisterKind::Dword, name: "VGT_DRAW_INITIATOR" },
+    RegisterInfo { index: 0x21FD, kind: RegisterKind::Dword, name: "VGT_IMMED_DATA" },
+    RegisterInfo { index: 0x2200, kind: RegisterKind::Dword, name: "RB_DEPTHCONTROL" },
+    RegisterInfo { index: 0x2201, kind: RegisterKind::Dword, name: "RB_BLENDCONTROL0" },
+    RegisterInfo { index: 0x2202, kind: RegisterKind::Dword, name: "RB_COLORCONTROL" },
+    RegisterInfo { index: 0x2203, kind: RegisterKind::Dword, name: "RB_HIZCONTROL" },
+    RegisterInfo { index: 0x2204, kind: RegisterKind::Dword, name: "PA_CL_CLIP_CNTL" },
+    RegisterInfo { index: 0x2205, kind: RegisterKind::Dword, name: "PA_SU_SC_MODE_CNTL" },
+    RegisterInfo { index: 0x2206, kind: RegisterKind::Dword, name: "PA_CL_VTE_CNTL" },
+    RegisterInfo { index: 0x2207, kind: RegisterKind::Dword, name: "VGT_CURRENT_BIN_ID_MIN" },
+    RegisterInfo { index: 0x2208, kind: RegisterKind::Dword, name: "RB_MODECONTROL" },
+    RegisterInfo { index: 0x2209, kind: RegisterKind::Dword, name: "RB_BLENDCONTROL1" },
+    RegisterInfo { index: 0x220A, kind: RegisterKind::Dword, name: "RB_BLENDCONTROL2" },
+    RegisterInfo { index: 0x220B, kind: RegisterKind::Dword, name: "RB_BLENDCONTROL3" },
+    RegisterInfo { index: 0x2210, kind: RegisterKind::Dword, name: "GRAS_CONTROL" },
+    RegisterInfo { index: 0x2280, kind: RegisterKind::Dword, name: "PA_SU_POINT_SIZE" },
+    RegisterInfo { index: 0x2281, kind: RegisterKind::Dword, name: "PA_SU_POINT_MINMAX" },
+    RegisterInfo { index: 0x2282, kind: RegisterKind::Dword, name: "PA_SU_LINE_CNTL" },
+    RegisterInfo { index: 0x2283, kind: RegisterKind::Dword, name: "PA_SC_LINE_STIPPLE" },
+    RegisterInfo { index: 0x2284, kind: RegisterKind::Dword, name: "VGT_OUTPUT_PATH_CNTL" },
+    RegisterInfo { index: 0x2285, kind: RegisterKind::Dword, name: "VGT_HOS_CNTL" },
+    RegisterInfo { index: 0x2286, kind: RegisterKind::Float, name: "VGT_HOS_MAX_TESS_LEVEL" },
+    RegisterInfo { index: 0x2287, kind: RegisterKind::Float, name: "VGT_HOS_MIN_TESS_LEVEL" },
+    RegisterInfo { index: 0x2288, kind: RegisterKind::Dword, name: "VGT_HOS_REUSE_DEPTH" },
+    RegisterInfo { index: 0x2289, kind: RegisterKind::Dword, name: "VGT_GROUP_PRIM_TYPE" },
+    RegisterInfo { index: 0x228A, kind: RegisterKind::Dword, name: "VGT_GROUP_FIRST_DECR" },
+    RegisterInfo { index: 0x228B, kind: RegisterKind::Dword, name: "VGT_GROUP_DECR" },
+    RegisterInfo { index: 0x228C, kind: RegisterKind::Dword, name: "VGT_GROUP_VECT_0_CNTL" },
+    RegisterInfo { index: 0x228D, kind: RegisterKind::Dword, name: "VGT_GROUP_VECT_1_CNTL" },
+    RegisterInfo { index: 0x228E, kind: RegisterKind::Dword, name: "VGT_GROUP_VECT_0_FMT_CNTL" },
+    RegisterInfo { index: 0x228F, kind: RegisterKind::Dword, name: "VGT_GROUP_VECT_1_FMT_CNTL" },
+    RegisterInfo { index: 0x2290, kind: RegisterKind::Dword, name: "UNKNOWN_2290" },
+    RegisterInfo { index: 0x2291, kind: RegisterKind::Dword, name: "UNKNOWN_2291" },
+    RegisterInfo { index: 0x2292, kind: RegisterKind::Dword, name: "PA_SC_MPASS_PS_CNTL" },
+    RegisterInfo { index: 0x2293, kind: RegisterKind::Dword, name: "PA_SC_VIZ_QUERY" },
+    RegisterInfo { index: 0x2294, kind: RegisterKind::Dword, name: "VGT_ENHANCE" },
+    RegisterInfo { index: 0x2300, kind: RegisterKind::Dword, name: "PA_SC_LINE_CNTL" },
+    RegisterInfo { index: 0x2301, kind: RegisterKind::Dword, name: "PA_SC_AA_CONFIG" },
+    RegisterInfo { index: 0x2302, kind: RegisterKind::Dword, name: "PA_SU_VTX_CNTL" },
+    RegisterInfo { index: 0x2303, kind: RegisterKind::Float, name: "PA_CL_GB_VERT_CLIP_ADJ" },
+    RegisterInfo { index: 0x2304, kind: RegisterKind::Float, name: "PA_CL_GB_VERT_DISC_ADJ" },
+    RegisterInfo { index: 0x2305, kind: RegisterKind::Float, name: "PA_CL_GB_HORZ_CLIP_ADJ" },
+    RegisterInfo { index: 0x2306, kind: RegisterKind::Float, name: "PA_CL_GB_HORZ_DISC_ADJ" },
+    RegisterInfo { index: 0x2307, kind: RegisterKind::Dword, name: "SQ_VS_CONST" },
+    RegisterInfo { index: 0x2308, kind: RegisterKind::Dword, name: "SQ_PS_CONST" },
+    RegisterInfo { index: 0x2309, kind: RegisterKind::Dword, name: "SQ_DEBUG_MISC_0" },
+    RegisterInfo { index: 0x230A, kind: RegisterKind::Dword, name: "SQ_DEBUG_MISC_1" },
+    RegisterInfo { index: 0x230B, kind: RegisterKind::Dword, name: "UNKNOWN_230B" },
+    RegisterInfo { index: 0x230C, kind: RegisterKind::Dword, name: "UNKNOWN_230C" },
+    RegisterInfo { index: 0x230D, kind: RegisterKind::Dword, name: "UNKNOWN_230D" },
+    RegisterInfo { index: 0x230E, kind: RegisterKind::Dword, name: "UNKNOWN_230E" },
+    RegisterInfo { index: 0x230F, kind: RegisterKind::Dword, name: "UNKNOWN_230F" },
+    RegisterInfo { index: 0x2310, kind: RegisterKind::Dword, name: "UNKNOWN_2310" },
+    RegisterInfo { index: 0x2311, kind: RegisterKind::Dword, name: "UNKNOWN_2311" },
+    RegisterInfo { index: 0x2312, kind: RegisterKind::Dword, name: "PA_SC_AA_MASK" },
+    RegisterInfo { index: 0x2313, kind: RegisterKind::Dword, name: "UNKNOWN_2313" },
+    RegisterInfo { index: 0x2314, kind: RegisterKind::Dword, name: "UNKNOWN_2314" },
+    RegisterInfo { index: 0x2315, kind: RegisterKind::Dword, name: "SQ_CF_PROGRAM_SIZE" },
+    RegisterInfo { index: 0x2316, kind: RegisterKind::Dword, name: "VGT_VERTEX_REUSE_BLOCK_CNTL" },
+    RegisterInfo { index: 0x2317, kind: RegisterKind::Dword, name: "VGT_OUT_DEALLOC_CNTL" },
+    RegisterInfo { index: 0x2318, kind: RegisterKind::Dword, name: "RB_COPY_CONTROL" },
+    RegisterInfo { index: 0x2319, kind: RegisterKind::Dword, name: "RB_COPY_DEST_BASE" },
+    RegisterInfo { index: 0x231A, kind: RegisterKind::Dword, name: "RB_COPY_DEST_PITCH" },
+    RegisterInfo { index: 0x231B, kind: RegisterKind::Dword, name: "RB_COPY_DEST_INFO" },
+    RegisterInfo { index: 0x231C, kind: RegisterKind::Dword, name: "RB_HIZ_CLEAR" },
+    RegisterInfo { index: 0x231D, kind: RegisterKind::Dword, name: "RB_DEPTH_CLEAR" },
+    RegisterInfo { index: 0x231E, kind: RegisterKind::Dword, name: "RB_COLOR_CLEAR" },
+    RegisterInfo { index: 0x231F, kind: RegisterKind::Dword, name: "RB_COLOR_CLEAR_LO" },
+    RegisterInfo { index: 0x2320, kind: RegisterKind::Dword, name: "RB_COPY_FUNC" },
+    RegisterInfo { index: 0x2321, kind: RegisterKind::Dword, name: "RB_COPY_REF" },
+    RegisterInfo { index: 0x2322, kind: RegisterKind::Dword, name: "RB_COPY_MASK" },
+    RegisterInfo { index: 0x2323, kind: RegisterKind::Dword, name: "RB_COPY_SURFACE_SLICE" },
+    RegisterInfo { index: 0x2324, kind: RegisterKind::Dword, name: "RB_SAMPLE_COUNT_CTL" },
+    RegisterInfo { index: 0x2325, kind: RegisterKind::Dword, name: "RB_SAMPLE_COUNT_ADDR" },
+    RegisterInfo { index: 0x2326, kind: RegisterKind::Float, name: "RB_COLOR_DEST_MASK" },
+    RegisterInfo { index: 0x2340, kind: RegisterKind::Float, name: "GRAS_UCP0X" },
+    RegisterInfo { index: 0x2357, kind: RegisterKind::Float, name: "GRAS_UCP5W" },
+    RegisterInfo { index: 0x2360, kind: RegisterKind::Float, name: "GRAS_UCP_ENABLED" },
+    RegisterInfo { index: 0x2380, kind: RegisterKind::Float, name: "PA_SU_POLY_OFFSET_FRONT_SCALE" },
+    RegisterInfo { index: 0x2381, kind: RegisterKind::Float, name: "PA_SU_POLY_OFFSET_FRONT_OFFSET" },
+    RegisterInfo { index: 0x2382, kind: RegisterKind::Float, name: "PA_SU_POLY_OFFSET_BACK_SCALE" },
+    RegisterInfo { index: 0x2383, kind: RegisterKind::Float, name: "PA_SU_POLY_OFFSET_BACK_OFFSET" },
+    RegisterInfo { index: 0x2384, kind: RegisterKind::Float, name: "PA_CL_POINT_X_RAD" },
+    RegisterInfo { index: 0x2385, kind: RegisterKind::Float, name: "PA_CL_POINT_Y_RAD" },
+    RegisterInfo { index: 0x2386, kind: RegisterKind::Float, name: "PA_CL_POINT_SIZE" },
+    RegisterInfo { index: 0x2387, kind: RegisterKind::Float, name: "PA_CL_POINT_CULL_RAD" },
+    RegisterInfo { index: 0x2388, kind: RegisterKind::Float, name: "PA_CL_UCP_0_X" },
+    RegisterInfo { index: 0x2389, kind: RegisterKind::Float, name: "PA_CL_UCP_0_Y" },
+    RegisterInfo { index: 0x238A, kind: RegisterKind::Float, name: "PA_CL_UCP_0_Z" },
+    RegisterInfo { index: 0x238B, kind: RegisterKind::Float, name: "PA_CL_UCP_0_W" },
+    RegisterInfo { index: 0x238C, kind: RegisterKind::Float, name: "PA_CL_UCP_1_X" },
+    RegisterInfo { index: 0x238D, kind: RegisterKind::Float, name: "PA_CL_UCP_1_Y" },
+    RegisterInfo { index: 0x238E, kind: RegisterKind::Float, name: "PA_CL_UCP_1_Z" },
+    RegisterInfo { index: 0x238F, kind: RegisterKind::Float, name: "PA_CL_UCP_1_W" },
+    RegisterInfo { index: 0x2390, kind: RegisterKind::Float, name: "PA_CL_UCP_2_X" },
+    RegisterInfo { index: 0x2391, kind: RegisterKind::Float, name: "PA_CL_UCP_2_Y" },
+    RegisterInfo { index: 0x2392, kind: RegisterKind::Float, name: "PA_CL_UCP_2_Z" },
+    RegisterInfo { index: 0x2393, kind: RegisterKind::Float, name: "PA_CL_UCP_2_W" },
+    RegisterInfo { index: 0x2394, kind: RegisterKind::Float, name: "PA_CL_UCP_3_X" },
+    RegisterInfo { index: 0x2395, kind: RegisterKind::Float, name: "PA_CL_UCP_3_Y" },
+    RegisterInfo { index: 0x2396, kind: RegisterKind::Float, name: "PA_CL_UCP_3_Z" },
+    RegisterInfo { index: 0x2397, kind: RegisterKind::Float, name: "PA_CL_UCP_3_W" },
+    RegisterInfo { index: 0x2398, kind: RegisterKind::Float, name: "PA_CL_UCP_4_X" },
+    RegisterInfo { index: 0x2399, kind: RegisterKind::Float, name: "PA_CL_UCP_4_Y" },
+    RegisterInfo { index: 0x239A, kind: RegisterKind::Float, name: "PA_CL_UCP_4_Z" },
+    RegisterInfo { index: 0x239B, kind: RegisterKind::Float, name: "PA_CL_UCP_4_W" },
+    RegisterInfo { index: 0x239C, kind: RegisterKind::Float, name: "PA_CL_UCP_5_X" },
+    RegisterInfo { index: 0x239D, kind: RegisterKind::Float, name: "PA_CL_UCP_5_Y" },
+    RegisterInfo { index: 0x239E, kind: RegisterKind::Float, name: "PA_CL_UCP_5_Z" },
+    RegisterInfo { index: 0x239F, kind: RegisterKind::Float, name: "PA_CL_UCP_5_W" },
+    RegisterInfo { index: 0x4000, kind: RegisterKind::Float, name: "SHADER_CONSTANT_000_X" },
+    RegisterInfo { index: 0x4001, kind: RegisterKind::Float, name: "SHADER_CONSTANT_000_Y" },
+    RegisterInfo { index: 0x4002, kind: RegisterKind::Float, name: "SHADER_CONSTANT_000_Z" },
+    RegisterInfo { index: 0x4003, kind: RegisterKind::Float, name: "SHADER_CONSTANT_000_W" },
+    RegisterInfo { index: 0x4004, kind: RegisterKind::Float, name: "SHADER_CONSTANT_001_X" },
+    RegisterInfo { index: 0x4005, kind: RegisterKind::Float, name: "SHADER_CONSTANT_001_Y" },
+    RegisterInfo { index: 0x4006, kind: RegisterKind::Float, name: "SHADER_CONSTANT_001_Z" },
+    RegisterInfo { index: 0x4007, kind: RegisterKind::Float, name: "SHADER_CONSTANT_001_W" },
+    RegisterInfo { index: 0x4008, kind: RegisterKind::Float, name: "SHADER_CONSTANT_002_X" },
+    RegisterInfo { index: 0x4009, kind: RegisterKind::Float, name: "SHADER_CONSTANT_002_Y" },
+    RegisterInfo { index: 0x400A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_002_Z" },
+    RegisterInfo { index: 0x400B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_002_W" },
+    RegisterInfo { index: 0x400C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_003_X" },
+    RegisterInfo { index: 0x400D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_003_Y" },
+    RegisterInfo { index: 0x400E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_003_Z" },
+    RegisterInfo { index: 0x400F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_003_W" },
+    RegisterInfo { index: 0x4010, kind: RegisterKind::Float, name: "SHADER_CONSTANT_004_X" },
+    RegisterInfo { index: 0x4011, kind: RegisterKind::Float, name: "SHADER_CONSTANT_004_Y" },
+    RegisterInfo { index: 0x4012, kind: RegisterKind::Float, name: "SHADER_CONSTANT_004_Z" },
+    RegisterInfo { index: 0x4013, kind: RegisterKind::Float, name: "SHADER_CONSTANT_004_W" },
+    RegisterInfo { index: 0x4014, kind: RegisterKind::Float, name: "SHADER_CONSTANT_005_X" },
+    RegisterInfo { index: 0x4015, kind: RegisterKind::Float, name: "SHADER_CONSTANT_005_Y" },
+    RegisterInfo { index: 0x4016, kind: RegisterKind::Float, name: "SHADER_CONSTANT_005_Z" },
+    RegisterInfo { index: 0x4017, kind: RegisterKind::Float, name: "SHADER_CONSTANT_005_W" },
+    RegisterInfo { index: 0x4018, kind: RegisterKind::Float, name: "SHADER_CONSTANT_006_X" },
+    RegisterInfo { index: 0x4019, kind: RegisterKind::Float, name: "SHADER_CONSTANT_006_Y" },
+    RegisterInfo { index: 0x401A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_006_Z" },
+    RegisterInfo { index: 0x401B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_006_W" },
+    RegisterInfo { index: 0x401C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_007_X" },
+    RegisterInfo { index: 0x401D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_007_Y" },
+    RegisterInfo { index: 0x401E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_007_Z" },
+    RegisterInfo { index: 0x401F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_007_W" },
+    RegisterInfo { index: 0x4020, kind: RegisterKind::Float, name: "SHADER_CONSTANT_008_X" },
+    RegisterInfo { index: 0x4021, kind: RegisterKind::Float, name: "SHADER_CONSTANT_008_Y" },
+    RegisterInfo { index: 0x4022, kind: RegisterKind::Float, name: "SHADER_CONSTANT_008_Z" },
+    RegisterInfo { index: 0x4023, kind: RegisterKind::Float, name: "SHADER_CONSTANT_008_W" },
+    RegisterInfo { index: 0x4024, kind: RegisterKind::Float, name: "SHADER_CONSTANT_009_X" },
+    RegisterInfo { index: 0x4025, kind: RegisterKind::Float, name: "SHADER_CONSTANT_009_Y" },
+    RegisterInfo { index: 0x4026, kind: RegisterKind::Float, name: "SHADER_CONSTANT_009_Z" },
+    RegisterInfo { index: 0x4027, kind: RegisterKind::Float, name: "SHADER_CONSTANT_009_W" },
+    RegisterInfo { index: 0x4028, kind: RegisterKind::Float, name: "SHADER_CONSTANT_010_X" },
+    RegisterInfo { index: 0x4029, kind: RegisterKind::Float, name: "SHADER_CONSTANT_010_Y" },
+    RegisterInfo { index: 0x402A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_010_Z" },
+    RegisterInfo { index: 0x402B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_010_W" },
+    RegisterInfo { index: 0x402C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_011_X" },
+    RegisterInfo { index: 0x402D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_011_Y" },
+    RegisterInfo { index: 0x402E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_011_Z" },
+    RegisterInfo { index: 0x402F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_011_W" },
+    RegisterInfo { index: 0x4030, kind: RegisterKind::Float, name: "SHADER_CONSTANT_012_X" },
+    RegisterInfo { index: 0x4031, kind: RegisterKind::Float, name: "SHADER_CONSTANT_012_Y" },
+    RegisterInfo { index: 0x4032, kind: RegisterKind::Float, name: "SHADER_CONSTANT_012_Z" },
+    RegisterInfo { index: 0x4033, kind: RegisterKind::Float, name: "SHADER_CONSTANT_012_W" },
+    RegisterInfo { index: 0x4034, kind: RegisterKind::Float, name: "SHADER_CONSTANT_013_X" },
+    RegisterInfo { index: 0x4035, kind: RegisterKind::Float, name: "SHADER_CONSTANT_013_Y" },
+    RegisterInfo { index: 0x4036, kind: RegisterKind::Float, name: "SHADER_CONSTANT_013_Z" },
+    RegisterInfo { index: 0x4037, kind: RegisterKind::Float, name: "SHADER_CONSTANT_013_W" },
+    RegisterInfo { index: 0x4038, kind: RegisterKind::Float, name: "SHADER_CONSTANT_014_X" },
+    RegisterInfo { index: 0x4039, kind: RegisterKind::Float, name: "SHADER_CONSTANT_014_Y" },
+    RegisterInfo { index: 0x403A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_014_Z" },
+    RegisterInfo { index: 0x403B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_014_W" },
+    RegisterInfo { index: 0x403C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_015_X" },
+    RegisterInfo { index: 0x403D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_015_Y" },
+    RegisterInfo { index: 0x403E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_015_Z" },
+    RegisterInfo { index: 0x403F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_015_W" },
+    RegisterInfo { index: 0x4040, kind: RegisterKind::Float, name: "SHADER_CONSTANT_016_X" },
+    RegisterInfo { index: 0x4041, kind: RegisterKind::Float, name: "SHADER_CONSTANT_016_Y" },
+    RegisterInfo { index: 0x4042, kind: RegisterKind::Float, name: "SHADER_CONSTANT_016_Z" },
+    RegisterInfo { index: 0x4043, kind: RegisterKind::Float, name: "SHADER_CONSTANT_016_W" },
+    RegisterInfo { index: 0x4044, kind: RegisterKind::Float, name: "SHADER_CONSTANT_017_X" },
+    RegisterInfo { index: 0x4045, kind: RegisterKind::Float, name: "SHADER_CONSTANT_017_Y" },
+    RegisterInfo { index: 0x4046, kind: RegisterKind::Float, name: "SHADER_CONSTANT_017_Z" },
+    RegisterInfo { index: 0x4047, kind: RegisterKind::Float, name: "SHADER_CONSTANT_017_W" },
+    RegisterInfo { index: 0x4048, kind: RegisterKind::Float, name: "SHADER_CONSTANT_018_X" },
+    RegisterInfo { index: 0x4049, kind: RegisterKind::Float, name: "SHADER_CONSTANT_018_Y" },
+    RegisterInfo { index: 0x404A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_018_Z" },
+    RegisterInfo { index: 0x404B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_018_W" },
+    RegisterInfo { index: 0x404C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_019_X" },
+    RegisterInfo { index: 0x404D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_019_Y" },
+    RegisterInfo { index: 0x404E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_019_Z" },
+    RegisterInfo { index: 0x404F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_019_W" },
+    RegisterInfo { index: 0x4050, kind: RegisterKind::Float, name: "SHADER_CONSTANT_020_X" },
+    RegisterInfo { index: 0x4051, kind: RegisterKind::Float, name: "SHADER_CONSTANT_020_Y" },
+    RegisterInfo { index: 0x4052, kind: RegisterKind::Float, name: "SHADER_CONSTANT_020_Z" },
+    RegisterInfo { index: 0x4053, kind: RegisterKind::Float, name: "SHADER_CONSTANT_020_W" },
+    RegisterInfo { index: 0x4054, kind: RegisterKind::Float, name: "SHADER_CONSTANT_021_X" },
+    RegisterInfo { index: 0x4055, kind: RegisterKind::Float, name: "SHADER_CONSTANT_021_Y" },
+    RegisterInfo { index: 0x4056, kind: RegisterKind::Float, name: "SHADER_CONSTANT_021_Z" },
+    RegisterInfo { index: 0x4057, kind: RegisterKind::Float, name: "SHADER_CONSTANT_021_W" },
+    RegisterInfo { index: 0x4058, kind: RegisterKind::Float, name: "SHADER_CONSTANT_022_X" },
+    RegisterInfo { index: 0x4059, kind: RegisterKind::Float, name: "SHADER_CONSTANT_022_Y" },
+    RegisterInfo { index: 0x405A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_022_Z" },
+    RegisterInfo { index: 0x405B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_022_W" },
+    RegisterInfo { index: 0x405C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_023_X" },
+    RegisterInfo { index: 0x405D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_023_Y" },
+    RegisterInfo { index: 0x405E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_023_Z" },
+    RegisterInfo { index: 0x405F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_023_W" },
+    RegisterInfo { index: 0x4060, kind: RegisterKind::Float, name: "SHADER_CONSTANT_024_X" },
+    RegisterInfo { index: 0x4061, kind: RegisterKind::Float, name: "SHADER_CONSTANT_024_Y" },
+    RegisterInfo { index: 0x4062, kind: RegisterKind::Float, name: "SHADER_CONSTANT_024_Z" },
+    RegisterInfo { index: 0x4063, kind: RegisterKind::Float, name: "SHADER_CONSTANT_024_W" },
+    RegisterInfo { index: 0x4064, kind: RegisterKind::Float, name: "SHADER_CONSTANT_025_X" },
+    RegisterInfo { index: 0x4065, kind: RegisterKind::Float, name: "SHADER_CONSTANT_025_Y" },
+    RegisterInfo { index: 0x4066, kind: RegisterKind::Float, name: "SHADER_CONSTANT_025_Z" },
+    RegisterInfo { index: 0x4067, kind: RegisterKind::Float, name: "SHADER_CONSTANT_025_W" },
+    RegisterInfo { index: 0x4068, kind: RegisterKind::Float, name: "SHADER_CONSTANT_026_X" },
+    RegisterInfo { index: 0x4069, kind: RegisterKind::Float, name: "SHADER_CONSTANT_026_Y" },
+    RegisterInfo { index: 0x406A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_026_Z" },
+    RegisterInfo { index: 0x406B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_026_W" },
+    RegisterInfo { index: 0x406C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_027_X" },
+    RegisterInfo { index: 0x406D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_027_Y" },
+    RegisterInfo { index: 0x406E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_027_Z" },
+    RegisterInfo { index: 0x406F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_027_W" },
+    RegisterInfo { index: 0x4070, kind: RegisterKind::Float, name: "SHADER_CONSTANT_028_X" },
+    RegisterInfo { index: 0x4071, kind: RegisterKind::Float, name: "SHADER_CONSTANT_028_Y" },
+    RegisterInfo { index: 0x4072, kind: RegisterKind::Float, name: "SHADER_CONSTANT_028_Z" },
+    RegisterInfo { index: 0x4073, kind: RegisterKind::Float, name: "SHADER_CONSTANT_028_W" },
+    RegisterInfo { index: 0x4074, kind: RegisterKind::Float, name: "SHADER_CONSTANT_029_X" },
+    RegisterInfo { index: 0x4075, kind: RegisterKind::Float, name: "SHADER_CONSTANT_029_Y" },
+    RegisterInfo { index: 0x4076, kind: RegisterKind::Float, name: "SHADER_CONSTANT_029_Z" },
+    RegisterInfo { index: 0x4077, kind: RegisterKind::Float, name: "SHADER_CONSTANT_029_W" },
+    RegisterInfo { index: 0x4078, kind: RegisterKind::Float, name: "SHADER_CONSTANT_030_X" },
+    RegisterInfo { index: 0x4079, kind: RegisterKind::Float, name: "SHADER_CONSTANT_030_Y" },
+    RegisterInfo { index: 0x407A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_030_Z" },
+    RegisterInfo { index: 0x407B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_030_W" },
+    RegisterInfo { index: 0x407C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_031_X" },
+    RegisterInfo { index: 0x407D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_031_Y" },
+    RegisterInfo { index: 0x407E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_031_Z" },
+    RegisterInfo { index: 0x407F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_031_W" },
+    RegisterInfo { index: 0x4080, kind: RegisterKind::Float, name: "SHADER_CONSTANT_032_X" },
+    RegisterInfo { index: 0x4081, kind: RegisterKind::Float, name: "SHADER_CONSTANT_032_Y" },
+    RegisterInfo { index: 0x4082, kind: RegisterKind::Float, name: "SHADER_CONSTANT_032_Z" },
+    RegisterInfo { index: 0x4083, kind: RegisterKind::Float, name: "SHADER_CONSTANT_032_W" },
+    RegisterInfo { index: 0x4084, kind: RegisterKind::Float, name: "SHADER_CONSTANT_033_X" },
+    RegisterInfo { index: 0x4085, kind: RegisterKind::Float, name: "SHADER_CONSTANT_033_Y" },
+    RegisterInfo { index: 0x4086, kind: RegisterKind::Float, name: "SHADER_CONSTANT_033_Z" },
+    RegisterInfo { index: 0x4087, kind: RegisterKind::Float, name: "SHADER_CONSTANT_033_W" },
+    RegisterInfo { index: 0x4088, kind: RegisterKind::Float, name: "SHADER_CONSTANT_034_X" },
+    RegisterInfo { index: 0x4089, kind: RegisterKind::Float, name: "SHADER_CONSTANT_034_Y" },
+    RegisterInfo { index: 0x408A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_034_Z" },
+    RegisterInfo { index: 0x408B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_034_W" },
+    RegisterInfo { index: 0x408C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_035_X" },
+    RegisterInfo { index: 0x408D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_035_Y" },
+    RegisterInfo { index: 0x408E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_035_Z" },
+    RegisterInfo { index: 0x408F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_035_W" },
+    RegisterInfo { index: 0x4090, kind: RegisterKind::Float, name: "SHADER_CONSTANT_036_X" },
+    RegisterInfo { index: 0x4091, kind: RegisterKind::Float, name: "SHADER_CONSTANT_036_Y" },
+    RegisterInfo { index: 0x4092, kind: RegisterKind::Float, name: "SHADER_CONSTANT_036_Z" },
+    RegisterInfo { index: 0x4093, kind: RegisterKind::Float, name: "SHADER_CONSTANT_036_W" },
+    RegisterInfo { index: 0x4094, kind: RegisterKind::Float, name: "SHADER_CONSTANT_037_X" },
+    RegisterInfo { index: 0x4095, kind: RegisterKind::Float, name: "SHADER_CONSTANT_037_Y" },
+    RegisterInfo { index: 0x4096, kind: RegisterKind::Float, name: "SHADER_CONSTANT_037_Z" },
+    RegisterInfo { index: 0x4097, kind: RegisterKind::Float, name: "SHADER_CONSTANT_037_W" },
+    RegisterInfo { index: 0x4098, kind: RegisterKind::Float, name: "SHADER_CONSTANT_038_X" },
+    RegisterInfo { index: 0x4099, kind: RegisterKind::Float, name: "SHADER_CONSTANT_038_Y" },
+    RegisterInfo { index: 0x409A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_038_Z" },
+    RegisterInfo { index: 0x409B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_038_W" },
+    RegisterInfo { index: 0x409C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_039_X" },
+    RegisterInfo { index: 0x409D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_039_Y" },
+    RegisterInfo { index: 0x409E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_039_Z" },
+    RegisterInfo { index: 0x409F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_039_W" },
+    RegisterInfo { index: 0x40A0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_040_X" },
+    RegisterInfo { index: 0x40A1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_040_Y" },
+    RegisterInfo { index: 0x40A2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_040_Z" },
+    RegisterInfo { index: 0x40A3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_040_W" },
+    RegisterInfo { index: 0x40A4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_041_X" },
+    RegisterInfo { index: 0x40A5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_041_Y" },
+    RegisterInfo { index: 0x40A6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_041_Z" },
+    RegisterInfo { index: 0x40A7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_041_W" },
+    RegisterInfo { index: 0x40A8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_042_X" },
+    RegisterInfo { index: 0x40A9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_042_Y" },
+    RegisterInfo { index: 0x40AA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_042_Z" },
+    RegisterInfo { index: 0x40AB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_042_W" },
+    RegisterInfo { index: 0x40AC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_043_X" },
+    RegisterInfo { index: 0x40AD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_043_Y" },
+    RegisterInfo { index: 0x40AE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_043_Z" },
+    RegisterInfo { index: 0x40AF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_043_W" },
+    RegisterInfo { index: 0x40B0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_044_X" },
+    RegisterInfo { index: 0x40B1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_044_Y" },
+    RegisterInfo { index: 0x40B2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_044_Z" },
+    RegisterInfo { index: 0x40B3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_044_W" },
+    RegisterInfo { index: 0x40B4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_045_X" },
+    RegisterInfo { index: 0x40B5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_045_Y" },
+    RegisterInfo { index: 0x40B6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_045_Z" },
+    RegisterInfo { index: 0x40B7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_045_W" },
+    RegisterInfo { index: 0x40B8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_046_X" },
+    RegisterInfo { index: 0x40B9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_046_Y" },
+    RegisterInfo { index: 0x40BA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_046_Z" },
+    RegisterInfo { index: 0x40BB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_046_W" },
+    RegisterInfo { index: 0x40BC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_047_X" },
+    RegisterInfo { index: 0x40BD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_047_Y" },
+    RegisterInfo { index: 0x40BE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_047_Z" },
+    RegisterInfo { index: 0x40BF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_047_W" },
+    RegisterInfo { index: 0x40C0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_048_X" },
+    RegisterInfo { index: 0x40C1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_048_Y" },
+    RegisterInfo { index: 0x40C2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_048_Z" },
+    RegisterInfo { index: 0x40C3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_048_W" },
+    RegisterInfo { index: 0x40C4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_049_X" },
+    RegisterInfo { index: 0x40C5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_049_Y" },
+    RegisterInfo { index: 0x40C6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_049_Z" },
+    RegisterInfo { index: 0x40C7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_049_W" },
+    RegisterInfo { index: 0x40C8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_050_X" },
+    RegisterInfo { index: 0x40C9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_050_Y" },
+    RegisterInfo { index: 0x40CA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_050_Z" },
+    RegisterInfo { index: 0x40CB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_050_W" },
+    RegisterInfo { index: 0x40CC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_051_X" },
+    RegisterInfo { index: 0x40CD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_051_Y" },
+    RegisterInfo { index: 0x40CE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_051_Z" },
+    RegisterInfo { index: 0x40CF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_051_W" },
+    RegisterInfo { index: 0x40D0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_052_X" },
+    RegisterInfo { index: 0x40D1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_052_Y" },
+    RegisterInfo { index: 0x40D2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_052_Z" },
+    RegisterInfo { index: 0x40D3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_052_W" },
+    RegisterInfo { index: 0x40D4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_053_X" },
+    RegisterInfo { index: 0x40D5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_053_Y" },
+    RegisterInfo { index: 0x40D6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_053_Z" },
+    RegisterInfo { index: 0x40D7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_053_W" },
+    RegisterInfo { index: 0x40D8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_054_X" },
+    RegisterInfo { index: 0x40D9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_054_Y" },
+    RegisterInfo { index: 0x40DA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_054_Z" },
+    RegisterInfo { index: 0x40DB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_054_W" },
+    RegisterInfo { index: 0x40DC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_055_X" },
+    RegisterInfo { index: 0x40DD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_055_Y" },
+    RegisterInfo { index: 0x40DE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_055_Z" },
+    RegisterInfo { index: 0x40DF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_055_W" },
+    RegisterInfo { index: 0x40E0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_056_X" },
+    RegisterInfo { index: 0x40E1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_056_Y" },
+    RegisterInfo { index: 0x40E2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_056_Z" },
+    RegisterInfo { index: 0x40E3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_056_W" },
+    RegisterInfo { index: 0x40E4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_057_X" },
+    RegisterInfo { index: 0x40E5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_057_Y" },
+    RegisterInfo { index: 0x40E6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_057_Z" },
+    RegisterInfo { index: 0x40E7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_057_W" },
+    RegisterInfo { index: 0x40E8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_058_X" },
+    RegisterInfo { index: 0x40E9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_058_Y" },
+    RegisterInfo { index: 0x40EA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_058_Z" },
+    RegisterInfo { index: 0x40EB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_058_W" },
+    RegisterInfo { index: 0x40EC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_059_X" },
+    RegisterInfo { index: 0x40ED, kind: RegisterKind::Float, name: "SHADER_CONSTANT_059_Y" },
+    RegisterInfo { index: 0x40EE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_059_Z" },
+    RegisterInfo { index: 0x40EF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_059_W" },
+    RegisterInfo { index: 0x40F0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_060_X" },
+    RegisterInfo { index: 0x40F1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_060_Y" },
+    RegisterInfo { index: 0x40F2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_060_Z" },
+    RegisterInfo { index: 0x40F3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_060_W" },
+    RegisterInfo { index: 0x40F4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_061_X" },
+    RegisterInfo { index: 0x40F5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_061_Y" },
+    RegisterInfo { index: 0x40F6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_061_Z" },
+    RegisterInfo { index: 0x40F7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_061_W" },
+    RegisterInfo { index: 0x40F8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_062_X" },
+    RegisterInfo { index: 0x40F9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_062_Y" },
+    RegisterInfo { index: 0x40FA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_062_Z" },
+    RegisterInfo { index: 0x40FB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_062_W" },
+    RegisterInfo { index: 0x40FC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_063_X" },
+    RegisterInfo { index: 0x40FD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_063_Y" },
+    RegisterInfo { index: 0x40FE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_063_Z" },
+    RegisterInfo { index: 0x40FF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_063_W" },
+    RegisterInfo { index: 0x4100, kind: RegisterKind::Float, name: "SHADER_CONSTANT_064_X" },
+    RegisterInfo { index: 0x4101, kind: RegisterKind::Float, name: "SHADER_CONSTANT_064_Y" },
+    RegisterInfo { index: 0x4102, kind: RegisterKind::Float, name: "SHADER_CONSTANT_064_Z" },
+    RegisterInfo { index: 0x4103, kind: RegisterKind::Float, name: "SHADER_CONSTANT_064_W" },
+    RegisterInfo { index: 0x4104, kind: RegisterKind::Float, name: "SHADER_CONSTANT_065_X" },
+    RegisterInfo { index: 0x4105, kind: RegisterKind::Float, name: "SHADER_CONSTANT_065_Y" },
+    RegisterInfo { index: 0x4106, kind: RegisterKind::Float, name: "SHADER_CONSTANT_065_Z" },
+    RegisterInfo { index: 0x4107, kind: RegisterKind::Float, name: "SHADER_CONSTANT_065_W" },
+    RegisterInfo { index: 0x4108, kind: RegisterKind::Float, name: "SHADER_CONSTANT_066_X" },
+    RegisterInfo { index: 0x4109, kind: RegisterKind::Float, name: "SHADER_CONSTANT_066_Y" },
+    RegisterInfo { index: 0x410A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_066_Z" },
+    RegisterInfo { index: 0x410B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_066_W" },
+    RegisterInfo { index: 0x410C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_067_X" },
+    RegisterInfo { index: 0x410D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_067_Y" },
+    RegisterInfo { index: 0x410E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_067_Z" },
+    RegisterInfo { index: 0x410F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_067_W" },
+    RegisterInfo { index: 0x4110, kind: RegisterKind::Float, name: "SHADER_CONSTANT_068_X" },
+    RegisterInfo { index: 0x4111, kind: RegisterKind::Float, name: "SHADER_CONSTANT_068_Y" },
+    RegisterInfo { index: 0x4112, kind: RegisterKind::Float, name: "SHADER_CONSTANT_068_Z" },
+    RegisterInfo { index: 0x4113, kind: RegisterKind::Float, name: "SHADER_CONSTANT_068_W" },
+    RegisterInfo { index: 0x4114, kind: RegisterKind::Float, name: "SHADER_CONSTANT_069_X" },
+    RegisterInfo { index: 0x4115, kind: RegisterKind::Float, name: "SHADER_CONSTANT_069_Y" },
+    RegisterInfo { index: 0x4116, kind: RegisterKind::Float, name: "SHADER_CONSTANT_069_Z" },
+    RegisterInfo { index: 0x4117, kind: RegisterKind::Float, name: "SHADER_CONSTANT_069_W" },
+    RegisterInfo { index: 0x4118, kind: RegisterKind::Float, name: "SHADER_CONSTANT_070_X" },
+    RegisterInfo { index: 0x4119, kind: RegisterKind::Float, name: "SHADER_CONSTANT_070_Y" },
+    RegisterInfo { index: 0x411A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_070_Z" },
+    RegisterInfo { index: 0x411B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_070_W" },
+    RegisterInfo { index: 0x411C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_071_X" },
+    RegisterInfo { index: 0x411D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_071_Y" },
+    RegisterInfo { index: 0x411E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_071_Z" },
+    RegisterInfo { index: 0x411F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_071_W" },
+    RegisterInfo { index: 0x4120, kind: RegisterKind::Float, name: "SHADER_CONSTANT_072_X" },
+    RegisterInfo { index: 0x4121, kind: RegisterKind::Float, name: "SHADER_CONSTANT_072_Y" },
+    RegisterInfo { index: 0x4122, kind: RegisterKind::Float, name: "SHADER_CONSTANT_072_Z" },
+    RegisterInfo { index: 0x4123, kind: RegisterKind::Float, name: "SHADER_CONSTANT_072_W" },
+    RegisterInfo { index: 0x4124, kind: RegisterKind::Float, name: "SHADER_CONSTANT_073_X" },
+    RegisterInfo { index: 0x4125, kind: RegisterKind::Float, name: "SHADER_CONSTANT_073_Y" },
+    RegisterInfo { index: 0x4126, kind: RegisterKind::Float, name: "SHADER_CONSTANT_073_Z" },
+    RegisterInfo { index: 0x4127, kind: RegisterKind::Float, name: "SHADER_CONSTANT_073_W" },
+    RegisterInfo { index: 0x4128, kind: RegisterKind::Float, name: "SHADER_CONSTANT_074_X" },
+    RegisterInfo { index: 0x4129, kind: RegisterKind::Float, name: "SHADER_CONSTANT_074_Y" },
+    RegisterInfo { index: 0x412A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_074_Z" },
+    RegisterInfo { index: 0x412B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_074_W" },
+    RegisterInfo { index: 0x412C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_075_X" },
+    RegisterInfo { index: 0x412D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_075_Y" },
+    RegisterInfo { index: 0x412E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_075_Z" },
+    RegisterInfo { index: 0x412F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_075_W" },
+    RegisterInfo { index: 0x4130, kind: RegisterKind::Float, name: "SHADER_CONSTANT_076_X" },
+    RegisterInfo { index: 0x4131, kind: RegisterKind::Float, name: "SHADER_CONSTANT_076_Y" },
+    RegisterInfo { index: 0x4132, kind: RegisterKind::Float, name: "SHADER_CONSTANT_076_Z" },
+    RegisterInfo { index: 0x4133, kind: RegisterKind::Float, name: "SHADER_CONSTANT_076_W" },
+    RegisterInfo { index: 0x4134, kind: RegisterKind::Float, name: "SHADER_CONSTANT_077_X" },
+    RegisterInfo { index: 0x4135, kind: RegisterKind::Float, name: "SHADER_CONSTANT_077_Y" },
+    RegisterInfo { index: 0x4136, kind: RegisterKind::Float, name: "SHADER_CONSTANT_077_Z" },
+    RegisterInfo { index: 0x4137, kind: RegisterKind::Float, name: "SHADER_CONSTANT_077_W" },
+    RegisterInfo { index: 0x4138, kind: RegisterKind::Float, name: "SHADER_CONSTANT_078_X" },
+    RegisterInfo { index: 0x4139, kind: RegisterKind::Float, name: "SHADER_CONSTANT_078_Y" },
+    RegisterInfo { index: 0x413A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_078_Z" },
+    RegisterInfo { index: 0x413B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_078_W" },
+    RegisterInfo { index: 0x413C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_079_X" },
+    RegisterInfo { index: 0x413D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_079_Y" },
+    RegisterInfo { index: 0x413E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_079_Z" },
+    RegisterInfo { index: 0x413F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_079_W" },
+    RegisterInfo { index: 0x4140, kind: RegisterKind::Float, name: "SHADER_CONSTANT_080_X" },
+    RegisterInfo { index: 0x4141, kind: RegisterKind::Float, name: "SHADER_CONSTANT_080_Y" },
+    RegisterInfo { index: 0x4142, kind: RegisterKind::Float, name: "SHADER_CONSTANT_080_Z" },
+    RegisterInfo { index: 0x4143, kind: RegisterKind::Float, name: "SHADER_CONSTANT_080_W" },
+    RegisterInfo { index: 0x4144, kind: RegisterKind::Float, name: "SHADER_CONSTANT_081_X" },
+    RegisterInfo { index: 0x4145, kind: RegisterKind::Float, name: "SHADER_CONSTANT_081_Y" },
+    RegisterInfo { index: 0x4146, kind: RegisterKind::Float, name: "SHADER_CONSTANT_081_Z" },
+    RegisterInfo { index: 0x4147, kind: RegisterKind::Float, name: "SHADER_CONSTANT_081_W" },
+    RegisterInfo { index: 0x4148, kind: RegisterKind::Float, name: "SHADER_CONSTANT_082_X" },
+    RegisterInfo { index: 0x4149, kind: RegisterKind::Float, name: "SHADER_CONSTANT_082_Y" },
+    RegisterInfo { index: 0x414A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_082_Z" },
+    RegisterInfo { index: 0x414B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_082_W" },
+    RegisterInfo { index: 0x414C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_083_X" },
+    RegisterInfo { index: 0x414D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_083_Y" },
+    RegisterInfo { index: 0x414E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_083_Z" },
+    RegisterInfo { index: 0x414F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_083_W" },
+    RegisterInfo { index: 0x4150, kind: RegisterKind::Float, name: "SHADER_CONSTANT_084_X" },
+    RegisterInfo { index: 0x4151, kind: RegisterKind::Float, name: "SHADER_CONSTANT_084_Y" },
+    RegisterInfo { index: 0x4152, kind: RegisterKind::Float, name: "SHADER_CONSTANT_084_Z" },
+    RegisterInfo { index: 0x4153, kind: RegisterKind::Float, name: "SHADER_CONSTANT_084_W" },
+    RegisterInfo { index: 0x4154, kind: RegisterKind::Float, name: "SHADER_CONSTANT_085_X" },
+    RegisterInfo { index: 0x4155, kind: RegisterKind::Float, name: "SHADER_CONSTANT_085_Y" },
+    RegisterInfo { index: 0x4156, kind: RegisterKind::Float, name: "SHADER_CONSTANT_085_Z" },
+    RegisterInfo { index: 0x4157, kind: RegisterKind::Float, name: "SHADER_CONSTANT_085_W" },
+    RegisterInfo { index: 0x4158, kind: RegisterKind::Float, name: "SHADER_CONSTANT_086_X" },
+    RegisterInfo { index: 0x4159, kind: RegisterKind::Float, name: "SHADER_CONSTANT_086_Y" },
+    RegisterInfo { index: 0x415A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_086_Z" },
+    RegisterInfo { index: 0x415B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_086_W" },
+    RegisterInfo { index: 0x415C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_087_X" },
+    RegisterInfo { index: 0x415D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_087_Y" },
+    RegisterInfo { index: 0x415E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_087_Z" },
+    RegisterInfo { index: 0x415F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_087_W" },
+    RegisterInfo { index: 0x4160, kind: RegisterKind::Float, name: "SHADER_CONSTANT_088_X" },
+    RegisterInfo { index: 0x4161, kind: RegisterKind::Float, name: "SHADER_CONSTANT_088_Y" },
+    RegisterInfo { index: 0x4162, kind: RegisterKind::Float, name: "SHADER_CONSTANT_088_Z" },
+    RegisterInfo { index: 0x4163, kind: RegisterKind::Float, name: "SHADER_CONSTANT_088_W" },
+    RegisterInfo { index: 0x4164, kind: RegisterKind::Float, name: "SHADER_CONSTANT_089_X" },
+    RegisterInfo { index: 0x4165, kind: RegisterKind::Float, name: "SHADER_CONSTANT_089_Y" },
+    RegisterInfo { index: 0x4166, kind: RegisterKind::Float, name: "SHADER_CONSTANT_089_Z" },
+    RegisterInfo { index: 0x4167, kind: RegisterKind::Float, name: "SHADER_CONSTANT_089_W" },
+    RegisterInfo { index: 0x4168, kind: RegisterKind::Float, name: "SHADER_CONSTANT_090_X" },
+    RegisterInfo { index: 0x4169, kind: RegisterKind::Float, name: "SHADER_CONSTANT_090_Y" },
+    RegisterInfo { index: 0x416A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_090_Z" },
+    RegisterInfo { index: 0x416B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_090_W" },
+    RegisterInfo { index: 0x416C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_091_X" },
+    RegisterInfo { index: 0x416D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_091_Y" },
+    RegisterInfo { index: 0x416E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_091_Z" },
+    RegisterInfo { index: 0x416F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_091_W" },
+    RegisterInfo { index: 0x4170, kind: RegisterKind::Float, name: "SHADER_CONSTANT_092_X" },
+    RegisterInfo { index: 0x4171, kind: RegisterKind::Float, name: "SHADER_CONSTANT_092_Y" },
+    RegisterInfo { index: 0x4172, kind: RegisterKind::Float, name: "SHADER_CONSTANT_092_Z" },
+    RegisterInfo { index: 0x4173, kind: RegisterKind::Float, name: "SHADER_CONSTANT_092_W" },
+    RegisterInfo { index: 0x4174, kind: RegisterKind::Float, name: "SHADER_CONSTANT_093_X" },
+    RegisterInfo { index: 0x4175, kind: RegisterKind::Float, name: "SHADER_CONSTANT_093_Y" },
+    RegisterInfo { index: 0x4176, kind: RegisterKind::Float, name: "SHADER_CONSTANT_093_Z" },
+    RegisterInfo { index: 0x4177, kind: RegisterKind::Float, name: "SHADER_CONSTANT_093_W" },
+    RegisterInfo { index: 0x4178, kind: RegisterKind::Float, name: "SHADER_CONSTANT_094_X" },
+    RegisterInfo { index: 0x4179, kind: RegisterKind::Float, name: "SHADER_CONSTANT_094_Y" },
+    RegisterInfo { index: 0x417A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_094_Z" },
+    RegisterInfo { index: 0x417B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_094_W" },
+    RegisterInfo { index: 0x417C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_095_X" },
+    RegisterInfo { index: 0x417D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_095_Y" },
+    RegisterInfo { index: 0x417E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_095_Z" },
+    RegisterInfo { index: 0x417F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_095_W" },
+    RegisterInfo { index: 0x4180, kind: RegisterKind::Float, name: "SHADER_CONSTANT_096_X" },
+    RegisterInfo { index: 0x4181, kind: RegisterKind::Float, name: "SHADER_CONSTANT_096_Y" },
+    RegisterInfo { index: 0x4182, kind: RegisterKind::Float, name: "SHADER_CONSTANT_096_Z" },
+    RegisterInfo { index: 0x4183, kind: RegisterKind::Float, name: "SHADER_CONSTANT_096_W" },
+    RegisterInfo { index: 0x4184, kind: RegisterKind::Float, name: "SHADER_CONSTANT_097_X" },
+    RegisterInfo { index: 0x4185, kind: RegisterKind::Float, name: "SHADER_CONSTANT_097_Y" },
+    RegisterInfo { index: 0x4186, kind: RegisterKind::Float, name: "SHADER_CONSTANT_097_Z" },
+    RegisterInfo { index: 0x4187, kind: RegisterKind::Float, name: "SHADER_CONSTANT_097_W" },
+    RegisterInfo { index: 0x4188, kind: RegisterKind::Float, name: "SHADER_CONSTANT_098_X" },
+    RegisterInfo { index: 0x4189, kind: RegisterKind::Float, name: "SHADER_CONSTANT_098_Y" },
+    RegisterInfo { index: 0x418A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_098_Z" },
+    RegisterInfo { index: 0x418B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_098_W" },
+    RegisterInfo { index: 0x418C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_099_X" },
+    RegisterInfo { index: 0x418D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_099_Y" },
+    RegisterInfo { index: 0x418E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_099_Z" },
+    RegisterInfo { index: 0x418F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_099_W" },
+    RegisterInfo { index: 0x4190, kind: RegisterKind::Float, name: "SHADER_CONSTANT_100_X" },
+    RegisterInfo { index: 0x4191, kind: RegisterKind::Float, name: "SHADER_CONSTANT_100_Y" },
+    RegisterInfo { index: 0x4192, kind: RegisterKind::Float, name: "SHADER_CONSTANT_100_Z" },
+    RegisterInfo { index: 0x4193, kind: RegisterKind::Float, name: "SHADER_CONSTANT_100_W" },
+    RegisterInfo { index: 0x4194, kind: RegisterKind::Float, name: "SHADER_CONSTANT_101_X" },
+    RegisterInfo { index: 0x4195, kind: RegisterKind::Float, name: "SHADER_CONSTANT_101_Y" },
+    RegisterInfo { index: 0x4196, kind: RegisterKind::Float, name: "SHADER_CONSTANT_101_Z" },
+    RegisterInfo { index: 0x4197, kind: RegisterKind::Float, name: "SHADER_CONSTANT_101_W" },
+    RegisterInfo { index: 0x4198, kind: RegisterKind::Float, name: "SHADER_CONSTANT_102_X" },
+    RegisterInfo { index: 0x4199, kind: RegisterKind::Float, name: "SHADER_CONSTANT_102_Y" },
+    RegisterInfo { index: 0x419A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_102_Z" },
+    RegisterInfo { index: 0x419B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_102_W" },
+    RegisterInfo { index: 0x419C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_103_X" },
+    RegisterInfo { index: 0x419D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_103_Y" },
+    RegisterInfo { index: 0x419E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_103_Z" },
+    RegisterInfo { index: 0x419F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_103_W" },
+    RegisterInfo { index: 0x41A0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_104_X" },
+    RegisterInfo { index: 0x41A1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_104_Y" },
+    RegisterInfo { index: 0x41A2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_104_Z" },
+    RegisterInfo { index: 0x41A3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_104_W" },
+    RegisterInfo { index: 0x41A4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_105_X" },
+    RegisterInfo { index: 0x41A5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_105_Y" },
+    RegisterInfo { index: 0x41A6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_105_Z" },
+    RegisterInfo { index: 0x41A7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_105_W" },
+    RegisterInfo { index: 0x41A8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_106_X" },
+    RegisterInfo { index: 0x41A9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_106_Y" },
+    RegisterInfo { index: 0x41AA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_106_Z" },
+    RegisterInfo { index: 0x41AB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_106_W" },
+    RegisterInfo { index: 0x41AC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_107_X" },
+    RegisterInfo { index: 0x41AD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_107_Y" },
+    RegisterInfo { index: 0x41AE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_107_Z" },
+    RegisterInfo { index: 0x41AF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_107_W" },
+    RegisterInfo { index: 0x41B0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_108_X" },
+    RegisterInfo { index: 0x41B1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_108_Y" },
+    RegisterInfo { index: 0x41B2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_108_Z" },
+    RegisterInfo { index: 0x41B3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_108_W" },
+    RegisterInfo { index: 0x41B4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_109_X" },
+    RegisterInfo { index: 0x41B5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_109_Y" },
+    RegisterInfo { index: 0x41B6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_109_Z" },
+    RegisterInfo { index: 0x41B7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_109_W" },
+    RegisterInfo { index: 0x41B8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_110_X" },
+    RegisterInfo { index: 0x41B9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_110_Y" },
+    RegisterInfo { index: 0x41BA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_110_Z" },
+    RegisterInfo { index: 0x41BB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_110_W" },
+    RegisterInfo { index: 0x41BC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_111_X" },
+    RegisterInfo { index: 0x41BD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_111_Y" },
+    RegisterInfo { index: 0x41BE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_111_Z" },
+    RegisterInfo { index: 0x41BF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_111_W" },
+    RegisterInfo { index: 0x41C0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_112_X" },
+    RegisterInfo { index: 0x41C1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_112_Y" },
+    RegisterInfo { index: 0x41C2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_112_Z" },
+    RegisterInfo { index: 0x41C3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_112_W" },
+    RegisterInfo { index: 0x41C4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_113_X" },
+    RegisterInfo { index: 0x41C5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_113_Y" },
+    RegisterInfo { index: 0x41C6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_113_Z" },
+    RegisterInfo { index: 0x41C7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_113_W" },
+    RegisterInfo { index: 0x41C8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_114_X" },
+    RegisterInfo { index: 0x41C9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_114_Y" },
+    RegisterInfo { index: 0x41CA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_114_Z" },
+    RegisterInfo { index: 0x41CB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_114_W" },
+    RegisterInfo { index: 0x41CC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_115_X" },
+    RegisterInfo { index: 0x41CD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_115_Y" },
+    RegisterInfo { index: 0x41CE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_115_Z" },
+    RegisterInfo { index: 0x41CF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_115_W" },
+    RegisterInfo { index: 0x41D0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_116_X" },
+    RegisterInfo { index: 0x41D1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_116_Y" },
+    RegisterInfo { index: 0x41D2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_116_Z" },
+    RegisterInfo { index: 0x41D3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_116_W" },
+    RegisterInfo { index: 0x41D4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_117_X" },
+    RegisterInfo { index: 0x41D5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_117_Y" },
+    RegisterInfo { index: 0x41D6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_117_Z" },
+    RegisterInfo { index: 0x41D7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_117_W" },
+    RegisterInfo { index: 0x41D8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_118_X" },
+    RegisterInfo { index: 0x41D9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_118_Y" },
+    RegisterInfo { index: 0x41DA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_118_Z" },
+    RegisterInfo { index: 0x41DB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_118_W" },
+    RegisterInfo { index: 0x41DC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_119_X" },
+    RegisterInfo { index: 0x41DD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_119_Y" },
+    RegisterInfo { index: 0x41DE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_119_Z" },
+    RegisterInfo { index: 0x41DF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_119_W" },
+    RegisterInfo { index: 0x41E0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_120_X" },
+    RegisterInfo { index: 0x41E1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_120_Y" },
+    RegisterInfo { index: 0x41E2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_120_Z" },
+    RegisterInfo { index: 0x41E3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_120_W" },
+    RegisterInfo { index: 0x41E4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_121_X" },
+    RegisterInfo { index: 0x41E5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_121_Y" },
+    RegisterInfo { index: 0x41E6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_121_Z" },
+    RegisterInfo { index: 0x41E7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_121_W" },
+    RegisterInfo { index: 0x41E8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_122_X" },
+    RegisterInfo { index: 0x41E9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_122_Y" },
+    RegisterInfo { index: 0x41EA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_122_Z" },
+    RegisterInfo { index: 0x41EB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_122_W" },
+    RegisterInfo { index: 0x41EC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_123_X" },
+    RegisterInfo { index: 0x41ED, kind: RegisterKind::Float, name: "SHADER_CONSTANT_123_Y" },
+    RegisterInfo { index: 0x41EE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_123_Z" },
+    RegisterInfo { index: 0x41EF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_123_W" },
+    RegisterInfo { index: 0x41F0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_124_X" },
+    RegisterInfo { index: 0x41F1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_124_Y" },
+    RegisterInfo { index: 0x41F2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_124_Z" },
+    RegisterInfo { index: 0x41F3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_124_W" },
+    RegisterInfo { index: 0x41F4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_125_X" },
+    RegisterInfo { index: 0x41F5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_125_Y" },
+    RegisterInfo { index: 0x41F6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_125_Z" },
+    RegisterInfo { index: 0x41F7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_125_W" },
+    RegisterInfo { index: 0x41F8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_126_X" },
+    RegisterInfo { index: 0x41F9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_126_Y" },
+    RegisterInfo { index: 0x41FA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_126_Z" },
+    RegisterInfo { index: 0x41FB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_126_W" },
+    RegisterInfo { index: 0x41FC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_127_X" },
+    RegisterInfo { index: 0x41FD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_127_Y" },
+    RegisterInfo { index: 0x41FE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_127_Z" },
+    RegisterInfo { index: 0x41FF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_127_W" },
+    RegisterInfo { index: 0x4200, kind: RegisterKind::Float, name: "SHADER_CONSTANT_128_X" },
+    RegisterInfo { index: 0x4201, kind: RegisterKind::Float, name: "SHADER_CONSTANT_128_Y" },
+    RegisterInfo { index: 0x4202, kind: RegisterKind::Float, name: "SHADER_CONSTANT_128_Z" },
+    RegisterInfo { index: 0x4203, kind: RegisterKind::Float, name: "SHADER_CONSTANT_128_W" },
+    RegisterInfo { index: 0x4204, kind: RegisterKind::Float, name: "SHADER_CONSTANT_129_X" },
+    RegisterInfo { index: 0x4205, kind: RegisterKind::Float, name: "SHADER_CONSTANT_129_Y" },
+    RegisterInfo { index: 0x4206, kind: RegisterKind::Float, name: "SHADER_CONSTANT_129_Z" },
+    RegisterInfo { index: 0x4207, kind: RegisterKind::Float, name: "SHADER_CONSTANT_129_W" },
+    RegisterInfo { index: 0x4208, kind: RegisterKind::Float, name: "SHADER_CONSTANT_130_X" },
+    RegisterInfo { index: 0x4209, kind: RegisterKind::Float, name: "SHADER_CONSTANT_130_Y" },
+    RegisterInfo { index: 0x420A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_130_Z" },
+    RegisterInfo { index: 0x420B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_130_W" },
+    RegisterInfo { index: 0x420C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_131_X" },
+    RegisterInfo { index: 0x420D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_131_Y" },
+    RegisterInfo { index: 0x420E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_131_Z" },
+    RegisterInfo { index: 0x420F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_131_W" },
+    RegisterInfo { index: 0x4210, kind: RegisterKind::Float, name: "SHADER_CONSTANT_132_X" },
+    RegisterInfo { index: 0x4211, kind: RegisterKind::Float, name: "SHADER_CONSTANT_132_Y" },
+    RegisterInfo { index: 0x4212, kind: RegisterKind::Float, name: "SHADER_CONSTANT_132_Z" },
+    RegisterInfo { index: 0x4213, kind: RegisterKind::Float, name: "SHADER_CONSTANT_132_W" },
+    RegisterInfo { index: 0x4214, kind: RegisterKind::Float, name: "SHADER_CONSTANT_133_X" },
+    RegisterInfo { index: 0x4215, kind: RegisterKind::Float, name: "SHADER_CONSTANT_133_Y" },
+    RegisterInfo { index: 0x4216, kind: RegisterKind::Float, name: "SHADER_CONSTANT_133_Z" },
+    RegisterInfo { index: 0x4217, kind: RegisterKind::Float, name: "SHADER_CONSTANT_133_W" },
+    RegisterInfo { index: 0x4218, kind: RegisterKind::Float, name: "SHADER_CONSTANT_134_X" },
+    RegisterInfo { index: 0x4219, kind: RegisterKind::Float, name: "SHADER_CONSTANT_134_Y" },
+    RegisterInfo { index: 0x421A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_134_Z" },
+    RegisterInfo { index: 0x421B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_134_W" },
+    RegisterInfo { index: 0x421C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_135_X" },
+    RegisterInfo { index: 0x421D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_135_Y" },
+    RegisterInfo { index: 0x421E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_135_Z" },
+    RegisterInfo { index: 0x421F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_135_W" },
+    RegisterInfo { index: 0x4220, kind: RegisterKind::Float, name: "SHADER_CONSTANT_136_X" },
+    RegisterInfo { index: 0x4221, kind: RegisterKind::Float, name: "SHADER_CONSTANT_136_Y" },
+    RegisterInfo { index: 0x4222, kind: RegisterKind::Float, name: "SHADER_CONSTANT_136_Z" },
+    RegisterInfo { index: 0x4223, kind: RegisterKind::Float, name: "SHADER_CONSTANT_136_W" },
+    RegisterInfo { index: 0x4224, kind: RegisterKind::Float, name: "SHADER_CONSTANT_137_X" },
+    RegisterInfo { index: 0x4225, kind: RegisterKind::Float, name: "SHADER_CONSTANT_137_Y" },
+    RegisterInfo { index: 0x4226, kind: RegisterKind::Float, name: "SHADER_CONSTANT_137_Z" },
+    RegisterInfo { index: 0x4227, kind: RegisterKind::Float, name: "SHADER_CONSTANT_137_W" },
+    RegisterInfo { index: 0x4228, kind: RegisterKind::Float, name: "SHADER_CONSTANT_138_X" },
+    RegisterInfo { index: 0x4229, kind: RegisterKind::Float, name: "SHADER_CONSTANT_138_Y" },
+    RegisterInfo { index: 0x422A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_138_Z" },
+    RegisterInfo { index: 0x422B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_138_W" },
+    RegisterInfo { index: 0x422C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_139_X" },
+    RegisterInfo { index: 0x422D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_139_Y" },
+    RegisterInfo { index: 0x422E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_139_Z" },
+    RegisterInfo { index: 0x422F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_139_W" },
+    RegisterInfo { index: 0x4230, kind: RegisterKind::Float, name: "SHADER_CONSTANT_140_X" },
+    RegisterInfo { index: 0x4231, kind: RegisterKind::Float, name: "SHADER_CONSTANT_140_Y" },
+    RegisterInfo { index: 0x4232, kind: RegisterKind::Float, name: "SHADER_CONSTANT_140_Z" },
+    RegisterInfo { index: 0x4233, kind: RegisterKind::Float, name: "SHADER_CONSTANT_140_W" },
+    RegisterInfo { index: 0x4234, kind: RegisterKind::Float, name: "SHADER_CONSTANT_141_X" },
+    RegisterInfo { index: 0x4235, kind: RegisterKind::Float, name: "SHADER_CONSTANT_141_Y" },
+    RegisterInfo { index: 0x4236, kind: RegisterKind::Float, name: "SHADER_CONSTANT_141_Z" },
+    RegisterInfo { index: 0x4237, kind: RegisterKind::Float, name: "SHADER_CONSTANT_141_W" },
+    RegisterInfo { index: 0x4238, kind: RegisterKind::Float, name: "SHADER_CONSTANT_142_X" },
+    RegisterInfo { index: 0x4239, kind: RegisterKind::Float, name: "SHADER_CONSTANT_142_Y" },
+    RegisterInfo { index: 0x423A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_142_Z" },
+    RegisterInfo { index: 0x423B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_142_W" },
+    RegisterInfo { index: 0x423C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_143_X" },
+    RegisterInfo { index: 0x423D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_143_Y" },
+    RegisterInfo { index: 0x423E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_143_Z" },
+    RegisterInfo { index: 0x423F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_143_W" },
+    RegisterInfo { index: 0x4240, kind: RegisterKind::Float, name: "SHADER_CONSTANT_144_X" },
+    RegisterInfo { index: 0x4241, kind: RegisterKind::Float, name: "SHADER_CONSTANT_144_Y" },
+    RegisterInfo { index: 0x4242, kind: RegisterKind::Float, name: "SHADER_CONSTANT_144_Z" },
+    RegisterInfo { index: 0x4243, kind: RegisterKind::Float, name: "SHADER_CONSTANT_144_W" },
+    RegisterInfo { index: 0x4244, kind: RegisterKind::Float, name: "SHADER_CONSTANT_145_X" },
+    RegisterInfo { index: 0x4245, kind: RegisterKind::Float, name: "SHADER_CONSTANT_145_Y" },
+    RegisterInfo { index: 0x4246, kind: RegisterKind::Float, name: "SHADER_CONSTANT_145_Z" },
+    RegisterInfo { index: 0x4247, kind: RegisterKind::Float, name: "SHADER_CONSTANT_145_W" },
+    RegisterInfo { index: 0x4248, kind: RegisterKind::Float, name: "SHADER_CONSTANT_146_X" },
+    RegisterInfo { index: 0x4249, kind: RegisterKind::Float, name: "SHADER_CONSTANT_146_Y" },
+    RegisterInfo { index: 0x424A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_146_Z" },
+    RegisterInfo { index: 0x424B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_146_W" },
+    RegisterInfo { index: 0x424C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_147_X" },
+    RegisterInfo { index: 0x424D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_147_Y" },
+    RegisterInfo { index: 0x424E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_147_Z" },
+    RegisterInfo { index: 0x424F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_147_W" },
+    RegisterInfo { index: 0x4250, kind: RegisterKind::Float, name: "SHADER_CONSTANT_148_X" },
+    RegisterInfo { index: 0x4251, kind: RegisterKind::Float, name: "SHADER_CONSTANT_148_Y" },
+    RegisterInfo { index: 0x4252, kind: RegisterKind::Float, name: "SHADER_CONSTANT_148_Z" },
+    RegisterInfo { index: 0x4253, kind: RegisterKind::Float, name: "SHADER_CONSTANT_148_W" },
+    RegisterInfo { index: 0x4254, kind: RegisterKind::Float, name: "SHADER_CONSTANT_149_X" },
+    RegisterInfo { index: 0x4255, kind: RegisterKind::Float, name: "SHADER_CONSTANT_149_Y" },
+    RegisterInfo { index: 0x4256, kind: RegisterKind::Float, name: "SHADER_CONSTANT_149_Z" },
+    RegisterInfo { index: 0x4257, kind: RegisterKind::Float, name: "SHADER_CONSTANT_149_W" },
+    RegisterInfo { index: 0x4258, kind: RegisterKind::Float, name: "SHADER_CONSTANT_150_X" },
+    RegisterInfo { index: 0x4259, kind: RegisterKind::Float, name: "SHADER_CONSTANT_150_Y" },
+    RegisterInfo { index: 0x425A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_150_Z" },
+    RegisterInfo { index: 0x425B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_150_W" },
+    RegisterInfo { index: 0x425C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_151_X" },
+    RegisterInfo { index: 0x425D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_151_Y" },
+    RegisterInfo { index: 0x425E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_151_Z" },
+    RegisterInfo { index: 0x425F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_151_W" },
+    RegisterInfo { index: 0x4260, kind: RegisterKind::Float, name: "SHADER_CONSTANT_152_X" },
+    RegisterInfo { index: 0x4261, kind: RegisterKind::Float, name: "SHADER_CONSTANT_152_Y" },
+    RegisterInfo { index: 0x4262, kind: RegisterKind::Float, name: "SHADER_CONSTANT_152_Z" },
+    RegisterInfo { index: 0x4263, kind: RegisterKind::Float, name: "SHADER_CONSTANT_152_W" },
+    RegisterInfo { index: 0x4264, kind: RegisterKind::Float, name: "SHADER_CONSTANT_153_X" },
+    RegisterInfo { index: 0x4265, kind: RegisterKind::Float, name: "SHADER_CONSTANT_153_Y" },
+    RegisterInfo { index: 0x4266, kind: RegisterKind::Float, name: "SHADER_CONSTANT_153_Z" },
+    RegisterInfo { index: 0x4267, kind: RegisterKind::Float, name: "SHADER_CONSTANT_153_W" },
+    RegisterInfo { index: 0x4268, kind: RegisterKind::Float, name: "SHADER_CONSTANT_154_X" },
+    RegisterInfo { index: 0x4269, kind: RegisterKind::Float, name: "SHADER_CONSTANT_154_Y" },
+    RegisterInfo { index: 0x426A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_154_Z" },
+    RegisterInfo { index: 0x426B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_154_W" },
+    RegisterInfo { index: 0x426C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_155_X" },
+    RegisterInfo { index: 0x426D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_155_Y" },
+    RegisterInfo { index: 0x426E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_155_Z" },
+    RegisterInfo { index: 0x426F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_155_W" },
+    RegisterInfo { index: 0x4270, kind: RegisterKind::Float, name: "SHADER_CONSTANT_156_X" },
+    RegisterInfo { index: 0x4271, kind: RegisterKind::Float, name: "SHADER_CONSTANT_156_Y" },
+    RegisterInfo { index: 0x4272, kind: RegisterKind::Float, name: "SHADER_CONSTANT_156_Z" },
+    RegisterInfo { index: 0x4273, kind: RegisterKind::Float, name: "SHADER_CONSTANT_156_W" },
+    RegisterInfo { index: 0x4274, kind: RegisterKind::Float, name: "SHADER_CONSTANT_157_X" },
+    RegisterInfo { index: 0x4275, kind: RegisterKind::Float, name: "SHADER_CONSTANT_157_Y" },
+    RegisterInfo { index: 0x4276, kind: RegisterKind::Float, name: "SHADER_CONSTANT_157_Z" },
+    RegisterInfo { index: 0x4277, kind: RegisterKind::Float, name: "SHADER_CONSTANT_157_W" },
+    RegisterInfo { index: 0x4278, kind: RegisterKind::Float, name: "SHADER_CONSTANT_158_X" },
+    RegisterInfo { index: 0x4279, kind: RegisterKind::Float, name: "SHADER_CONSTANT_158_Y" },
+    RegisterInfo { index: 0x427A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_158_Z" },
+    RegisterInfo { index: 0x427B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_158_W" },
+    RegisterInfo { index: 0x427C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_159_X" },
+    RegisterInfo { index: 0x427D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_159_Y" },
+    RegisterInfo { index: 0x427E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_159_Z" },
+    RegisterInfo { index: 0x427F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_159_W" },
+    RegisterInfo { index: 0x4280, kind: RegisterKind::Float, name: "SHADER_CONSTANT_160_X" },
+    RegisterInfo { index: 0x4281, kind: RegisterKind::Float, name: "SHADER_CONSTANT_160_Y" },
+    RegisterInfo { index: 0x4282, kind: RegisterKind::Float, name: "SHADER_CONSTANT_160_Z" },
+    RegisterInfo { index: 0x4283, kind: RegisterKind::Float, name: "SHADER_CONSTANT_160_W" },
+    RegisterInfo { index: 0x4284, kind: RegisterKind::Float, name: "SHADER_CONSTANT_161_X" },
+    RegisterInfo { index: 0x4285, kind: RegisterKind::Float, name: "SHADER_CONSTANT_161_Y" },
+    RegisterInfo { index: 0x4286, kind: RegisterKind::Float, name: "SHADER_CONSTANT_161_Z" },
+    RegisterInfo { index: 0x4287, kind: RegisterKind::Float, name: "SHADER_CONSTANT_161_W" },
+    RegisterInfo { index: 0x4288, kind: RegisterKind::Float, name: "SHADER_CONSTANT_162_X" },
+    RegisterInfo { index: 0x4289, kind: RegisterKind::Float, name: "SHADER_CONSTANT_162_Y" },
+    RegisterInfo { index: 0x428A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_162_Z" },
+    RegisterInfo { index: 0x428B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_162_W" },
+    RegisterInfo { index: 0x428C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_163_X" },
+    RegisterInfo { index: 0x428D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_163_Y" },
+    RegisterInfo { index: 0x428E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_163_Z" },
+    RegisterInfo { index: 0x428F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_163_W" },
+    RegisterInfo { index: 0x4290, kind: RegisterKind::Float, name: "SHADER_CONSTANT_164_X" },
+    RegisterInfo { index: 0x4291, kind: RegisterKind::Float, name: "SHADER_CONSTANT_164_Y" },
+    RegisterInfo { index: 0x4292, kind: RegisterKind::Float, name: "SHADER_CONSTANT_164_Z" },
+    RegisterInfo { index: 0x4293, kind: RegisterKind::Float, name: "SHADER_CONSTANT_164_W" },
+    RegisterInfo { index: 0x4294, kind: RegisterKind::Float, name: "SHADER_CONSTANT_165_X" },
+    RegisterInfo { index: 0x4295, kind: RegisterKind::Float, name: "SHADER_CONSTANT_165_Y" },
+    RegisterInfo { index: 0x4296, kind: RegisterKind::Float, name: "SHADER_CONSTANT_165_Z" },
+    RegisterInfo { index: 0x4297, kind: RegisterKind::Float, name: "SHADER_CONSTANT_165_W" },
+    RegisterInfo { index: 0x4298, kind: RegisterKind::Float, name: "SHADER_CONSTANT_166_X" },
+    RegisterInfo { index: 0x4299, kind: RegisterKind::Float, name: "SHADER_CONSTANT_166_Y" },
+    RegisterInfo { index: 0x429A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_166_Z" },
+    RegisterInfo { index: 0x429B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_166_W" },
+    RegisterInfo { index: 0x429C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_167_X" },
+    RegisterInfo { index: 0x429D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_167_Y" },
+    RegisterInfo { index: 0x429E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_167_Z" },
+    RegisterInfo { index: 0x429F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_167_W" },
+    RegisterInfo { index: 0x42A0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_168_X" },
+    RegisterInfo { index: 0x42A1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_168_Y" },
+    RegisterInfo { index: 0x42A2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_168_Z" },
+    RegisterInfo { index: 0x42A3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_168_W" },
+    RegisterInfo { index: 0x42A4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_169_X" },
+    RegisterInfo { index: 0x42A5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_169_Y" },
+    RegisterInfo { index: 0x42A6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_169_Z" },
+    RegisterInfo { index: 0x42A7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_169_W" },
+    RegisterInfo { index: 0x42A8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_170_X" },
+    RegisterInfo { index: 0x42A9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_170_Y" },
+    RegisterInfo { index: 0x42AA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_170_Z" },
+    RegisterInfo { index: 0x42AB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_170_W" },
+    RegisterInfo { index: 0x42AC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_171_X" },
+    RegisterInfo { index: 0x42AD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_171_Y" },
+    RegisterInfo { index: 0x42AE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_171_Z" },
+    RegisterInfo { index: 0x42AF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_171_W" },
+    RegisterInfo { index: 0x42B0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_172_X" },
+    RegisterInfo { index: 0x42B1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_172_Y" },
+    RegisterInfo { index: 0x42B2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_172_Z" },
+    RegisterInfo { index: 0x42B3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_172_W" },
+    RegisterInfo { index: 0x42B4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_173_X" },
+    RegisterInfo { index: 0x42B5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_173_Y" },
+    RegisterInfo { index: 0x42B6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_173_Z" },
+    RegisterInfo { index: 0x42B7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_173_W" },
+    RegisterInfo { index: 0x42B8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_174_X" },
+    RegisterInfo { index: 0x42B9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_174_Y" },
+    RegisterInfo { index: 0x42BA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_174_Z" },
+    RegisterInfo { index: 0x42BB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_174_W" },
+    RegisterInfo { index: 0x42BC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_175_X" },
+    RegisterInfo { index: 0x42BD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_175_Y" },
+    RegisterInfo { index: 0x42BE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_175_Z" },
+    RegisterInfo { index: 0x42BF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_175_W" },
+    RegisterInfo { index: 0x42C0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_176_X" },
+    RegisterInfo { index: 0x42C1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_176_Y" },
+    RegisterInfo { index: 0x42C2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_176_Z" },
+    RegisterInfo { index: 0x42C3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_176_W" },
+    RegisterInfo { index: 0x42C4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_177_X" },
+    RegisterInfo { index: 0x42C5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_177_Y" },
+    RegisterInfo { index: 0x42C6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_177_Z" },
+    RegisterInfo { index: 0x42C7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_177_W" },
+    RegisterInfo { index: 0x42C8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_178_X" },
+    RegisterInfo { index: 0x42C9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_178_Y" },
+    RegisterInfo { index: 0x42CA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_178_Z" },
+    RegisterInfo { index: 0x42CB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_178_W" },
+    RegisterInfo { index: 0x42CC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_179_X" },
+    RegisterInfo { index: 0x42CD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_179_Y" },
+    RegisterInfo { index: 0x42CE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_179_Z" },
+    RegisterInfo { index: 0x42CF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_179_W" },
+    RegisterInfo { index: 0x42D0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_180_X" },
+    RegisterInfo { index: 0x42D1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_180_Y" },
+    RegisterInfo { index: 0x42D2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_180_Z" },
+    RegisterInfo { index: 0x42D3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_180_W" },
+    RegisterInfo { index: 0x42D4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_181_X" },
+    RegisterInfo { index: 0x42D5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_181_Y" },
+    RegisterInfo { index: 0x42D6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_181_Z" },
+    RegisterInfo { index: 0x42D7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_181_W" },
+    RegisterInfo { index: 0x42D8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_182_X" },
+    RegisterInfo { index: 0x42D9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_182_Y" },
+    RegisterInfo { index: 0x42DA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_182_Z" },
+    RegisterInfo { index: 0x42DB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_182_W" },
+    RegisterInfo { index: 0x42DC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_183_X" },
+    RegisterInfo { index: 0x42DD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_183_Y" },
+    RegisterInfo { index: 0x42DE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_183_Z" },
+    RegisterInfo { index: 0x42DF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_183_W" },
+    RegisterInfo { index: 0x42E0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_184_X" },
+    RegisterInfo { index: 0x42E1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_184_Y" },
+    RegisterInfo { index: 0x42E2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_184_Z" },
+    RegisterInfo { index: 0x42E3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_184_W" },
+    RegisterInfo { index: 0x42E4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_185_X" },
+    RegisterInfo { index: 0x42E5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_185_Y" },
+    RegisterInfo { index: 0x42E6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_185_Z" },
+    RegisterInfo { index: 0x42E7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_185_W" },
+    RegisterInfo { index: 0x42E8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_186_X" },
+    RegisterInfo { index: 0x42E9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_186_Y" },
+    RegisterInfo { index: 0x42EA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_186_Z" },
+    RegisterInfo { index: 0x42EB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_186_W" },
+    RegisterInfo { index: 0x42EC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_187_X" },
+    RegisterInfo { index: 0x42ED, kind: RegisterKind::Float, name: "SHADER_CONSTANT_187_Y" },
+    RegisterInfo { index: 0x42EE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_187_Z" },
+    RegisterInfo { index: 0x42EF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_187_W" },
+    RegisterInfo { index: 0x42F0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_188_X" },
+    RegisterInfo { index: 0x42F1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_188_Y" },
+    RegisterInfo { index: 0x42F2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_188_Z" },
+    RegisterInfo { index: 0x42F3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_188_W" },
+    RegisterInfo { index: 0x42F4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_189_X" },
+    RegisterInfo { index: 0x42F5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_189_Y" },
+    RegisterInfo { index: 0x42F6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_189_Z" },
+    RegisterInfo { index: 0x42F7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_189_W" },
+    RegisterInfo { index: 0x42F8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_190_X" },
+    RegisterInfo { index: 0x42F9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_190_Y" },
+    RegisterInfo { index: 0x42FA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_190_Z" },
+    RegisterInfo { index: 0x42FB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_190_W" },
+    RegisterInfo { index: 0x42FC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_191_X" },
+    RegisterInfo { index: 0x42FD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_191_Y" },
+    RegisterInfo { index: 0x42FE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_191_Z" },
+    RegisterInfo { index: 0x42FF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_191_W" },
+    RegisterInfo { index: 0x4300, kind: RegisterKind::Float, name: "SHADER_CONSTANT_192_X" },
+    RegisterInfo { index: 0x4301, kind: RegisterKind::Float, name: "SHADER_CONSTANT_192_Y" },
+    RegisterInfo { index: 0x4302, kind: RegisterKind::Float, name: "SHADER_CONSTANT_192_Z" },
+    RegisterInfo { index: 0x4303, kind: RegisterKind::Float, name: "SHADER_CONSTANT_192_W" },
+    RegisterInfo { index: 0x4304, kind: RegisterKind::Float, name: "SHADER_CONSTANT_193_X" },
+    RegisterInfo { index: 0x4305, kind: RegisterKind::Float, name: "SHADER_CONSTANT_193_Y" },
+    RegisterInfo { index: 0x4306, kind: RegisterKind::Float, name: "SHADER_CONSTANT_193_Z" },
+    RegisterInfo { index: 0x4307, kind: RegisterKind::Float, name: "SHADER_CONSTANT_193_W" },
+    RegisterInfo { index: 0x4308, kind: RegisterKind::Float, name: "SHADER_CONSTANT_194_X" },
+    RegisterInfo { index: 0x4309, kind: RegisterKind::Float, name: "SHADER_CONSTANT_194_Y" },
+    RegisterInfo { index: 0x430A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_194_Z" },
+    RegisterInfo { index: 0x430B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_194_W" },
+    RegisterInfo { index: 0x430C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_195_X" },
+    RegisterInfo { index: 0x430D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_195_Y" },
+    RegisterInfo { index: 0x430E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_195_Z" },
+    RegisterInfo { index: 0x430F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_195_W" },
+    RegisterInfo { index: 0x4310, kind: RegisterKind::Float, name: "SHADER_CONSTANT_196_X" },
+    RegisterInfo { index: 0x4311, kind: RegisterKind::Float, name: "SHADER_CONSTANT_196_Y" },
+    RegisterInfo { index: 0x4312, kind: RegisterKind::Float, name: "SHADER_CONSTANT_196_Z" },
+    RegisterInfo { index: 0x4313, kind: RegisterKind::Float, name: "SHADER_CONSTANT_196_W" },
+    RegisterInfo { index: 0x4314, kind: RegisterKind::Float, name: "SHADER_CONSTANT_197_X" },
+    RegisterInfo { index: 0x4315, kind: RegisterKind::Float, name: "SHADER_CONSTANT_197_Y" },
+    RegisterInfo { index: 0x4316, kind: RegisterKind::Float, name: "SHADER_CONSTANT_197_Z" },
+    RegisterInfo { index: 0x4317, kind: RegisterKind::Float, name: "SHADER_CONSTANT_197_W" },
+    RegisterInfo { index: 0x4318, kind: RegisterKind::Float, name: "SHADER_CONSTANT_198_X" },
+    RegisterInfo { index: 0x4319, kind: RegisterKind::Float, name: "SHADER_CONSTANT_198_Y" },
+    RegisterInfo { index: 0x431A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_198_Z" },
+    RegisterInfo { index: 0x431B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_198_W" },
+    RegisterInfo { index: 0x431C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_199_X" },
+    RegisterInfo { index: 0x431D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_199_Y" },
+    RegisterInfo { index: 0x431E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_199_Z" },
+    RegisterInfo { index: 0x431F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_199_W" },
+    RegisterInfo { index: 0x4320, kind: RegisterKind::Float, name: "SHADER_CONSTANT_200_X" },
+    RegisterInfo { index: 0x4321, kind: RegisterKind::Float, name: "SHADER_CONSTANT_200_Y" },
+    RegisterInfo { index: 0x4322, kind: RegisterKind::Float, name: "SHADER_CONSTANT_200_Z" },
+    RegisterInfo { index: 0x4323, kind: RegisterKind::Float, name: "SHADER_CONSTANT_200_W" },
+    RegisterInfo { index: 0x4324, kind: RegisterKind::Float, name: "SHADER_CONSTANT_201_X" },
+    RegisterInfo { index: 0x4325, kind: RegisterKind::Float, name: "SHADER_CONSTANT_201_Y" },
+    RegisterInfo { index: 0x4326, kind: RegisterKind::Float, name: "SHADER_CONSTANT_201_Z" },
+    RegisterInfo { index: 0x4327, kind: RegisterKind::Float, name: "SHADER_CONSTANT_201_W" },
+    RegisterInfo { index: 0x4328, kind: RegisterKind::Float, name: "SHADER_CONSTANT_202_X" },
+    RegisterInfo { index: 0x4329, kind: RegisterKind::Float, name: "SHADER_CONSTANT_202_Y" },
+    RegisterInfo { index: 0x432A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_202_Z" },
+    RegisterInfo { index: 0x432B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_202_W" },
+    RegisterInfo { index: 0x432C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_203_X" },
+    RegisterInfo { index: 0x432D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_203_Y" },
+    RegisterInfo { index: 0x432E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_203_Z" },
+    RegisterInfo { index: 0x432F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_203_W" },
+    RegisterInfo { index: 0x4330, kind: RegisterKind::Float, name: "SHADER_CONSTANT_204_X" },
+    RegisterInfo { index: 0x4331, kind: RegisterKind::Float, name: "SHADER_CONSTANT_204_Y" },
+    RegisterInfo { index: 0x4332, kind: RegisterKind::Float, name: "SHADER_CONSTANT_204_Z" },
+    RegisterInfo { index: 0x4333, kind: RegisterKind::Float, name: "SHADER_CONSTANT_204_W" },
+    RegisterInfo { index: 0x4334, kind: RegisterKind::Float, name: "SHADER_CONSTANT_205_X" },
+    RegisterInfo { index: 0x4335, kind: RegisterKind::Float, name: "SHADER_CONSTANT_205_Y" },
+    RegisterInfo { index: 0x4336, kind: RegisterKind::Float, name: "SHADER_CONSTANT_205_Z" },
+    RegisterInfo { index: 0x4337, kind: RegisterKind::Float, name: "SHADER_CONSTANT_205_W" },
+    RegisterInfo { index: 0x4338, kind: RegisterKind::Float, name: "SHADER_CONSTANT_206_X" },
+    RegisterInfo { index: 0x4339, kind: RegisterKind::Float, name: "SHADER_CONSTANT_206_Y" },
+    RegisterInfo { index: 0x433A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_206_Z" },
+    RegisterInfo { index: 0x433B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_206_W" },
+    RegisterInfo { index: 0x433C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_207_X" },
+    RegisterInfo { index: 0x433D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_207_Y" },
+    RegisterInfo { index: 0x433E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_207_Z" },
+    RegisterInfo { index: 0x433F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_207_W" },
+    RegisterInfo { index: 0x4340, kind: RegisterKind::Float, name: "SHADER_CONSTANT_208_X" },
+    RegisterInfo { index: 0x4341, kind: RegisterKind::Float, name: "SHADER_CONSTANT_208_Y" },
+    RegisterInfo { index: 0x4342, kind: RegisterKind::Float, name: "SHADER_CONSTANT_208_Z" },
+    RegisterInfo { index: 0x4343, kind: RegisterKind::Float, name: "SHADER_CONSTANT_208_W" },
+    RegisterInfo { index: 0x4344, kind: RegisterKind::Float, name: "SHADER_CONSTANT_209_X" },
+    RegisterInfo { index: 0x4345, kind: RegisterKind::Float, name: "SHADER_CONSTANT_209_Y" },
+    RegisterInfo { index: 0x4346, kind: RegisterKind::Float, name: "SHADER_CONSTANT_209_Z" },
+    RegisterInfo { index: 0x4347, kind: RegisterKind::Float, name: "SHADER_CONSTANT_209_W" },
+    RegisterInfo { index: 0x4348, kind: RegisterKind::Float, name: "SHADER_CONSTANT_210_X" },
+    RegisterInfo { index: 0x4349, kind: RegisterKind::Float, name: "SHADER_CONSTANT_210_Y" },
+    RegisterInfo { index: 0x434A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_210_Z" },
+    RegisterInfo { index: 0x434B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_210_W" },
+    RegisterInfo { index: 0x434C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_211_X" },
+    RegisterInfo { index: 0x434D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_211_Y" },
+    RegisterInfo { index: 0x434E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_211_Z" },
+    RegisterInfo { index: 0x434F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_211_W" },
+    RegisterInfo { index: 0x4350, kind: RegisterKind::Float, name: "SHADER_CONSTANT_212_X" },
+    RegisterInfo { index: 0x4351, kind: RegisterKind::Float, name: "SHADER_CONSTANT_212_Y" },
+    RegisterInfo { index: 0x4352, kind: RegisterKind::Float, name: "SHADER_CONSTANT_212_Z" },
+    RegisterInfo { index: 0x4353, kind: RegisterKind::Float, name: "SHADER_CONSTANT_212_W" },
+    RegisterInfo { index: 0x4354, kind: RegisterKind::Float, name: "SHADER_CONSTANT_213_X" },
+    RegisterInfo { index: 0x4355, kind: RegisterKind::Float, name: "SHADER_CONSTANT_213_Y" },
+    RegisterInfo { index: 0x4356, kind: RegisterKind::Float, name: "SHADER_CONSTANT_213_Z" },
+    RegisterInfo { index: 0x4357, kind: RegisterKind::Float, name: "SHADER_CONSTANT_213_W" },
+    RegisterInfo { index: 0x4358, kind: RegisterKind::Float, name: "SHADER_CONSTANT_214_X" },
+    RegisterInfo { index: 0x4359, kind: RegisterKind::Float, name: "SHADER_CONSTANT_214_Y" },
+    RegisterInfo { index: 0x435A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_214_Z" },
+    RegisterInfo { index: 0x435B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_214_W" },
+    RegisterInfo { index: 0x435C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_215_X" },
+    RegisterInfo { index: 0x435D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_215_Y" },
+    RegisterInfo { index: 0x435E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_215_Z" },
+    RegisterInfo { index: 0x435F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_215_W" },
+    RegisterInfo { index: 0x4360, kind: RegisterKind::Float, name: "SHADER_CONSTANT_216_X" },
+    RegisterInfo { index: 0x4361, kind: RegisterKind::Float, name: "SHADER_CONSTANT_216_Y" },
+    RegisterInfo { index: 0x4362, kind: RegisterKind::Float, name: "SHADER_CONSTANT_216_Z" },
+    RegisterInfo { index: 0x4363, kind: RegisterKind::Float, name: "SHADER_CONSTANT_216_W" },
+    RegisterInfo { index: 0x4364, kind: RegisterKind::Float, name: "SHADER_CONSTANT_217_X" },
+    RegisterInfo { index: 0x4365, kind: RegisterKind::Float, name: "SHADER_CONSTANT_217_Y" },
+    RegisterInfo { index: 0x4366, kind: RegisterKind::Float, name: "SHADER_CONSTANT_217_Z" },
+    RegisterInfo { index: 0x4367, kind: RegisterKind::Float, name: "SHADER_CONSTANT_217_W" },
+    RegisterInfo { index: 0x4368, kind: RegisterKind::Float, name: "SHADER_CONSTANT_218_X" },
+    RegisterInfo { index: 0x4369, kind: RegisterKind::Float, name: "SHADER_CONSTANT_218_Y" },
+    RegisterInfo { index: 0x436A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_218_Z" },
+    RegisterInfo { index: 0x436B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_218_W" },
+    RegisterInfo { index: 0x436C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_219_X" },
+    RegisterInfo { index: 0x436D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_219_Y" },
+    RegisterInfo { index: 0x436E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_219_Z" },
+    RegisterInfo { index: 0x436F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_219_W" },
+    RegisterInfo { index: 0x4370, kind: RegisterKind::Float, name: "SHADER_CONSTANT_220_X" },
+    RegisterInfo { index: 0x4371, kind: RegisterKind::Float, name: "SHADER_CONSTANT_220_Y" },
+    RegisterInfo { index: 0x4372, kind: RegisterKind::Float, name: "SHADER_CONSTANT_220_Z" },
+    RegisterInfo { index: 0x4373, kind: RegisterKind::Float, name: "SHADER_CONSTANT_220_W" },
+    RegisterInfo { index: 0x4374, kind: RegisterKind::Float, name: "SHADER_CONSTANT_221_X" },
+    RegisterInfo { index: 0x4375, kind: RegisterKind::Float, name: "SHADER_CONSTANT_221_Y" },
+    RegisterInfo { index: 0x4376, kind: RegisterKind::Float, name: "SHADER_CONSTANT_221_Z" },
+    RegisterInfo { index: 0x4377, kind: RegisterKind::Float, name: "SHADER_CONSTANT_221_W" },
+    RegisterInfo { index: 0x4378, kind: RegisterKind::Float, name: "SHADER_CONSTANT_222_X" },
+    RegisterInfo { index: 0x4379, kind: RegisterKind::Float, name: "SHADER_CONSTANT_222_Y" },
+    RegisterInfo { index: 0x437A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_222_Z" },
+    RegisterInfo { index: 0x437B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_222_W" },
+    RegisterInfo { index: 0x437C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_223_X" },
+    RegisterInfo { index: 0x437D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_223_Y" },
+    RegisterInfo { index: 0x437E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_223_Z" },
+    RegisterInfo { index: 0x437F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_223_W" },
+    RegisterInfo { index: 0x4380, kind: RegisterKind::Float, name: "SHADER_CONSTANT_224_X" },
+    RegisterInfo { index: 0x4381, kind: RegisterKind::Float, name: "SHADER_CONSTANT_224_Y" },
+    RegisterInfo { index: 0x4382, kind: RegisterKind::Float, name: "SHADER_CONSTANT_224_Z" },
+    RegisterInfo { index: 0x4383, kind: RegisterKind::Float, name: "SHADER_CONSTANT_224_W" },
+    RegisterInfo { index: 0x4384, kind: RegisterKind::Float, name: "SHADER_CONSTANT_225_X" },
+    RegisterInfo { index: 0x4385, kind: RegisterKind::Float, name: "SHADER_CONSTANT_225_Y" },
+    RegisterInfo { index: 0x4386, kind: RegisterKind::Float, name: "SHADER_CONSTANT_225_Z" },
+    RegisterInfo { index: 0x4387, kind: RegisterKind::Float, name: "SHADER_CONSTANT_225_W" },
+    RegisterInfo { index: 0x4388, kind: RegisterKind::Float, name: "SHADER_CONSTANT_226_X" },
+    RegisterInfo { index: 0x4389, kind: RegisterKind::Float, name: "SHADER_CONSTANT_226_Y" },
+    RegisterInfo { index: 0x438A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_226_Z" },
+    RegisterInfo { index: 0x438B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_226_W" },
+    RegisterInfo { index: 0x438C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_227_X" },
+    RegisterInfo { index: 0x438D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_227_Y" },
+    RegisterInfo { index: 0x438E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_227_Z" },
+    RegisterInfo { index: 0x438F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_227_W" },
+    RegisterInfo { index: 0x4390, kind: RegisterKind::Float, name: "SHADER_CONSTANT_228_X" },
+    RegisterInfo { index: 0x4391, kind: RegisterKind::Float, name: "SHADER_CONSTANT_228_Y" },
+    RegisterInfo { index: 0x4392, kind: RegisterKind::Float, name: "SHADER_CONSTANT_228_Z" },
+    RegisterInfo { index: 0x4393, kind: RegisterKind::Float, name: "SHADER_CONSTANT_228_W" },
+    RegisterInfo { index: 0x4394, kind: RegisterKind::Float, name: "SHADER_CONSTANT_229_X" },
+    RegisterInfo { index: 0x4395, kind: RegisterKind::Float, name: "SHADER_CONSTANT_229_Y" },
+    RegisterInfo { index: 0x4396, kind: RegisterKind::Float, name: "SHADER_CONSTANT_229_Z" },
+    RegisterInfo { index: 0x4397, kind: RegisterKind::Float, name: "SHADER_CONSTANT_229_W" },
+    RegisterInfo { index: 0x4398, kind: RegisterKind::Float, name: "SHADER_CONSTANT_230_X" },
+    RegisterInfo { index: 0x4399, kind: RegisterKind::Float, name: "SHADER_CONSTANT_230_Y" },
+    RegisterInfo { index: 0x439A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_230_Z" },
+    RegisterInfo { index: 0x439B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_230_W" },
+    RegisterInfo { index: 0x439C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_231_X" },
+    RegisterInfo { index: 0x439D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_231_Y" },
+    RegisterInfo { index: 0x439E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_231_Z" },
+    RegisterInfo { index: 0x439F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_231_W" },
+    RegisterInfo { index: 0x43A0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_232_X" },
+    RegisterInfo { index: 0x43A1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_232_Y" },
+    RegisterInfo { index: 0x43A2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_232_Z" },
+    RegisterInfo { index: 0x43A3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_232_W" },
+    RegisterInfo { index: 0x43A4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_233_X" },
+    RegisterInfo { index: 0x43A5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_233_Y" },
+    RegisterInfo { index: 0x43A6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_233_Z" },
+    RegisterInfo { index: 0x43A7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_233_W" },
+    RegisterInfo { index: 0x43A8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_234_X" },
+    RegisterInfo { index: 0x43A9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_234_Y" },
+    RegisterInfo { index: 0x43AA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_234_Z" },
+    RegisterInfo { index: 0x43AB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_234_W" },
+    RegisterInfo { index: 0x43AC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_235_X" },
+    RegisterInfo { index: 0x43AD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_235_Y" },
+    RegisterInfo { index: 0x43AE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_235_Z" },
+    RegisterInfo { index: 0x43AF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_235_W" },
+    RegisterInfo { index: 0x43B0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_236_X" },
+    RegisterInfo { index: 0x43B1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_236_Y" },
+    RegisterInfo { index: 0x43B2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_236_Z" },
+    RegisterInfo { index: 0x43B3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_236_W" },
+    RegisterInfo { index: 0x43B4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_237_X" },
+    RegisterInfo { index: 0x43B5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_237_Y" },
+    RegisterInfo { index: 0x43B6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_237_Z" },
+    RegisterInfo { index: 0x43B7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_237_W" },
+    RegisterInfo { index: 0x43B8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_238_X" },
+    RegisterInfo { index: 0x43B9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_238_Y" },
+    RegisterInfo { index: 0x43BA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_238_Z" },
+    RegisterInfo { index: 0x43BB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_238_W" },
+    RegisterInfo { index: 0x43BC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_239_X" },
+    RegisterInfo { index: 0x43BD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_239_Y" },
+    RegisterInfo { index: 0x43BE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_239_Z" },
+    RegisterInfo { index: 0x43BF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_239_W" },
+    RegisterInfo { index: 0x43C0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_240_X" },
+    RegisterInfo { index: 0x43C1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_240_Y" },
+    RegisterInfo { index: 0x43C2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_240_Z" },
+    RegisterInfo { index: 0x43C3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_240_W" },
+    RegisterInfo { index: 0x43C4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_241_X" },
+    RegisterInfo { index: 0x43C5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_241_Y" },
+    RegisterInfo { index: 0x43C6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_241_Z" },
+    RegisterInfo { index: 0x43C7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_241_W" },
+    RegisterInfo { index: 0x43C8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_242_X" },
+    RegisterInfo { index: 0x43C9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_242_Y" },
+    RegisterInfo { index: 0x43CA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_242_Z" },
+    RegisterInfo { index: 0x43CB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_242_W" },
+    RegisterInfo { index: 0x43CC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_243_X" },
+    RegisterInfo { index: 0x43CD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_243_Y" },
+    RegisterInfo { index: 0x43CE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_243_Z" },
+    RegisterInfo { index: 0x43CF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_243_W" },
+    RegisterInfo { index: 0x43D0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_244_X" },
+    RegisterInfo { index: 0x43D1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_244_Y" },
+    RegisterInfo { index: 0x43D2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_244_Z" },
+    RegisterInfo { index: 0x43D3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_244_W" },
+    RegisterInfo { index: 0x43D4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_245_X" },
+    RegisterInfo { index: 0x43D5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_245_Y" },
+    RegisterInfo { index: 0x43D6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_245_Z" },
+    RegisterInfo { index: 0x43D7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_245_W" },
+    RegisterInfo { index: 0x43D8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_246_X" },
+    RegisterInfo { index: 0x43D9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_246_Y" },
+    RegisterInfo { index: 0x43DA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_246_Z" },
+    RegisterInfo { index: 0x43DB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_246_W" },
+    RegisterInfo { index: 0x43DC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_247_X" },
+    RegisterInfo { index: 0x43DD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_247_Y" },
+    RegisterInfo { index: 0x43DE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_247_Z" },
+    RegisterInfo { index: 0x43DF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_247_W" },
+    RegisterInfo { index: 0x43E0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_248_X" },
+    RegisterInfo { index: 0x43E1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_248_Y" },
+    RegisterInfo { index: 0x43E2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_248_Z" },
+    RegisterInfo { index: 0x43E3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_248_W" },
+    RegisterInfo { index: 0x43E4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_249_X" },
+    RegisterInfo { index: 0x43E5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_249_Y" },
+    RegisterInfo { index: 0x43E6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_249_Z" },
+    RegisterInfo { index: 0x43E7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_249_W" },
+    RegisterInfo { index: 0x43E8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_250_X" },
+    RegisterInfo { index: 0x43E9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_250_Y" },
+    RegisterInfo { index: 0x43EA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_250_Z" },
+    RegisterInfo { index: 0x43EB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_250_W" },
+    RegisterInfo { index: 0x43EC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_251_X" },
+    RegisterInfo { index: 0x43ED, kind: RegisterKind::Float, name: "SHADER_CONSTANT_251_Y" },
+    RegisterInfo { index: 0x43EE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_251_Z" },
+    RegisterInfo { index: 0x43EF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_251_W" },
+    RegisterInfo { index: 0x43F0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_252_X" },
+    RegisterInfo { index: 0x43F1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_252_Y" },
+    RegisterInfo { index: 0x43F2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_252_Z" },
+    RegisterInfo { index: 0x43F3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_252_W" },
+    RegisterInfo { index: 0x43F4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_253_X" },
+    RegisterInfo { index: 0x43F5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_253_Y" },
+    RegisterInfo { index: 0x43F6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_253_Z" },
+    RegisterInfo { index: 0x43F7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_253_W" },
+    RegisterInfo { index: 0x43F8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_254_X" },
+    RegisterInfo { index: 0x43F9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_254_Y" },
+    RegisterInfo { index: 0x43FA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_254_Z" },
+    RegisterInfo { index: 0x43FB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_254_W" },
+    RegisterInfo { index: 0x43FC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_255_X" },
+    RegisterInfo { index: 0x43FD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_255_Y" },
+    RegisterInfo { index: 0x43FE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_255_Z" },
+    RegisterInfo { index: 0x43FF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_255_W" },
+    RegisterInfo { index: 0x4400, kind: RegisterKind::Float, name: "SHADER_CONSTANT_256_X" },
+    RegisterInfo { index: 0x4401, kind: RegisterKind::Float, name: "SHADER_CONSTANT_256_Y" },
+    RegisterInfo { index: 0x4402, kind: RegisterKind::Float, name: "SHADER_CONSTANT_256_Z" },
+    RegisterInfo { index: 0x4403, kind: RegisterKind::Float, name: "SHADER_CONSTANT_256_W" },
+    RegisterInfo { index: 0x4404, kind: RegisterKind::Float, name: "SHADER_CONSTANT_257_X" },
+    RegisterInfo { index: 0x4405, kind: RegisterKind::Float, name: "SHADER_CONSTANT_257_Y" },
+    RegisterInfo { index: 0x4406, kind: RegisterKind::Float, name: "SHADER_CONSTANT_257_Z" },
+    RegisterInfo { index: 0x4407, kind: RegisterKind::Float, name: "SHADER_CONSTANT_257_W" },
+    RegisterInfo { index: 0x4408, kind: RegisterKind::Float, name: "SHADER_CONSTANT_258_X" },
+    RegisterInfo { index: 0x4409, kind: RegisterKind::Float, name: "SHADER_CONSTANT_258_Y" },
+    RegisterInfo { index: 0x440A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_258_Z" },
+    RegisterInfo { index: 0x440B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_258_W" },
+    RegisterInfo { index: 0x440C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_259_X" },
+    RegisterInfo { index: 0x440D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_259_Y" },
+    RegisterInfo { index: 0x440E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_259_Z" },
+    RegisterInfo { index: 0x440F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_259_W" },
+    RegisterInfo { index: 0x4410, kind: RegisterKind::Float, name: "SHADER_CONSTANT_260_X" },
+    RegisterInfo { index: 0x4411, kind: RegisterKind::Float, name: "SHADER_CONSTANT_260_Y" },
+    RegisterInfo { index: 0x4412, kind: RegisterKind::Float, name: "SHADER_CONSTANT_260_Z" },
+    RegisterInfo { index: 0x4413, kind: RegisterKind::Float, name: "SHADER_CONSTANT_260_W" },
+    RegisterInfo { index: 0x4414, kind: RegisterKind::Float, name: "SHADER_CONSTANT_261_X" },
+    RegisterInfo { index: 0x4415, kind: RegisterKind::Float, name: "SHADER_CONSTANT_261_Y" },
+    RegisterInfo { index: 0x4416, kind: RegisterKind::Float, name: "SHADER_CONSTANT_261_Z" },
+    RegisterInfo { index: 0x4417, kind: RegisterKind::Float, name: "SHADER_CONSTANT_261_W" },
+    RegisterInfo { index: 0x4418, kind: RegisterKind::Float, name: "SHADER_CONSTANT_262_X" },
+    RegisterInfo { index: 0x4419, kind: RegisterKind::Float, name: "SHADER_CONSTANT_262_Y" },
+    RegisterInfo { index: 0x441A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_262_Z" },
+    RegisterInfo { index: 0x441B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_262_W" },
+    RegisterInfo { index: 0x441C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_263_X" },
+    RegisterInfo { index: 0x441D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_263_Y" },
+    RegisterInfo { index: 0x441E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_263_Z" },
+    RegisterInfo { index: 0x441F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_263_W" },
+    RegisterInfo { index: 0x4420, kind: RegisterKind::Float, name: "SHADER_CONSTANT_264_X" },
+    RegisterInfo { index: 0x4421, kind: RegisterKind::Float, name: "SHADER_CONSTANT_264_Y" },
+    RegisterInfo { index: 0x4422, kind: RegisterKind::Float, name: "SHADER_CONSTANT_264_Z" },
+    RegisterInfo { index: 0x4423, kind: RegisterKind::Float, name: "SHADER_CONSTANT_264_W" },
+    RegisterInfo { index: 0x4424, kind: RegisterKind::Float, name: "SHADER_CONSTANT_265_X" },
+    RegisterInfo { index: 0x4425, kind: RegisterKind::Float, name: "SHADER_CONSTANT_265_Y" },
+    RegisterInfo { index: 0x4426, kind: RegisterKind::Float, name: "SHADER_CONSTANT_265_Z" },
+    RegisterInfo { index: 0x4427, kind: RegisterKind::Float, name: "SHADER_CONSTANT_265_W" },
+    RegisterInfo { index: 0x4428, kind: RegisterKind::Float, name: "SHADER_CONSTANT_266_X" },
+    RegisterInfo { index: 0x4429, kind: RegisterKind::Float, name: "SHADER_CONSTANT_266_Y" },
+    RegisterInfo { index: 0x442A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_266_Z" },
+    RegisterInfo { index: 0x442B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_266_W" },
+    RegisterInfo { index: 0x442C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_267_X" },
+    RegisterInfo { index: 0x442D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_267_Y" },
+    RegisterInfo { index: 0x442E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_267_Z" },
+    RegisterInfo { index: 0x442F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_267_W" },
+    RegisterInfo { index: 0x4430, kind: RegisterKind::Float, name: "SHADER_CONSTANT_268_X" },
+    RegisterInfo { index: 0x4431, kind: RegisterKind::Float, name: "SHADER_CONSTANT_268_Y" },
+    RegisterInfo { index: 0x4432, kind: RegisterKind::Float, name: "SHADER_CONSTANT_268_Z" },
+    RegisterInfo { index: 0x4433, kind: RegisterKind::Float, name: "SHADER_CONSTANT_268_W" },
+    RegisterInfo { index: 0x4434, kind: RegisterKind::Float, name: "SHADER_CONSTANT_269_X" },
+    RegisterInfo { index: 0x4435, kind: RegisterKind::Float, name: "SHADER_CONSTANT_269_Y" },
+    RegisterInfo { index: 0x4436, kind: RegisterKind::Float, name: "SHADER_CONSTANT_269_Z" },
+    RegisterInfo { index: 0x4437, kind: RegisterKind::Float, name: "SHADER_CONSTANT_269_W" },
+    RegisterInfo { index: 0x4438, kind: RegisterKind::Float, name: "SHADER_CONSTANT_270_X" },
+    RegisterInfo { index: 0x4439, kind: RegisterKind::Float, name: "SHADER_CONSTANT_270_Y" },
+    RegisterInfo { index: 0x443A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_270_Z" },
+    RegisterInfo { index: 0x443B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_270_W" },
+    RegisterInfo { index: 0x443C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_271_X" },
+    RegisterInfo { index: 0x443D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_271_Y" },
+    RegisterInfo { index: 0x443E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_271_Z" },
+    RegisterInfo { index: 0x443F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_271_W" },
+    RegisterInfo { index: 0x4440, kind: RegisterKind::Float, name: "SHADER_CONSTANT_272_X" },
+    RegisterInfo { index: 0x4441, kind: RegisterKind::Float, name: "SHADER_CONSTANT_272_Y" },
+    RegisterInfo { index: 0x4442, kind: RegisterKind::Float, name: "SHADER_CONSTANT_272_Z" },
+    RegisterInfo { index: 0x4443, kind: RegisterKind::Float, name: "SHADER_CONSTANT_272_W" },
+    RegisterInfo { index: 0x4444, kind: RegisterKind::Float, name: "SHADER_CONSTANT_273_X" },
+    RegisterInfo { index: 0x4445, kind: RegisterKind::Float, name: "SHADER_CONSTANT_273_Y" },
+    RegisterInfo { index: 0x4446, kind: RegisterKind::Float, name: "SHADER_CONSTANT_273_Z" },
+    RegisterInfo { index: 0x4447, kind: RegisterKind::Float, name: "SHADER_CONSTANT_273_W" },
+    RegisterInfo { index: 0x4448, kind: RegisterKind::Float, name: "SHADER_CONSTANT_274_X" },
+    RegisterInfo { index: 0x4449, kind: RegisterKind::Float, name: "SHADER_CONSTANT_274_Y" },
+    RegisterInfo { index: 0x444A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_274_Z" },
+    RegisterInfo { index: 0x444B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_274_W" },
+    RegisterInfo { index: 0x444C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_275_X" },
+    RegisterInfo { index: 0x444D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_275_Y" },
+    RegisterInfo { index: 0x444E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_275_Z" },
+    RegisterInfo { index: 0x444F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_275_W" },
+    RegisterInfo { index: 0x4450, kind: RegisterKind::Float, name: "SHADER_CONSTANT_276_X" },
+    RegisterInfo { index: 0x4451, kind: RegisterKind::Float, name: "SHADER_CONSTANT_276_Y" },
+    RegisterInfo { index: 0x4452, kind: RegisterKind::Float, name: "SHADER_CONSTANT_276_Z" },
+    RegisterInfo { index: 0x4453, kind: RegisterKind::Float, name: "SHADER_CONSTANT_276_W" },
+    RegisterInfo { index: 0x4454, kind: RegisterKind::Float, name: "SHADER_CONSTANT_277_X" },
+    RegisterInfo { index: 0x4455, kind: RegisterKind::Float, name: "SHADER_CONSTANT_277_Y" },
+    RegisterInfo { index: 0x4456, kind: RegisterKind::Float, name: "SHADER_CONSTANT_277_Z" },
+    RegisterInfo { index: 0x4457, kind: RegisterKind::Float, name: "SHADER_CONSTANT_277_W" },
+    RegisterInfo { index: 0x4458, kind: RegisterKind::Float, name: "SHADER_CONSTANT_278_X" },
+    RegisterInfo { index: 0x4459, kind: RegisterKind::Float, name: "SHADER_CONSTANT_278_Y" },
+    RegisterInfo { index: 0x445A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_278_Z" },
+    RegisterInfo { index: 0x445B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_278_W" },
+    RegisterInfo { index: 0x445C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_279_X" },
+    RegisterInfo { index: 0x445D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_279_Y" },
+    RegisterInfo { index: 0x445E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_279_Z" },
+    RegisterInfo { index: 0x445F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_279_W" },
+    RegisterInfo { index: 0x4460, kind: RegisterKind::Float, name: "SHADER_CONSTANT_280_X" },
+    RegisterInfo { index: 0x4461, kind: RegisterKind::Float, name: "SHADER_CONSTANT_280_Y" },
+    RegisterInfo { index: 0x4462, kind: RegisterKind::Float, name: "SHADER_CONSTANT_280_Z" },
+    RegisterInfo { index: 0x4463, kind: RegisterKind::Float, name: "SHADER_CONSTANT_280_W" },
+    RegisterInfo { index: 0x4464, kind: RegisterKind::Float, name: "SHADER_CONSTANT_281_X" },
+    RegisterInfo { index: 0x4465, kind: RegisterKind::Float, name: "SHADER_CONSTANT_281_Y" },
+    RegisterInfo { index: 0x4466, kind: RegisterKind::Float, name: "SHADER_CONSTANT_281_Z" },
+    RegisterInfo { index: 0x4467, kind: RegisterKind::Float, name: "SHADER_CONSTANT_281_W" },
+    RegisterInfo { index: 0x4468, kind: RegisterKind::Float, name: "SHADER_CONSTANT_282_X" },
+    RegisterInfo { index: 0x4469, kind: RegisterKind::Float, name: "SHADER_CONSTANT_282_Y" },
+    RegisterInfo { index: 0x446A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_282_Z" },
+    RegisterInfo { index: 0x446B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_282_W" },
+    RegisterInfo { index: 0x446C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_283_X" },
+    RegisterInfo { index: 0x446D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_283_Y" },
+    RegisterInfo { index: 0x446E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_283_Z" },
+    RegisterInfo { index: 0x446F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_283_W" },
+    RegisterInfo { index: 0x4470, kind: RegisterKind::Float, name: "SHADER_CONSTANT_284_X" },
+    RegisterInfo { index: 0x4471, kind: RegisterKind::Float, name: "SHADER_CONSTANT_284_Y" },
+    RegisterInfo { index: 0x4472, kind: RegisterKind::Float, name: "SHADER_CONSTANT_284_Z" },
+    RegisterInfo { index: 0x4473, kind: RegisterKind::Float, name: "SHADER_CONSTANT_284_W" },
+    RegisterInfo { index: 0x4474, kind: RegisterKind::Float, name: "SHADER_CONSTANT_285_X" },
+    RegisterInfo { index: 0x4475, kind: RegisterKind::Float, name: "SHADER_CONSTANT_285_Y" },
+    RegisterInfo { index: 0x4476, kind: RegisterKind::Float, name: "SHADER_CONSTANT_285_Z" },
+    RegisterInfo { index: 0x4477, kind: RegisterKind::Float, name: "SHADER_CONSTANT_285_W" },
+    RegisterInfo { index: 0x4478, kind: RegisterKind::Float, name: "SHADER_CONSTANT_286_X" },
+    RegisterInfo { index: 0x4479, kind: RegisterKind::Float, name: "SHADER_CONSTANT_286_Y" },
+    RegisterInfo { index: 0x447A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_286_Z" },
+    RegisterInfo { index: 0x447B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_286_W" },
+    RegisterInfo { index: 0x447C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_287_X" },
+    RegisterInfo { index: 0x447D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_287_Y" },
+    RegisterInfo { index: 0x447E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_287_Z" },
+    RegisterInfo { index: 0x447F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_287_W" },
+    RegisterInfo { index: 0x4480, kind: RegisterKind::Float, name: "SHADER_CONSTANT_288_X" },
+    RegisterInfo { index: 0x4481, kind: RegisterKind::Float, name: "SHADER_CONSTANT_288_Y" },
+    RegisterInfo { index: 0x4482, kind: RegisterKind::Float, name: "SHADER_CONSTANT_288_Z" },
+    RegisterInfo { index: 0x4483, kind: RegisterKind::Float, name: "SHADER_CONSTANT_288_W" },
+    RegisterInfo { index: 0x4484, kind: RegisterKind::Float, name: "SHADER_CONSTANT_289_X" },
+    RegisterInfo { index: 0x4485, kind: RegisterKind::Float, name: "SHADER_CONSTANT_289_Y" },
+    RegisterInfo { index: 0x4486, kind: RegisterKind::Float, name: "SHADER_CONSTANT_289_Z" },
+    RegisterInfo { index: 0x4487, kind: RegisterKind::Float, name: "SHADER_CONSTANT_289_W" },
+    RegisterInfo { index: 0x4488, kind: RegisterKind::Float, name: "SHADER_CONSTANT_290_X" },
+    RegisterInfo { index: 0x4489, kind: RegisterKind::Float, name: "SHADER_CONSTANT_290_Y" },
+    RegisterInfo { index: 0x448A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_290_Z" },
+    RegisterInfo { index: 0x448B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_290_W" },
+    RegisterInfo { index: 0x448C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_291_X" },
+    RegisterInfo { index: 0x448D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_291_Y" },
+    RegisterInfo { index: 0x448E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_291_Z" },
+    RegisterInfo { index: 0x448F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_291_W" },
+    RegisterInfo { index: 0x4490, kind: RegisterKind::Float, name: "SHADER_CONSTANT_292_X" },
+    RegisterInfo { index: 0x4491, kind: RegisterKind::Float, name: "SHADER_CONSTANT_292_Y" },
+    RegisterInfo { index: 0x4492, kind: RegisterKind::Float, name: "SHADER_CONSTANT_292_Z" },
+    RegisterInfo { index: 0x4493, kind: RegisterKind::Float, name: "SHADER_CONSTANT_292_W" },
+    RegisterInfo { index: 0x4494, kind: RegisterKind::Float, name: "SHADER_CONSTANT_293_X" },
+    RegisterInfo { index: 0x4495, kind: RegisterKind::Float, name: "SHADER_CONSTANT_293_Y" },
+    RegisterInfo { index: 0x4496, kind: RegisterKind::Float, name: "SHADER_CONSTANT_293_Z" },
+    RegisterInfo { index: 0x4497, kind: RegisterKind::Float, name: "SHADER_CONSTANT_293_W" },
+    RegisterInfo { index: 0x4498, kind: RegisterKind::Float, name: "SHADER_CONSTANT_294_X" },
+    RegisterInfo { index: 0x4499, kind: RegisterKind::Float, name: "SHADER_CONSTANT_294_Y" },
+    RegisterInfo { index: 0x449A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_294_Z" },
+    RegisterInfo { index: 0x449B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_294_W" },
+    RegisterInfo { index: 0x449C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_295_X" },
+    RegisterInfo { index: 0x449D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_295_Y" },
+    RegisterInfo { index: 0x449E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_295_Z" },
+    RegisterInfo { index: 0x449F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_295_W" },
+    RegisterInfo { index: 0x44A0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_296_X" },
+    RegisterInfo { index: 0x44A1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_296_Y" },
+    RegisterInfo { index: 0x44A2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_296_Z" },
+    RegisterInfo { index: 0x44A3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_296_W" },
+    RegisterInfo { index: 0x44A4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_297_X" },
+    RegisterInfo { index: 0x44A5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_297_Y" },
+    RegisterInfo { index: 0x44A6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_297_Z" },
+    RegisterInfo { index: 0x44A7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_297_W" },
+    RegisterInfo { index: 0x44A8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_298_X" },
+    RegisterInfo { index: 0x44A9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_298_Y" },
+    RegisterInfo { index: 0x44AA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_298_Z" },
+    RegisterInfo { index: 0x44AB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_298_W" },
+    RegisterInfo { index: 0x44AC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_299_X" },
+    RegisterInfo { index: 0x44AD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_299_Y" },
+    RegisterInfo { index: 0x44AE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_299_Z" },
+    RegisterInfo { index: 0x44AF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_299_W" },
+    RegisterInfo { index: 0x44B0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_300_X" },
+    RegisterInfo { index: 0x44B1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_300_Y" },
+    RegisterInfo { index: 0x44B2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_300_Z" },
+    RegisterInfo { index: 0x44B3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_300_W" },
+    RegisterInfo { index: 0x44B4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_301_X" },
+    RegisterInfo { index: 0x44B5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_301_Y" },
+    RegisterInfo { index: 0x44B6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_301_Z" },
+    RegisterInfo { index: 0x44B7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_301_W" },
+    RegisterInfo { index: 0x44B8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_302_X" },
+    RegisterInfo { index: 0x44B9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_302_Y" },
+    RegisterInfo { index: 0x44BA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_302_Z" },
+    RegisterInfo { index: 0x44BB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_302_W" },
+    RegisterInfo { index: 0x44BC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_303_X" },
+    RegisterInfo { index: 0x44BD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_303_Y" },
+    RegisterInfo { index: 0x44BE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_303_Z" },
+    RegisterInfo { index: 0x44BF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_303_W" },
+    RegisterInfo { index: 0x44C0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_304_X" },
+    RegisterInfo { index: 0x44C1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_304_Y" },
+    RegisterInfo { index: 0x44C2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_304_Z" },
+    RegisterInfo { index: 0x44C3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_304_W" },
+    RegisterInfo { index: 0x44C4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_305_X" },
+    RegisterInfo { index: 0x44C5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_305_Y" },
+    RegisterInfo { index: 0x44C6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_305_Z" },
+    RegisterInfo { index: 0x44C7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_305_W" },
+    RegisterInfo { index: 0x44C8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_306_X" },
+    RegisterInfo { index: 0x44C9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_306_Y" },
+    RegisterInfo { index: 0x44CA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_306_Z" },
+    RegisterInfo { index: 0x44CB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_306_W" },
+    RegisterInfo { index: 0x44CC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_307_X" },
+    RegisterInfo { index: 0x44CD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_307_Y" },
+    RegisterInfo { index: 0x44CE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_307_Z" },
+    RegisterInfo { index: 0x44CF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_307_W" },
+    RegisterInfo { index: 0x44D0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_308_X" },
+    RegisterInfo { index: 0x44D1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_308_Y" },
+    RegisterInfo { index: 0x44D2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_308_Z" },
+    RegisterInfo { index: 0x44D3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_308_W" },
+    RegisterInfo { index: 0x44D4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_309_X" },
+    RegisterInfo { index: 0x44D5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_309_Y" },
+    RegisterInfo { index: 0x44D6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_309_Z" },
+    RegisterInfo { index: 0x44D7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_309_W" },
+    RegisterInfo { index: 0x44D8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_310_X" },
+    RegisterInfo { index: 0x44D9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_310_Y" },
+    RegisterInfo { index: 0x44DA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_310_Z" },
+    RegisterInfo { index: 0x44DB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_310_W" },
+    RegisterInfo { index: 0x44DC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_311_X" },
+    RegisterInfo { index: 0x44DD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_311_Y" },
+    RegisterInfo { index: 0x44DE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_311_Z" },
+    RegisterInfo { index: 0x44DF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_311_W" },
+    RegisterInfo { index: 0x44E0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_312_X" },
+    RegisterInfo { index: 0x44E1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_312_Y" },
+    RegisterInfo { index: 0x44E2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_312_Z" },
+    RegisterInfo { index: 0x44E3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_312_W" },
+    RegisterInfo { index: 0x44E4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_313_X" },
+    RegisterInfo { index: 0x44E5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_313_Y" },
+    RegisterInfo { index: 0x44E6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_313_Z" },
+    RegisterInfo { index: 0x44E7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_313_W" },
+    RegisterInfo { index: 0x44E8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_314_X" },
+    RegisterInfo { index: 0x44E9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_314_Y" },
+    RegisterInfo { index: 0x44EA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_314_Z" },
+    RegisterInfo { index: 0x44EB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_314_W" },
+    RegisterInfo { index: 0x44EC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_315_X" },
+    RegisterInfo { index: 0x44ED, kind: RegisterKind::Float, name: "SHADER_CONSTANT_315_Y" },
+    RegisterInfo { index: 0x44EE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_315_Z" },
+    RegisterInfo { index: 0x44EF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_315_W" },
+    RegisterInfo { index: 0x44F0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_316_X" },
+    RegisterInfo { index: 0x44F1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_316_Y" },
+    RegisterInfo { index: 0x44F2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_316_Z" },
+    RegisterInfo { index: 0x44F3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_316_W" },
+    RegisterInfo { index: 0x44F4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_317_X" },
+    RegisterInfo { index: 0x44F5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_317_Y" },
+    RegisterInfo { index: 0x44F6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_317_Z" },
+    RegisterInfo { index: 0x44F7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_317_W" },
+    RegisterInfo { index: 0x44F8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_318_X" },
+    RegisterInfo { index: 0x44F9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_318_Y" },
+    RegisterInfo { index: 0x44FA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_318_Z" },
+    RegisterInfo { index: 0x44FB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_318_W" },
+    RegisterInfo { index: 0x44FC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_319_X" },
+    RegisterInfo { index: 0x44FD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_319_Y" },
+    RegisterInfo { index: 0x44FE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_319_Z" },
+    RegisterInfo { index: 0x44FF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_319_W" },
+    RegisterInfo { index: 0x4500, kind: RegisterKind::Float, name: "SHADER_CONSTANT_320_X" },
+    RegisterInfo { index: 0x4501, kind: RegisterKind::Float, name: "SHADER_CONSTANT_320_Y" },
+    RegisterInfo { index: 0x4502, kind: RegisterKind::Float, name: "SHADER_CONSTANT_320_Z" },
+    RegisterInfo { index: 0x4503, kind: RegisterKind::Float, name: "SHADER_CONSTANT_320_W" },
+    RegisterInfo { index: 0x4504, kind: RegisterKind::Float, name: "SHADER_CONSTANT_321_X" },
+    RegisterInfo { index: 0x4505, kind: RegisterKind::Float, name: "SHADER_CONSTANT_321_Y" },
+    RegisterInfo { index: 0x4506, kind: RegisterKind::Float, name: "SHADER_CONSTANT_321_Z" },
+    RegisterInfo { index: 0x4507, kind: RegisterKind::Float, name: "SHADER_CONSTANT_321_W" },
+    RegisterInfo { index: 0x4508, kind: RegisterKind::Float, name: "SHADER_CONSTANT_322_X" },
+    RegisterInfo { index: 0x4509, kind: RegisterKind::Float, name: "SHADER_CONSTANT_322_Y" },
+    RegisterInfo { index: 0x450A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_322_Z" },
+    RegisterInfo { index: 0x450B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_322_W" },
+    RegisterInfo { index: 0x450C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_323_X" },
+    RegisterInfo { index: 0x450D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_323_Y" },
+    RegisterInfo { index: 0x450E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_323_Z" },
+    RegisterInfo { index: 0x450F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_323_W" },
+    RegisterInfo { index: 0x4510, kind: RegisterKind::Float, name: "SHADER_CONSTANT_324_X" },
+    RegisterInfo { index: 0x4511, kind: RegisterKind::Float, name: "SHADER_CONSTANT_324_Y" },
+    RegisterInfo { index: 0x4512, kind: RegisterKind::Float, name: "SHADER_CONSTANT_324_Z" },
+    RegisterInfo { index: 0x4513, kind: RegisterKind::Float, name: "SHADER_CONSTANT_324_W" },
+    RegisterInfo { index: 0x4514, kind: RegisterKind::Float, name: "SHADER_CONSTANT_325_X" },
+    RegisterInfo { index: 0x4515, kind: RegisterKind::Float, name: "SHADER_CONSTANT_325_Y" },
+    RegisterInfo { index: 0x4516, kind: RegisterKind::Float, name: "SHADER_CONSTANT_325_Z" },
+    RegisterInfo { index: 0x4517, kind: RegisterKind::Float, name: "SHADER_CONSTANT_325_W" },
+    RegisterInfo { index: 0x4518, kind: RegisterKind::Float, name: "SHADER_CONSTANT_326_X" },
+    RegisterInfo { index: 0x4519, kind: RegisterKind::Float, name: "SHADER_CONSTANT_326_Y" },
+    RegisterInfo { index: 0x451A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_326_Z" },
+    RegisterInfo { index: 0x451B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_326_W" },
+    RegisterInfo { index: 0x451C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_327_X" },
+    RegisterInfo { index: 0x451D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_327_Y" },
+    RegisterInfo { index: 0x451E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_327_Z" },
+    RegisterInfo { index: 0x451F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_327_W" },
+    RegisterInfo { index: 0x4520, kind: RegisterKind::Float, name: "SHADER_CONSTANT_328_X" },
+    RegisterInfo { index: 0x4521, kind: RegisterKind::Float, name: "SHADER_CONSTANT_328_Y" },
+    RegisterInfo { index: 0x4522, kind: RegisterKind::Float, name: "SHADER_CONSTANT_328_Z" },
+    RegisterInfo { index: 0x4523, kind: RegisterKind::Float, name: "SHADER_CONSTANT_328_W" },
+    RegisterInfo { index: 0x4524, kind: RegisterKind::Float, name: "SHADER_CONSTANT_329_X" },
+    RegisterInfo { index: 0x4525, kind: RegisterKind::Float, name: "SHADER_CONSTANT_329_Y" },
+    RegisterInfo { index: 0x4526, kind: RegisterKind::Float, name: "SHADER_CONSTANT_329_Z" },
+    RegisterInfo { index: 0x4527, kind: RegisterKind::Float, name: "SHADER_CONSTANT_329_W" },
+    RegisterInfo { index: 0x4528, kind: RegisterKind::Float, name: "SHADER_CONSTANT_330_X" },
+    RegisterInfo { index: 0x4529, kind: RegisterKind::Float, name: "SHADER_CONSTANT_330_Y" },
+    RegisterInfo { index: 0x452A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_330_Z" },
+    RegisterInfo { index: 0x452B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_330_W" },
+    RegisterInfo { index: 0x452C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_331_X" },
+    RegisterInfo { index: 0x452D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_331_Y" },
+    RegisterInfo { index: 0x452E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_331_Z" },
+    RegisterInfo { index: 0x452F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_331_W" },
+    RegisterInfo { index: 0x4530, kind: RegisterKind::Float, name: "SHADER_CONSTANT_332_X" },
+    RegisterInfo { index: 0x4531, kind: RegisterKind::Float, name: "SHADER_CONSTANT_332_Y" },
+    RegisterInfo { index: 0x4532, kind: RegisterKind::Float, name: "SHADER_CONSTANT_332_Z" },
+    RegisterInfo { index: 0x4533, kind: RegisterKind::Float, name: "SHADER_CONSTANT_332_W" },
+    RegisterInfo { index: 0x4534, kind: RegisterKind::Float, name: "SHADER_CONSTANT_333_X" },
+    RegisterInfo { index: 0x4535, kind: RegisterKind::Float, name: "SHADER_CONSTANT_333_Y" },
+    RegisterInfo { index: 0x4536, kind: RegisterKind::Float, name: "SHADER_CONSTANT_333_Z" },
+    RegisterInfo { index: 0x4537, kind: RegisterKind::Float, name: "SHADER_CONSTANT_333_W" },
+    RegisterInfo { index: 0x4538, kind: RegisterKind::Float, name: "SHADER_CONSTANT_334_X" },
+    RegisterInfo { index: 0x4539, kind: RegisterKind::Float, name: "SHADER_CONSTANT_334_Y" },
+    RegisterInfo { index: 0x453A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_334_Z" },
+    RegisterInfo { index: 0x453B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_334_W" },
+    RegisterInfo { index: 0x453C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_335_X" },
+    RegisterInfo { index: 0x453D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_335_Y" },
+    RegisterInfo { index: 0x453E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_335_Z" },
+    RegisterInfo { index: 0x453F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_335_W" },
+    RegisterInfo { index: 0x4540, kind: RegisterKind::Float, name: "SHADER_CONSTANT_336_X" },
+    RegisterInfo { index: 0x4541, kind: RegisterKind::Float, name: "SHADER_CONSTANT_336_Y" },
+    RegisterInfo { index: 0x4542, kind: RegisterKind::Float, name: "SHADER_CONSTANT_336_Z" },
+    RegisterInfo { index: 0x4543, kind: RegisterKind::Float, name: "SHADER_CONSTANT_336_W" },
+    RegisterInfo { index: 0x4544, kind: RegisterKind::Float, name: "SHADER_CONSTANT_337_X" },
+    RegisterInfo { index: 0x4545, kind: RegisterKind::Float, name: "SHADER_CONSTANT_337_Y" },
+    RegisterInfo { index: 0x4546, kind: RegisterKind::Float, name: "SHADER_CONSTANT_337_Z" },
+    RegisterInfo { index: 0x4547, kind: RegisterKind::Float, name: "SHADER_CONSTANT_337_W" },
+    RegisterInfo { index: 0x4548, kind: RegisterKind::Float, name: "SHADER_CONSTANT_338_X" },
+    RegisterInfo { index: 0x4549, kind: RegisterKind::Float, name: "SHADER_CONSTANT_338_Y" },
+    RegisterInfo { index: 0x454A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_338_Z" },
+    RegisterInfo { index: 0x454B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_338_W" },
+    RegisterInfo { index: 0x454C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_339_X" },
+    RegisterInfo { index: 0x454D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_339_Y" },
+    RegisterInfo { index: 0x454E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_339_Z" },
+    RegisterInfo { index: 0x454F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_339_W" },
+    RegisterInfo { index: 0x4550, kind: RegisterKind::Float, name: "SHADER_CONSTANT_340_X" },
+    RegisterInfo { index: 0x4551, kind: RegisterKind::Float, name: "SHADER_CONSTANT_340_Y" },
+    RegisterInfo { index: 0x4552, kind: RegisterKind::Float, name: "SHADER_CONSTANT_340_Z" },
+    RegisterInfo { index: 0x4553, kind: RegisterKind::Float, name: "SHADER_CONSTANT_340_W" },
+    RegisterInfo { index: 0x4554, kind: RegisterKind::Float, name: "SHADER_CONSTANT_341_X" },
+    RegisterInfo { index: 0x4555, kind: RegisterKind::Float, name: "SHADER_CONSTANT_341_Y" },
+    RegisterInfo { index: 0x4556, kind: RegisterKind::Float, name: "SHADER_CONSTANT_341_Z" },
+    RegisterInfo { index: 0x4557, kind: RegisterKind::Float, name: "SHADER_CONSTANT_341_W" },
+    RegisterInfo { index: 0x4558, kind: RegisterKind::Float, name: "SHADER_CONSTANT_342_X" },
+    RegisterInfo { index: 0x4559, kind: RegisterKind::Float, name: "SHADER_CONSTANT_342_Y" },
+    RegisterInfo { index: 0x455A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_342_Z" },
+    RegisterInfo { index: 0x455B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_342_W" },
+    RegisterInfo { index: 0x455C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_343_X" },
+    RegisterInfo { index: 0x455D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_343_Y" },
+    RegisterInfo { index: 0x455E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_343_Z" },
+    RegisterInfo { index: 0x455F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_343_W" },
+    RegisterInfo { index: 0x4560, kind: RegisterKind::Float, name: "SHADER_CONSTANT_344_X" },
+    RegisterInfo { index: 0x4561, kind: RegisterKind::Float, name: "SHADER_CONSTANT_344_Y" },
+    RegisterInfo { index: 0x4562, kind: RegisterKind::Float, name: "SHADER_CONSTANT_344_Z" },
+    RegisterInfo { index: 0x4563, kind: RegisterKind::Float, name: "SHADER_CONSTANT_344_W" },
+    RegisterInfo { index: 0x4564, kind: RegisterKind::Float, name: "SHADER_CONSTANT_345_X" },
+    RegisterInfo { index: 0x4565, kind: RegisterKind::Float, name: "SHADER_CONSTANT_345_Y" },
+    RegisterInfo { index: 0x4566, kind: RegisterKind::Float, name: "SHADER_CONSTANT_345_Z" },
+    RegisterInfo { index: 0x4567, kind: RegisterKind::Float, name: "SHADER_CONSTANT_345_W" },
+    RegisterInfo { index: 0x4568, kind: RegisterKind::Float, name: "SHADER_CONSTANT_346_X" },
+    RegisterInfo { index: 0x4569, kind: RegisterKind::Float, name: "SHADER_CONSTANT_346_Y" },
+    RegisterInfo { index: 0x456A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_346_Z" },
+    RegisterInfo { index: 0x456B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_346_W" },
+    RegisterInfo { index: 0x456C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_347_X" },
+    RegisterInfo { index: 0x456D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_347_Y" },
+    RegisterInfo { index: 0x456E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_347_Z" },
+    RegisterInfo { index: 0x456F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_347_W" },
+    RegisterInfo { index: 0x4570, kind: RegisterKind::Float, name: "SHADER_CONSTANT_348_X" },
+    RegisterInfo { index: 0x4571, kind: RegisterKind::Float, name: "SHADER_CONSTANT_348_Y" },
+    RegisterInfo { index: 0x4572, kind: RegisterKind::Float, name: "SHADER_CONSTANT_348_Z" },
+    RegisterInfo { index: 0x4573, kind: RegisterKind::Float, name: "SHADER_CONSTANT_348_W" },
+    RegisterInfo { index: 0x4574, kind: RegisterKind::Float, name: "SHADER_CONSTANT_349_X" },
+    RegisterInfo { index: 0x4575, kind: RegisterKind::Float, name: "SHADER_CONSTANT_349_Y" },
+    RegisterInfo { index: 0x4576, kind: RegisterKind::Float, name: "SHADER_CONSTANT_349_Z" },
+    RegisterInfo { index: 0x4577, kind: RegisterKind::Float, name: "SHADER_CONSTANT_349_W" },
+    RegisterInfo { index: 0x4578, kind: RegisterKind::Float, name: "SHADER_CONSTANT_350_X" },
+    RegisterInfo { index: 0x4579, kind: RegisterKind::Float, name: "SHADER_CONSTANT_350_Y" },
+    RegisterInfo { index: 0x457A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_350_Z" },
+    RegisterInfo { index: 0x457B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_350_W" },
+    RegisterInfo { index: 0x457C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_351_X" },
+    RegisterInfo { index: 0x457D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_351_Y" },
+    RegisterInfo { index: 0x457E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_351_Z" },
+    RegisterInfo { index: 0x457F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_351_W" },
+    RegisterInfo { index: 0x4580, kind: RegisterKind::Float, name: "SHADER_CONSTANT_352_X" },
+    RegisterInfo { index: 0x4581, kind: RegisterKind::Float, name: "SHADER_CONSTANT_352_Y" },
+    RegisterInfo { index: 0x4582, kind: RegisterKind::Float, name: "SHADER_CONSTANT_352_Z" },
+    RegisterInfo { index: 0x4583, kind: RegisterKind::Float, name: "SHADER_CONSTANT_352_W" },
+    RegisterInfo { index: 0x4584, kind: RegisterKind::Float, name: "SHADER_CONSTANT_353_X" },
+    RegisterInfo { index: 0x4585, kind: RegisterKind::Float, name: "SHADER_CONSTANT_353_Y" },
+    RegisterInfo { index: 0x4586, kind: RegisterKind::Float, name: "SHADER_CONSTANT_353_Z" },
+    RegisterInfo { index: 0x4587, kind: RegisterKind::Float, name: "SHADER_CONSTANT_353_W" },
+    RegisterInfo { index: 0x4588, kind: RegisterKind::Float, name: "SHADER_CONSTANT_354_X" },
+    RegisterInfo { index: 0x4589, kind: RegisterKind::Float, name: "SHADER_CONSTANT_354_Y" },
+    RegisterInfo { index: 0x458A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_354_Z" },
+    RegisterInfo { index: 0x458B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_354_W" },
+    RegisterInfo { index: 0x458C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_355_X" },
+    RegisterInfo { index: 0x458D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_355_Y" },
+    RegisterInfo { index: 0x458E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_355_Z" },
+    RegisterInfo { index: 0x458F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_355_W" },
+    RegisterInfo { index: 0x4590, kind: RegisterKind::Float, name: "SHADER_CONSTANT_356_X" },
+    RegisterInfo { index: 0x4591, kind: RegisterKind::Float, name: "SHADER_CONSTANT_356_Y" },
+    RegisterInfo { index: 0x4592, kind: RegisterKind::Float, name: "SHADER_CONSTANT_356_Z" },
+    RegisterInfo { index: 0x4593, kind: RegisterKind::Float, name: "SHADER_CONSTANT_356_W" },
+    RegisterInfo { index: 0x4594, kind: RegisterKind::Float, name: "SHADER_CONSTANT_357_X" },
+    RegisterInfo { index: 0x4595, kind: RegisterKind::Float, name: "SHADER_CONSTANT_357_Y" },
+    RegisterInfo { index: 0x4596, kind: RegisterKind::Float, name: "SHADER_CONSTANT_357_Z" },
+    RegisterInfo { index: 0x4597, kind: RegisterKind::Float, name: "SHADER_CONSTANT_357_W" },
+    RegisterInfo { index: 0x4598, kind: RegisterKind::Float, name: "SHADER_CONSTANT_358_X" },
+    RegisterInfo { index: 0x4599, kind: RegisterKind::Float, name: "SHADER_CONSTANT_358_Y" },
+    RegisterInfo { index: 0x459A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_358_Z" },
+    RegisterInfo { index: 0x459B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_358_W" },
+    RegisterInfo { index: 0x459C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_359_X" },
+    RegisterInfo { index: 0x459D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_359_Y" },
+    RegisterInfo { index: 0x459E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_359_Z" },
+    RegisterInfo { index: 0x459F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_359_W" },
+    RegisterInfo { index: 0x45A0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_360_X" },
+    RegisterInfo { index: 0x45A1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_360_Y" },
+    RegisterInfo { index: 0x45A2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_360_Z" },
+    RegisterInfo { index: 0x45A3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_360_W" },
+    RegisterInfo { index: 0x45A4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_361_X" },
+    RegisterInfo { index: 0x45A5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_361_Y" },
+    RegisterInfo { index: 0x45A6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_361_Z" },
+    RegisterInfo { index: 0x45A7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_361_W" },
+    RegisterInfo { index: 0x45A8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_362_X" },
+    RegisterInfo { index: 0x45A9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_362_Y" },
+    RegisterInfo { index: 0x45AA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_362_Z" },
+    RegisterInfo { index: 0x45AB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_362_W" },
+    RegisterInfo { index: 0x45AC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_363_X" },
+    RegisterInfo { index: 0x45AD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_363_Y" },
+    RegisterInfo { index: 0x45AE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_363_Z" },
+    RegisterInfo { index: 0x45AF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_363_W" },
+    RegisterInfo { index: 0x45B0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_364_X" },
+    RegisterInfo { index: 0x45B1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_364_Y" },
+    RegisterInfo { index: 0x45B2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_364_Z" },
+    RegisterInfo { index: 0x45B3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_364_W" },
+    RegisterInfo { index: 0x45B4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_365_X" },
+    RegisterInfo { index: 0x45B5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_365_Y" },
+    RegisterInfo { index: 0x45B6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_365_Z" },
+    RegisterInfo { index: 0x45B7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_365_W" },
+    RegisterInfo { index: 0x45B8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_366_X" },
+    RegisterInfo { index: 0x45B9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_366_Y" },
+    RegisterInfo { index: 0x45BA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_366_Z" },
+    RegisterInfo { index: 0x45BB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_366_W" },
+    RegisterInfo { index: 0x45BC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_367_X" },
+    RegisterInfo { index: 0x45BD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_367_Y" },
+    RegisterInfo { index: 0x45BE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_367_Z" },
+    RegisterInfo { index: 0x45BF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_367_W" },
+    RegisterInfo { index: 0x45C0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_368_X" },
+    RegisterInfo { index: 0x45C1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_368_Y" },
+    RegisterInfo { index: 0x45C2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_368_Z" },
+    RegisterInfo { index: 0x45C3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_368_W" },
+    RegisterInfo { index: 0x45C4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_369_X" },
+    RegisterInfo { index: 0x45C5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_369_Y" },
+    RegisterInfo { index: 0x45C6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_369_Z" },
+    RegisterInfo { index: 0x45C7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_369_W" },
+    RegisterInfo { index: 0x45C8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_370_X" },
+    RegisterInfo { index: 0x45C9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_370_Y" },
+    RegisterInfo { index: 0x45CA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_370_Z" },
+    RegisterInfo { index: 0x45CB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_370_W" },
+    RegisterInfo { index: 0x45CC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_371_X" },
+    RegisterInfo { index: 0x45CD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_371_Y" },
+    RegisterInfo { index: 0x45CE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_371_Z" },
+    RegisterInfo { index: 0x45CF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_371_W" },
+    RegisterInfo { index: 0x45D0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_372_X" },
+    RegisterInfo { index: 0x45D1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_372_Y" },
+    RegisterInfo { index: 0x45D2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_372_Z" },
+    RegisterInfo { index: 0x45D3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_372_W" },
+    RegisterInfo { index: 0x45D4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_373_X" },
+    RegisterInfo { index: 0x45D5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_373_Y" },
+    RegisterInfo { index: 0x45D6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_373_Z" },
+    RegisterInfo { index: 0x45D7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_373_W" },
+    RegisterInfo { index: 0x45D8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_374_X" },
+    RegisterInfo { index: 0x45D9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_374_Y" },
+    RegisterInfo { index: 0x45DA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_374_Z" },
+    RegisterInfo { index: 0x45DB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_374_W" },
+    RegisterInfo { index: 0x45DC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_375_X" },
+    RegisterInfo { index: 0x45DD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_375_Y" },
+    RegisterInfo { index: 0x45DE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_375_Z" },
+    RegisterInfo { index: 0x45DF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_375_W" },
+    RegisterInfo { index: 0x45E0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_376_X" },
+    RegisterInfo { index: 0x45E1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_376_Y" },
+    RegisterInfo { index: 0x45E2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_376_Z" },
+    RegisterInfo { index: 0x45E3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_376_W" },
+    RegisterInfo { index: 0x45E4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_377_X" },
+    RegisterInfo { index: 0x45E5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_377_Y" },
+    RegisterInfo { index: 0x45E6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_377_Z" },
+    RegisterInfo { index: 0x45E7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_377_W" },
+    RegisterInfo { index: 0x45E8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_378_X" },
+    RegisterInfo { index: 0x45E9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_378_Y" },
+    RegisterInfo { index: 0x45EA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_378_Z" },
+    RegisterInfo { index: 0x45EB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_378_W" },
+    RegisterInfo { index: 0x45EC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_379_X" },
+    RegisterInfo { index: 0x45ED, kind: RegisterKind::Float, name: "SHADER_CONSTANT_379_Y" },
+    RegisterInfo { index: 0x45EE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_379_Z" },
+    RegisterInfo { index: 0x45EF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_379_W" },
+    RegisterInfo { index: 0x45F0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_380_X" },
+    RegisterInfo { index: 0x45F1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_380_Y" },
+    RegisterInfo { index: 0x45F2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_380_Z" },
+    RegisterInfo { index: 0x45F3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_380_W" },
+    RegisterInfo { index: 0x45F4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_381_X" },
+    RegisterInfo { index: 0x45F5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_381_Y" },
+    RegisterInfo { index: 0x45F6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_381_Z" },
+    RegisterInfo { index: 0x45F7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_381_W" },
+    RegisterInfo { index: 0x45F8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_382_X" },
+    RegisterInfo { index: 0x45F9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_382_Y" },
+    RegisterInfo { index: 0x45FA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_382_Z" },
+    RegisterInfo { index: 0x45FB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_382_W" },
+    RegisterInfo { index: 0x45FC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_383_X" },
+    RegisterInfo { index: 0x45FD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_383_Y" },
+    RegisterInfo { index: 0x45FE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_383_Z" },
+    RegisterInfo { index: 0x45FF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_383_W" },
+    RegisterInfo { index: 0x4600, kind: RegisterKind::Float, name: "SHADER_CONSTANT_384_X" },
+    RegisterInfo { index: 0x4601, kind: RegisterKind::Float, name: "SHADER_CONSTANT_384_Y" },
+    RegisterInfo { index: 0x4602, kind: RegisterKind::Float, name: "SHADER_CONSTANT_384_Z" },
+    RegisterInfo { index: 0x4603, kind: RegisterKind::Float, name: "SHADER_CONSTANT_384_W" },
+    RegisterInfo { index: 0x4604, kind: RegisterKind::Float, name: "SHADER_CONSTANT_385_X" },
+    RegisterInfo { index: 0x4605, kind: RegisterKind::Float, name: "SHADER_CONSTANT_385_Y" },
+    RegisterInfo { index: 0x4606, kind: RegisterKind::Float, name: "SHADER_CONSTANT_385_Z" },
+    RegisterInfo { index: 0x4607, kind: RegisterKind::Float, name: "SHADER_CONSTANT_385_W" },
+    RegisterInfo { index: 0x4608, kind: RegisterKind::Float, name: "SHADER_CONSTANT_386_X" },
+    RegisterInfo { index: 0x4609, kind: RegisterKind::Float, name: "SHADER_CONSTANT_386_Y" },
+    RegisterInfo { index: 0x460A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_386_Z" },
+    RegisterInfo { index: 0x460B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_386_W" },
+    RegisterInfo { index: 0x460C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_387_X" },
+    RegisterInfo { index: 0x460D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_387_Y" },
+    RegisterInfo { index: 0x460E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_387_Z" },
+    RegisterInfo { index: 0x460F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_387_W" },
+    RegisterInfo { index: 0x4610, kind: RegisterKind::Float, name: "SHADER_CONSTANT_388_X" },
+    RegisterInfo { index: 0x4611, kind: RegisterKind::Float, name: "SHADER_CONSTANT_388_Y" },
+    RegisterInfo { index: 0x4612, kind: RegisterKind::Float, name: "SHADER_CONSTANT_388_Z" },
+    RegisterInfo { index: 0x4613, kind: RegisterKind::Float, name: "SHADER_CONSTANT_388_W" },
+    RegisterInfo { index: 0x4614, kind: RegisterKind::Float, name: "SHADER_CONSTANT_389_X" },
+    RegisterInfo { index: 0x4615, kind: RegisterKind::Float, name: "SHADER_CONSTANT_389_Y" },
+    RegisterInfo { index: 0x4616, kind: RegisterKind::Float, name: "SHADER_CONSTANT_389_Z" },
+    RegisterInfo { index: 0x4617, kind: RegisterKind::Float, name: "SHADER_CONSTANT_389_W" },
+    RegisterInfo { index: 0x4618, kind: RegisterKind::Float, name: "SHADER_CONSTANT_390_X" },
+    RegisterInfo { index: 0x4619, kind: RegisterKind::Float, name: "SHADER_CONSTANT_390_Y" },
+    RegisterInfo { index: 0x461A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_390_Z" },
+    RegisterInfo { index: 0x461B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_390_W" },
+    RegisterInfo { index: 0x461C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_391_X" },
+    RegisterInfo { index: 0x461D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_391_Y" },
+    RegisterInfo { index: 0x461E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_391_Z" },
+    RegisterInfo { index: 0x461F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_391_W" },
+    RegisterInfo { index: 0x4620, kind: RegisterKind::Float, name: "SHADER_CONSTANT_392_X" },
+    RegisterInfo { index: 0x4621, kind: RegisterKind::Float, name: "SHADER_CONSTANT_392_Y" },
+    RegisterInfo { index: 0x4622, kind: RegisterKind::Float, name: "SHADER_CONSTANT_392_Z" },
+    RegisterInfo { index: 0x4623, kind: RegisterKind::Float, name: "SHADER_CONSTANT_392_W" },
+    RegisterInfo { index: 0x4624, kind: RegisterKind::Float, name: "SHADER_CONSTANT_393_X" },
+    RegisterInfo { index: 0x4625, kind: RegisterKind::Float, name: "SHADER_CONSTANT_393_Y" },
+    RegisterInfo { index: 0x4626, kind: RegisterKind::Float, name: "SHADER_CONSTANT_393_Z" },
+    RegisterInfo { index: 0x4627, kind: RegisterKind::Float, name: "SHADER_CONSTANT_393_W" },
+    RegisterInfo { index: 0x4628, kind: RegisterKind::Float, name: "SHADER_CONSTANT_394_X" },
+    RegisterInfo { index: 0x4629, kind: RegisterKind::Float, name: "SHADER_CONSTANT_394_Y" },
+    RegisterInfo { index: 0x462A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_394_Z" },
+    RegisterInfo { index: 0x462B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_394_W" },
+    RegisterInfo { index: 0x462C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_395_X" },
+    RegisterInfo { index: 0x462D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_395_Y" },
+    RegisterInfo { index: 0x462E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_395_Z" },
+    RegisterInfo { index: 0x462F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_395_W" },
+    RegisterInfo { index: 0x4630, kind: RegisterKind::Float, name: "SHADER_CONSTANT_396_X" },
+    RegisterInfo { index: 0x4631, kind: RegisterKind::Float, name: "SHADER_CONSTANT_396_Y" },
+    RegisterInfo { index: 0x4632, kind: RegisterKind::Float, name: "SHADER_CONSTANT_396_Z" },
+    RegisterInfo { index: 0x4633, kind: RegisterKind::Float, name: "SHADER_CONSTANT_396_W" },
+    RegisterInfo { index: 0x4634, kind: RegisterKind::Float, name: "SHADER_CONSTANT_397_X" },
+    RegisterInfo { index: 0x4635, kind: RegisterKind::Float, name: "SHADER_CONSTANT_397_Y" },
+    RegisterInfo { index: 0x4636, kind: RegisterKind::Float, name: "SHADER_CONSTANT_397_Z" },
+    RegisterInfo { index: 0x4637, kind: RegisterKind::Float, name: "SHADER_CONSTANT_397_W" },
+    RegisterInfo { index: 0x4638, kind: RegisterKind::Float, name: "SHADER_CONSTANT_398_X" },
+    RegisterInfo { index: 0x4639, kind: RegisterKind::Float, name: "SHADER_CONSTANT_398_Y" },
+    RegisterInfo { index: 0x463A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_398_Z" },
+    RegisterInfo { index: 0x463B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_398_W" },
+    RegisterInfo { index: 0x463C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_399_X" },
+    RegisterInfo { index: 0x463D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_399_Y" },
+    RegisterInfo { index: 0x463E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_399_Z" },
+    RegisterInfo { index: 0x463F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_399_W" },
+    RegisterInfo { index: 0x4640, kind: RegisterKind::Float, name: "SHADER_CONSTANT_400_X" },
+    RegisterInfo { index: 0x4641, kind: RegisterKind::Float, name: "SHADER_CONSTANT_400_Y" },
+    RegisterInfo { index: 0x4642, kind: RegisterKind::Float, name: "SHADER_CONSTANT_400_Z" },
+    RegisterInfo { index: 0x4643, kind: RegisterKind::Float, name: "SHADER_CONSTANT_400_W" },
+    RegisterInfo { index: 0x4644, kind: RegisterKind::Float, name: "SHADER_CONSTANT_401_X" },
+    RegisterInfo { index: 0x4645, kind: RegisterKind::Float, name: "SHADER_CONSTANT_401_Y" },
+    RegisterInfo { index: 0x4646, kind: RegisterKind::Float, name: "SHADER_CONSTANT_401_Z" },
+    RegisterInfo { index: 0x4647, kind: RegisterKind::Float, name: "SHADER_CONSTANT_401_W" },
+    RegisterInfo { index: 0x4648, kind: RegisterKind::Float, name: "SHADER_CONSTANT_402_X" },
+    RegisterInfo { index: 0x4649, kind: RegisterKind::Float, name: "SHADER_CONSTANT_402_Y" },
+    RegisterInfo { index: 0x464A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_402_Z" },
+    RegisterInfo { index: 0x464B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_402_W" },
+    RegisterInfo { index: 0x464C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_403_X" },
+    RegisterInfo { index: 0x464D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_403_Y" },
+    RegisterInfo { index: 0x464E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_403_Z" },
+    RegisterInfo { index: 0x464F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_403_W" },
+    RegisterInfo { index: 0x4650, kind: RegisterKind::Float, name: "SHADER_CONSTANT_404_X" },
+    RegisterInfo { index: 0x4651, kind: RegisterKind::Float, name: "SHADER_CONSTANT_404_Y" },
+    RegisterInfo { index: 0x4652, kind: RegisterKind::Float, name: "SHADER_CONSTANT_404_Z" },
+    RegisterInfo { index: 0x4653, kind: RegisterKind::Float, name: "SHADER_CONSTANT_404_W" },
+    RegisterInfo { index: 0x4654, kind: RegisterKind::Float, name: "SHADER_CONSTANT_405_X" },
+    RegisterInfo { index: 0x4655, kind: RegisterKind::Float, name: "SHADER_CONSTANT_405_Y" },
+    RegisterInfo { index: 0x4656, kind: RegisterKind::Float, name: "SHADER_CONSTANT_405_Z" },
+    RegisterInfo { index: 0x4657, kind: RegisterKind::Float, name: "SHADER_CONSTANT_405_W" },
+    RegisterInfo { index: 0x4658, kind: RegisterKind::Float, name: "SHADER_CONSTANT_406_X" },
+    RegisterInfo { index: 0x4659, kind: RegisterKind::Float, name: "SHADER_CONSTANT_406_Y" },
+    RegisterInfo { index: 0x465A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_406_Z" },
+    RegisterInfo { index: 0x465B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_406_W" },
+    RegisterInfo { index: 0x465C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_407_X" },
+    RegisterInfo { index: 0x465D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_407_Y" },
+    RegisterInfo { index: 0x465E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_407_Z" },
+    RegisterInfo { index: 0x465F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_407_W" },
+    RegisterInfo { index: 0x4660, kind: RegisterKind::Float, name: "SHADER_CONSTANT_408_X" },
+    RegisterInfo { index: 0x4661, kind: RegisterKind::Float, name: "SHADER_CONSTANT_408_Y" },
+    RegisterInfo { index: 0x4662, kind: RegisterKind::Float, name: "SHADER_CONSTANT_408_Z" },
+    RegisterInfo { index: 0x4663, kind: RegisterKind::Float, name: "SHADER_CONSTANT_408_W" },
+    RegisterInfo { index: 0x4664, kind: RegisterKind::Float, name: "SHADER_CONSTANT_409_X" },
+    RegisterInfo { index: 0x4665, kind: RegisterKind::Float, name: "SHADER_CONSTANT_409_Y" },
+    RegisterInfo { index: 0x4666, kind: RegisterKind::Float, name: "SHADER_CONSTANT_409_Z" },
+    RegisterInfo { index: 0x4667, kind: RegisterKind::Float, name: "SHADER_CONSTANT_409_W" },
+    RegisterInfo { index: 0x4668, kind: RegisterKind::Float, name: "SHADER_CONSTANT_410_X" },
+    RegisterInfo { index: 0x4669, kind: RegisterKind::Float, name: "SHADER_CONSTANT_410_Y" },
+    RegisterInfo { index: 0x466A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_410_Z" },
+    RegisterInfo { index: 0x466B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_410_W" },
+    RegisterInfo { index: 0x466C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_411_X" },
+    RegisterInfo { index: 0x466D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_411_Y" },
+    RegisterInfo { index: 0x466E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_411_Z" },
+    RegisterInfo { index: 0x466F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_411_W" },
+    RegisterInfo { index: 0x4670, kind: RegisterKind::Float, name: "SHADER_CONSTANT_412_X" },
+    RegisterInfo { index: 0x4671, kind: RegisterKind::Float, name: "SHADER_CONSTANT_412_Y" },
+    RegisterInfo { index: 0x4672, kind: RegisterKind::Float, name: "SHADER_CONSTANT_412_Z" },
+    RegisterInfo { index: 0x4673, kind: RegisterKind::Float, name: "SHADER_CONSTANT_412_W" },
+    RegisterInfo { index: 0x4674, kind: RegisterKind::Float, name: "SHADER_CONSTANT_413_X" },
+    RegisterInfo { index: 0x4675, kind: RegisterKind::Float, name: "SHADER_CONSTANT_413_Y" },
+    RegisterInfo { index: 0x4676, kind: RegisterKind::Float, name: "SHADER_CONSTANT_413_Z" },
+    RegisterInfo { index: 0x4677, kind: RegisterKind::Float, name: "SHADER_CONSTANT_413_W" },
+    RegisterInfo { index: 0x4678, kind: RegisterKind::Float, name: "SHADER_CONSTANT_414_X" },
+    RegisterInfo { index: 0x4679, kind: RegisterKind::Float, name: "SHADER_CONSTANT_414_Y" },
+    RegisterInfo { index: 0x467A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_414_Z" },
+    RegisterInfo { index: 0x467B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_414_W" },
+    RegisterInfo { index: 0x467C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_415_X" },
+    RegisterInfo { index: 0x467D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_415_Y" },
+    RegisterInfo { index: 0x467E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_415_Z" },
+    RegisterInfo { index: 0x467F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_415_W" },
+    RegisterInfo { index: 0x4680, kind: RegisterKind::Float, name: "SHADER_CONSTANT_416_X" },
+    RegisterInfo { index: 0x4681, kind: RegisterKind::Float, name: "SHADER_CONSTANT_416_Y" },
+    RegisterInfo { index: 0x4682, kind: RegisterKind::Float, name: "SHADER_CONSTANT_416_Z" },
+    RegisterInfo { index: 0x4683, kind: RegisterKind::Float, name: "SHADER_CONSTANT_416_W" },
+    RegisterInfo { index: 0x4684, kind: RegisterKind::Float, name: "SHADER_CONSTANT_417_X" },
+    RegisterInfo { index: 0x4685, kind: RegisterKind::Float, name: "SHADER_CONSTANT_417_Y" },
+    RegisterInfo { index: 0x4686, kind: RegisterKind::Float, name: "SHADER_CONSTANT_417_Z" },
+    RegisterInfo { index: 0x4687, kind: RegisterKind::Float, name: "SHADER_CONSTANT_417_W" },
+    RegisterInfo { index: 0x4688, kind: RegisterKind::Float, name: "SHADER_CONSTANT_418_X" },
+    RegisterInfo { index: 0x4689, kind: RegisterKind::Float, name: "SHADER_CONSTANT_418_Y" },
+    RegisterInfo { index: 0x468A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_418_Z" },
+    RegisterInfo { index: 0x468B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_418_W" },
+    RegisterInfo { index: 0x468C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_419_X" },
+    RegisterInfo { index: 0x468D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_419_Y" },
+    RegisterInfo { index: 0x468E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_419_Z" },
+    RegisterInfo { index: 0x468F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_419_W" },
+    RegisterInfo { index: 0x4690, kind: RegisterKind::Float, name: "SHADER_CONSTANT_420_X" },
+    RegisterInfo { index: 0x4691, kind: RegisterKind::Float, name: "SHADER_CONSTANT_420_Y" },
+    RegisterInfo { index: 0x4692, kind: RegisterKind::Float, name: "SHADER_CONSTANT_420_Z" },
+    RegisterInfo { index: 0x4693, kind: RegisterKind::Float, name: "SHADER_CONSTANT_420_W" },
+    RegisterInfo { index: 0x4694, kind: RegisterKind::Float, name: "SHADER_CONSTANT_421_X" },
+    RegisterInfo { index: 0x4695, kind: RegisterKind::Float, name: "SHADER_CONSTANT_421_Y" },
+    RegisterInfo { index: 0x4696, kind: RegisterKind::Float, name: "SHADER_CONSTANT_421_Z" },
+    RegisterInfo { index: 0x4697, kind: RegisterKind::Float, name: "SHADER_CONSTANT_421_W" },
+    RegisterInfo { index: 0x4698, kind: RegisterKind::Float, name: "SHADER_CONSTANT_422_X" },
+    RegisterInfo { index: 0x4699, kind: RegisterKind::Float, name: "SHADER_CONSTANT_422_Y" },
+    RegisterInfo { index: 0x469A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_422_Z" },
+    RegisterInfo { index: 0x469B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_422_W" },
+    RegisterInfo { index: 0x469C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_423_X" },
+    RegisterInfo { index: 0x469D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_423_Y" },
+    RegisterInfo { index: 0x469E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_423_Z" },
+    RegisterInfo { index: 0x469F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_423_W" },
+    RegisterInfo { index: 0x46A0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_424_X" },
+    RegisterInfo { index: 0x46A1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_424_Y" },
+    RegisterInfo { index: 0x46A2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_424_Z" },
+    RegisterInfo { index: 0x46A3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_424_W" },
+    RegisterInfo { index: 0x46A4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_425_X" },
+    RegisterInfo { index: 0x46A5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_425_Y" },
+    RegisterInfo { index: 0x46A6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_425_Z" },
+    RegisterInfo { index: 0x46A7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_425_W" },
+    RegisterInfo { index: 0x46A8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_426_X" },
+    RegisterInfo { index: 0x46A9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_426_Y" },
+    RegisterInfo { index: 0x46AA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_426_Z" },
+    RegisterInfo { index: 0x46AB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_426_W" },
+    RegisterInfo { index: 0x46AC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_427_X" },
+    RegisterInfo { index: 0x46AD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_427_Y" },
+    RegisterInfo { index: 0x46AE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_427_Z" },
+    RegisterInfo { index: 0x46AF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_427_W" },
+    RegisterInfo { index: 0x46B0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_428_X" },
+    RegisterInfo { index: 0x46B1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_428_Y" },
+    RegisterInfo { index: 0x46B2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_428_Z" },
+    RegisterInfo { index: 0x46B3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_428_W" },
+    RegisterInfo { index: 0x46B4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_429_X" },
+    RegisterInfo { index: 0x46B5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_429_Y" },
+    RegisterInfo { index: 0x46B6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_429_Z" },
+    RegisterInfo { index: 0x46B7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_429_W" },
+    RegisterInfo { index: 0x46B8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_430_X" },
+    RegisterInfo { index: 0x46B9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_430_Y" },
+    RegisterInfo { index: 0x46BA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_430_Z" },
+    RegisterInfo { index: 0x46BB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_430_W" },
+    RegisterInfo { index: 0x46BC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_431_X" },
+    RegisterInfo { index: 0x46BD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_431_Y" },
+    RegisterInfo { index: 0x46BE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_431_Z" },
+    RegisterInfo { index: 0x46BF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_431_W" },
+    RegisterInfo { index: 0x46C0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_432_X" },
+    RegisterInfo { index: 0x46C1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_432_Y" },
+    RegisterInfo { index: 0x46C2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_432_Z" },
+    RegisterInfo { index: 0x46C3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_432_W" },
+    RegisterInfo { index: 0x46C4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_433_X" },
+    RegisterInfo { index: 0x46C5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_433_Y" },
+    RegisterInfo { index: 0x46C6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_433_Z" },
+    RegisterInfo { index: 0x46C7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_433_W" },
+    RegisterInfo { index: 0x46C8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_434_X" },
+    RegisterInfo { index: 0x46C9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_434_Y" },
+    RegisterInfo { index: 0x46CA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_434_Z" },
+    RegisterInfo { index: 0x46CB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_434_W" },
+    RegisterInfo { index: 0x46CC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_435_X" },
+    RegisterInfo { index: 0x46CD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_435_Y" },
+    RegisterInfo { index: 0x46CE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_435_Z" },
+    RegisterInfo { index: 0x46CF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_435_W" },
+    RegisterInfo { index: 0x46D0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_436_X" },
+    RegisterInfo { index: 0x46D1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_436_Y" },
+    RegisterInfo { index: 0x46D2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_436_Z" },
+    RegisterInfo { index: 0x46D3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_436_W" },
+    RegisterInfo { index: 0x46D4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_437_X" },
+    RegisterInfo { index: 0x46D5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_437_Y" },
+    RegisterInfo { index: 0x46D6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_437_Z" },
+    RegisterInfo { index: 0x46D7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_437_W" },
+    RegisterInfo { index: 0x46D8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_438_X" },
+    RegisterInfo { index: 0x46D9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_438_Y" },
+    RegisterInfo { index: 0x46DA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_438_Z" },
+    RegisterInfo { index: 0x46DB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_438_W" },
+    RegisterInfo { index: 0x46DC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_439_X" },
+    RegisterInfo { index: 0x46DD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_439_Y" },
+    RegisterInfo { index: 0x46DE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_439_Z" },
+    RegisterInfo { index: 0x46DF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_439_W" },
+    RegisterInfo { index: 0x46E0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_440_X" },
+    RegisterInfo { index: 0x46E1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_440_Y" },
+    RegisterInfo { index: 0x46E2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_440_Z" },
+    RegisterInfo { index: 0x46E3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_440_W" },
+    RegisterInfo { index: 0x46E4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_441_X" },
+    RegisterInfo { index: 0x46E5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_441_Y" },
+    RegisterInfo { index: 0x46E6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_441_Z" },
+    RegisterInfo { index: 0x46E7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_441_W" },
+    RegisterInfo { index: 0x46E8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_442_X" },
+    RegisterInfo { index: 0x46E9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_442_Y" },
+    RegisterInfo { index: 0x46EA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_442_Z" },
+    RegisterInfo { index: 0x46EB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_442_W" },
+    RegisterInfo { index: 0x46EC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_443_X" },
+    RegisterInfo { index: 0x46ED, kind: RegisterKind::Float, name: "SHADER_CONSTANT_443_Y" },
+    RegisterInfo { index: 0x46EE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_443_Z" },
+    RegisterInfo { index: 0x46EF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_443_W" },
+    RegisterInfo { index: 0x46F0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_444_X" },
+    RegisterInfo { index: 0x46F1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_444_Y" },
+    RegisterInfo { index: 0x46F2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_444_Z" },
+    RegisterInfo { index: 0x46F3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_444_W" },
+    RegisterInfo { index: 0x46F4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_445_X" },
+    RegisterInfo { index: 0x46F5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_445_Y" },
+    RegisterInfo { index: 0x46F6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_445_Z" },
+    RegisterInfo { index: 0x46F7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_445_W" },
+    RegisterInfo { index: 0x46F8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_446_X" },
+    RegisterInfo { index: 0x46F9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_446_Y" },
+    RegisterInfo { index: 0x46FA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_446_Z" },
+    RegisterInfo { index: 0x46FB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_446_W" },
+    RegisterInfo { index: 0x46FC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_447_X" },
+    RegisterInfo { index: 0x46FD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_447_Y" },
+    RegisterInfo { index: 0x46FE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_447_Z" },
+    RegisterInfo { index: 0x46FF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_447_W" },
+    RegisterInfo { index: 0x4700, kind: RegisterKind::Float, name: "SHADER_CONSTANT_448_X" },
+    RegisterInfo { index: 0x4701, kind: RegisterKind::Float, name: "SHADER_CONSTANT_448_Y" },
+    RegisterInfo { index: 0x4702, kind: RegisterKind::Float, name: "SHADER_CONSTANT_448_Z" },
+    RegisterInfo { index: 0x4703, kind: RegisterKind::Float, name: "SHADER_CONSTANT_448_W" },
+    RegisterInfo { index: 0x4704, kind: RegisterKind::Float, name: "SHADER_CONSTANT_449_X" },
+    RegisterInfo { index: 0x4705, kind: RegisterKind::Float, name: "SHADER_CONSTANT_449_Y" },
+    RegisterInfo { index: 0x4706, kind: RegisterKind::Float, name: "SHADER_CONSTANT_449_Z" },
+    RegisterInfo { index: 0x4707, kind: RegisterKind::Float, name: "SHADER_CONSTANT_449_W" },
+    RegisterInfo { index: 0x4708, kind: RegisterKind::Float, name: "SHADER_CONSTANT_450_X" },
+    RegisterInfo { index: 0x4709, kind: RegisterKind::Float, name: "SHADER_CONSTANT_450_Y" },
+    RegisterInfo { index: 0x470A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_450_Z" },
+    RegisterInfo { index: 0x470B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_450_W" },
+    RegisterInfo { index: 0x470C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_451_X" },
+    RegisterInfo { index: 0x470D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_451_Y" },
+    RegisterInfo { index: 0x470E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_451_Z" },
+    RegisterInfo { index: 0x470F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_451_W" },
+    RegisterInfo { index: 0x4710, kind: RegisterKind::Float, name: "SHADER_CONSTANT_452_X" },
+    RegisterInfo { index: 0x4711, kind: RegisterKind::Float, name: "SHADER_CONSTANT_452_Y" },
+    RegisterInfo { index: 0x4712, kind: RegisterKind::Float, name: "SHADER_CONSTANT_452_Z" },
+    RegisterInfo { index: 0x4713, kind: RegisterKind::Float, name: "SHADER_CONSTANT_452_W" },
+    RegisterInfo { index: 0x4714, kind: RegisterKind::Float, name: "SHADER_CONSTANT_453_X" },
+    RegisterInfo { index: 0x4715, kind: RegisterKind::Float, name: "SHADER_CONSTANT_453_Y" },
+    RegisterInfo { index: 0x4716, kind: RegisterKind::Float, name: "SHADER_CONSTANT_453_Z" },
+    RegisterInfo { index: 0x4717, kind: RegisterKind::Float, name: "SHADER_CONSTANT_453_W" },
+    RegisterInfo { index: 0x4718, kind: RegisterKind::Float, name: "SHADER_CONSTANT_454_X" },
+    RegisterInfo { index: 0x4719, kind: RegisterKind::Float, name: "SHADER_CONSTANT_454_Y" },
+    RegisterInfo { index: 0x471A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_454_Z" },
+    RegisterInfo { index: 0x471B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_454_W" },
+    RegisterInfo { index: 0x471C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_455_X" },
+    RegisterInfo { index: 0x471D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_455_Y" },
+    RegisterInfo { index: 0x471E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_455_Z" },
+    RegisterInfo { index: 0x471F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_455_W" },
+    RegisterInfo { index: 0x4720, kind: RegisterKind::Float, name: "SHADER_CONSTANT_456_X" },
+    RegisterInfo { index: 0x4721, kind: RegisterKind::Float, name: "SHADER_CONSTANT_456_Y" },
+    RegisterInfo { index: 0x4722, kind: RegisterKind::Float, name: "SHADER_CONSTANT_456_Z" },
+    RegisterInfo { index: 0x4723, kind: RegisterKind::Float, name: "SHADER_CONSTANT_456_W" },
+    RegisterInfo { index: 0x4724, kind: RegisterKind::Float, name: "SHADER_CONSTANT_457_X" },
+    RegisterInfo { index: 0x4725, kind: RegisterKind::Float, name: "SHADER_CONSTANT_457_Y" },
+    RegisterInfo { index: 0x4726, kind: RegisterKind::Float, name: "SHADER_CONSTANT_457_Z" },
+    RegisterInfo { index: 0x4727, kind: RegisterKind::Float, name: "SHADER_CONSTANT_457_W" },
+    RegisterInfo { index: 0x4728, kind: RegisterKind::Float, name: "SHADER_CONSTANT_458_X" },
+    RegisterInfo { index: 0x4729, kind: RegisterKind::Float, name: "SHADER_CONSTANT_458_Y" },
+    RegisterInfo { index: 0x472A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_458_Z" },
+    RegisterInfo { index: 0x472B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_458_W" },
+    RegisterInfo { index: 0x472C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_459_X" },
+    RegisterInfo { index: 0x472D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_459_Y" },
+    RegisterInfo { index: 0x472E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_459_Z" },
+    RegisterInfo { index: 0x472F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_459_W" },
+    RegisterInfo { index: 0x4730, kind: RegisterKind::Float, name: "SHADER_CONSTANT_460_X" },
+    RegisterInfo { index: 0x4731, kind: RegisterKind::Float, name: "SHADER_CONSTANT_460_Y" },
+    RegisterInfo { index: 0x4732, kind: RegisterKind::Float, name: "SHADER_CONSTANT_460_Z" },
+    RegisterInfo { index: 0x4733, kind: RegisterKind::Float, name: "SHADER_CONSTANT_460_W" },
+    RegisterInfo { index: 0x4734, kind: RegisterKind::Float, name: "SHADER_CONSTANT_461_X" },
+    RegisterInfo { index: 0x4735, kind: RegisterKind::Float, name: "SHADER_CONSTANT_461_Y" },
+    RegisterInfo { index: 0x4736, kind: RegisterKind::Float, name: "SHADER_CONSTANT_461_Z" },
+    RegisterInfo { index: 0x4737, kind: RegisterKind::Float, name: "SHADER_CONSTANT_461_W" },
+    RegisterInfo { index: 0x4738, kind: RegisterKind::Float, name: "SHADER_CONSTANT_462_X" },
+    RegisterInfo { index: 0x4739, kind: RegisterKind::Float, name: "SHADER_CONSTANT_462_Y" },
+    RegisterInfo { index: 0x473A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_462_Z" },
+    RegisterInfo { index: 0x473B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_462_W" },
+    RegisterInfo { index: 0x473C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_463_X" },
+    RegisterInfo { index: 0x473D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_463_Y" },
+    RegisterInfo { index: 0x473E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_463_Z" },
+    RegisterInfo { index: 0x473F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_463_W" },
+    RegisterInfo { index: 0x4740, kind: RegisterKind::Float, name: "SHADER_CONSTANT_464_X" },
+    RegisterInfo { index: 0x4741, kind: RegisterKind::Float, name: "SHADER_CONSTANT_464_Y" },
+    RegisterInfo { index: 0x4742, kind: RegisterKind::Float, name: "SHADER_CONSTANT_464_Z" },
+    RegisterInfo { index: 0x4743, kind: RegisterKind::Float, name: "SHADER_CONSTANT_464_W" },
+    RegisterInfo { index: 0x4744, kind: RegisterKind::Float, name: "SHADER_CONSTANT_465_X" },
+    RegisterInfo { index: 0x4745, kind: RegisterKind::Float, name: "SHADER_CONSTANT_465_Y" },
+    RegisterInfo { index: 0x4746, kind: RegisterKind::Float, name: "SHADER_CONSTANT_465_Z" },
+    RegisterInfo { index: 0x4747, kind: RegisterKind::Float, name: "SHADER_CONSTANT_465_W" },
+    RegisterInfo { index: 0x4748, kind: RegisterKind::Float, name: "SHADER_CONSTANT_466_X" },
+    RegisterInfo { index: 0x4749, kind: RegisterKind::Float, name: "SHADER_CONSTANT_466_Y" },
+    RegisterInfo { index: 0x474A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_466_Z" },
+    RegisterInfo { index: 0x474B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_466_W" },
+    RegisterInfo { index: 0x474C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_467_X" },
+    RegisterInfo { index: 0x474D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_467_Y" },
+    RegisterInfo { index: 0x474E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_467_Z" },
+    RegisterInfo { index: 0x474F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_467_W" },
+    RegisterInfo { index: 0x4750, kind: RegisterKind::Float, name: "SHADER_CONSTANT_468_X" },
+    RegisterInfo { index: 0x4751, kind: RegisterKind::Float, name: "SHADER_CONSTANT_468_Y" },
+    RegisterInfo { index: 0x4752, kind: RegisterKind::Float, name: "SHADER_CONSTANT_468_Z" },
+    RegisterInfo { index: 0x4753, kind: RegisterKind::Float, name: "SHADER_CONSTANT_468_W" },
+    RegisterInfo { index: 0x4754, kind: RegisterKind::Float, name: "SHADER_CONSTANT_469_X" },
+    RegisterInfo { index: 0x4755, kind: RegisterKind::Float, name: "SHADER_CONSTANT_469_Y" },
+    RegisterInfo { index: 0x4756, kind: RegisterKind::Float, name: "SHADER_CONSTANT_469_Z" },
+    RegisterInfo { index: 0x4757, kind: RegisterKind::Float, name: "SHADER_CONSTANT_469_W" },
+    RegisterInfo { index: 0x4758, kind: RegisterKind::Float, name: "SHADER_CONSTANT_470_X" },
+    RegisterInfo { index: 0x4759, kind: RegisterKind::Float, name: "SHADER_CONSTANT_470_Y" },
+    RegisterInfo { index: 0x475A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_470_Z" },
+    RegisterInfo { index: 0x475B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_470_W" },
+    RegisterInfo { index: 0x475C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_471_X" },
+    RegisterInfo { index: 0x475D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_471_Y" },
+    RegisterInfo { index: 0x475E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_471_Z" },
+    RegisterInfo { index: 0x475F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_471_W" },
+    RegisterInfo { index: 0x4760, kind: RegisterKind::Float, name: "SHADER_CONSTANT_472_X" },
+    RegisterInfo { index: 0x4761, kind: RegisterKind::Float, name: "SHADER_CONSTANT_472_Y" },
+    RegisterInfo { index: 0x4762, kind: RegisterKind::Float, name: "SHADER_CONSTANT_472_Z" },
+    RegisterInfo { index: 0x4763, kind: RegisterKind::Float, name: "SHADER_CONSTANT_472_W" },
+    RegisterInfo { index: 0x4764, kind: RegisterKind::Float, name: "SHADER_CONSTANT_473_X" },
+    RegisterInfo { index: 0x4765, kind: RegisterKind::Float, name: "SHADER_CONSTANT_473_Y" },
+    RegisterInfo { index: 0x4766, kind: RegisterKind::Float, name: "SHADER_CONSTANT_473_Z" },
+    RegisterInfo { index: 0x4767, kind: RegisterKind::Float, name: "SHADER_CONSTANT_473_W" },
+    RegisterInfo { index: 0x4768, kind: RegisterKind::Float, name: "SHADER_CONSTANT_474_X" },
+    RegisterInfo { index: 0x4769, kind: RegisterKind::Float, name: "SHADER_CONSTANT_474_Y" },
+    RegisterInfo { index: 0x476A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_474_Z" },
+    RegisterInfo { index: 0x476B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_474_W" },
+    RegisterInfo { index: 0x476C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_475_X" },
+    RegisterInfo { index: 0x476D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_475_Y" },
+    RegisterInfo { index: 0x476E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_475_Z" },
+    RegisterInfo { index: 0x476F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_475_W" },
+    RegisterInfo { index: 0x4770, kind: RegisterKind::Float, name: "SHADER_CONSTANT_476_X" },
+    RegisterInfo { index: 0x4771, kind: RegisterKind::Float, name: "SHADER_CONSTANT_476_Y" },
+    RegisterInfo { index: 0x4772, kind: RegisterKind::Float, name: "SHADER_CONSTANT_476_Z" },
+    RegisterInfo { index: 0x4773, kind: RegisterKind::Float, name: "SHADER_CONSTANT_476_W" },
+    RegisterInfo { index: 0x4774, kind: RegisterKind::Float, name: "SHADER_CONSTANT_477_X" },
+    RegisterInfo { index: 0x4775, kind: RegisterKind::Float, name: "SHADER_CONSTANT_477_Y" },
+    RegisterInfo { index: 0x4776, kind: RegisterKind::Float, name: "SHADER_CONSTANT_477_Z" },
+    RegisterInfo { index: 0x4777, kind: RegisterKind::Float, name: "SHADER_CONSTANT_477_W" },
+    RegisterInfo { index: 0x4778, kind: RegisterKind::Float, name: "SHADER_CONSTANT_478_X" },
+    RegisterInfo { index: 0x4779, kind: RegisterKind::Float, name: "SHADER_CONSTANT_478_Y" },
+    RegisterInfo { index: 0x477A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_478_Z" },
+    RegisterInfo { index: 0x477B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_478_W" },
+    RegisterInfo { index: 0x477C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_479_X" },
+    RegisterInfo { index: 0x477D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_479_Y" },
+    RegisterInfo { index: 0x477E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_479_Z" },
+    RegisterInfo { index: 0x477F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_479_W" },
+    RegisterInfo { index: 0x4780, kind: RegisterKind::Float, name: "SHADER_CONSTANT_480_X" },
+    RegisterInfo { index: 0x4781, kind: RegisterKind::Float, name: "SHADER_CONSTANT_480_Y" },
+    RegisterInfo { index: 0x4782, kind: RegisterKind::Float, name: "SHADER_CONSTANT_480_Z" },
+    RegisterInfo { index: 0x4783, kind: RegisterKind::Float, name: "SHADER_CONSTANT_480_W" },
+    RegisterInfo { index: 0x4784, kind: RegisterKind::Float, name: "SHADER_CONSTANT_481_X" },
+    RegisterInfo { index: 0x4785, kind: RegisterKind::Float, name: "SHADER_CONSTANT_481_Y" },
+    RegisterInfo { index: 0x4786, kind: RegisterKind::Float, name: "SHADER_CONSTANT_481_Z" },
+    RegisterInfo { index: 0x4787, kind: RegisterKind::Float, name: "SHADER_CONSTANT_481_W" },
+    RegisterInfo { index: 0x4788, kind: RegisterKind::Float, name: "SHADER_CONSTANT_482_X" },
+    RegisterInfo { index: 0x4789, kind: RegisterKind::Float, name: "SHADER_CONSTANT_482_Y" },
+    RegisterInfo { index: 0x478A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_482_Z" },
+    RegisterInfo { index: 0x478B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_482_W" },
+    RegisterInfo { index: 0x478C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_483_X" },
+    RegisterInfo { index: 0x478D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_483_Y" },
+    RegisterInfo { index: 0x478E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_483_Z" },
+    RegisterInfo { index: 0x478F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_483_W" },
+    RegisterInfo { index: 0x4790, kind: RegisterKind::Float, name: "SHADER_CONSTANT_484_X" },
+    RegisterInfo { index: 0x4791, kind: RegisterKind::Float, name: "SHADER_CONSTANT_484_Y" },
+    RegisterInfo { index: 0x4792, kind: RegisterKind::Float, name: "SHADER_CONSTANT_484_Z" },
+    RegisterInfo { index: 0x4793, kind: RegisterKind::Float, name: "SHADER_CONSTANT_484_W" },
+    RegisterInfo { index: 0x4794, kind: RegisterKind::Float, name: "SHADER_CONSTANT_485_X" },
+    RegisterInfo { index: 0x4795, kind: RegisterKind::Float, name: "SHADER_CONSTANT_485_Y" },
+    RegisterInfo { index: 0x4796, kind: RegisterKind::Float, name: "SHADER_CONSTANT_485_Z" },
+    RegisterInfo { index: 0x4797, kind: RegisterKind::Float, name: "SHADER_CONSTANT_485_W" },
+    RegisterInfo { index: 0x4798, kind: RegisterKind::Float, name: "SHADER_CONSTANT_486_X" },
+    RegisterInfo { index: 0x4799, kind: RegisterKind::Float, name: "SHADER_CONSTANT_486_Y" },
+    RegisterInfo { index: 0x479A, kind: RegisterKind::Float, name: "SHADER_CONSTANT_486_Z" },
+    RegisterInfo { index: 0x479B, kind: RegisterKind::Float, name: "SHADER_CONSTANT_486_W" },
+    RegisterInfo { index: 0x479C, kind: RegisterKind::Float, name: "SHADER_CONSTANT_487_X" },
+    RegisterInfo { index: 0x479D, kind: RegisterKind::Float, name: "SHADER_CONSTANT_487_Y" },
+    RegisterInfo { index: 0x479E, kind: RegisterKind::Float, name: "SHADER_CONSTANT_487_Z" },
+    RegisterInfo { index: 0x479F, kind: RegisterKind::Float, name: "SHADER_CONSTANT_487_W" },
+    RegisterInfo { index: 0x47A0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_488_X" },
+    RegisterInfo { index: 0x47A1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_488_Y" },
+    RegisterInfo { index: 0x47A2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_488_Z" },
+    RegisterInfo { index: 0x47A3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_488_W" },
+    RegisterInfo { index: 0x47A4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_489_X" },
+    RegisterInfo { index: 0x47A5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_489_Y" },
+    RegisterInfo { index: 0x47A6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_489_Z" },
+    RegisterInfo { index: 0x47A7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_489_W" },
+    RegisterInfo { index: 0x47A8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_490_X" },
+    RegisterInfo { index: 0x47A9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_490_Y" },
+    RegisterInfo { index: 0x47AA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_490_Z" },
+    RegisterInfo { index: 0x47AB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_490_W" },
+    RegisterInfo { index: 0x47AC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_491_X" },
+    RegisterInfo { index: 0x47AD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_491_Y" },
+    RegisterInfo { index: 0x47AE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_491_Z" },
+    RegisterInfo { index: 0x47AF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_491_W" },
+    RegisterInfo { index: 0x47B0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_492_X" },
+    RegisterInfo { index: 0x47B1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_492_Y" },
+    RegisterInfo { index: 0x47B2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_492_Z" },
+    RegisterInfo { index: 0x47B3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_492_W" },
+    RegisterInfo { index: 0x47B4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_493_X" },
+    RegisterInfo { index: 0x47B5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_493_Y" },
+    RegisterInfo { index: 0x47B6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_493_Z" },
+    RegisterInfo { index: 0x47B7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_493_W" },
+    RegisterInfo { index: 0x47B8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_494_X" },
+    RegisterInfo { index: 0x47B9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_494_Y" },
+    RegisterInfo { index: 0x47BA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_494_Z" },
+    RegisterInfo { index: 0x47BB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_494_W" },
+    RegisterInfo { index: 0x47BC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_495_X" },
+    RegisterInfo { index: 0x47BD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_495_Y" },
+    RegisterInfo { index: 0x47BE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_495_Z" },
+    RegisterInfo { index: 0x47BF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_495_W" },
+    RegisterInfo { index: 0x47C0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_496_X" },
+    RegisterInfo { index: 0x47C1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_496_Y" },
+    RegisterInfo { index: 0x47C2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_496_Z" },
+    RegisterInfo { index: 0x47C3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_496_W" },
+    RegisterInfo { index: 0x47C4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_497_X" },
+    RegisterInfo { index: 0x47C5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_497_Y" },
+    RegisterInfo { index: 0x47C6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_497_Z" },
+    RegisterInfo { index: 0x47C7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_497_W" },
+    RegisterInfo { index: 0x47C8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_498_X" },
+    RegisterInfo { index: 0x47C9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_498_Y" },
+    RegisterInfo { index: 0x47CA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_498_Z" },
+    RegisterInfo { index: 0x47CB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_498_W" },
+    RegisterInfo { index: 0x47CC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_499_X" },
+    RegisterInfo { index: 0x47CD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_499_Y" },
+    RegisterInfo { index: 0x47CE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_499_Z" },
+    RegisterInfo { index: 0x47CF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_499_W" },
+    RegisterInfo { index: 0x47D0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_500_X" },
+    RegisterInfo { index: 0x47D1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_500_Y" },
+    RegisterInfo { index: 0x47D2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_500_Z" },
+    RegisterInfo { index: 0x47D3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_500_W" },
+    RegisterInfo { index: 0x47D4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_501_X" },
+    RegisterInfo { index: 0x47D5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_501_Y" },
+    RegisterInfo { index: 0x47D6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_501_Z" },
+    RegisterInfo { index: 0x47D7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_501_W" },
+    RegisterInfo { index: 0x47D8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_502_X" },
+    RegisterInfo { index: 0x47D9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_502_Y" },
+    RegisterInfo { index: 0x47DA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_502_Z" },
+    RegisterInfo { index: 0x47DB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_502_W" },
+    RegisterInfo { index: 0x47DC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_503_X" },
+    RegisterInfo { index: 0x47DD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_503_Y" },
+    RegisterInfo { index: 0x47DE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_503_Z" },
+    RegisterInfo { index: 0x47DF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_503_W" },
+    RegisterInfo { index: 0x47E0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_504_X" },
+    RegisterInfo { index: 0x47E1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_504_Y" },
+    RegisterInfo { index: 0x47E2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_504_Z" },
+    RegisterInfo { index: 0x47E3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_504_W" },
+    RegisterInfo { index: 0x47E4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_505_X" },
+    RegisterInfo { index: 0x47E5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_505_Y" },
+    RegisterInfo { index: 0x47E6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_505_Z" },
+    RegisterInfo { index: 0x47E7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_505_W" },
+    RegisterInfo { index: 0x47E8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_506_X" },
+    RegisterInfo { index: 0x47E9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_506_Y" },
+    RegisterInfo { index: 0x47EA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_506_Z" },
+    RegisterInfo { index: 0x47EB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_506_W" },
+    RegisterInfo { index: 0x47EC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_507_X" },
+    RegisterInfo { index: 0x47ED, kind: RegisterKind::Float, name: "SHADER_CONSTANT_507_Y" },
+    RegisterInfo { index: 0x47EE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_507_Z" },
+    RegisterInfo { index: 0x47EF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_507_W" },
+    RegisterInfo { index: 0x47F0, kind: RegisterKind::Float, name: "SHADER_CONSTANT_508_X" },
+    RegisterInfo { index: 0x47F1, kind: RegisterKind::Float, name: "SHADER_CONSTANT_508_Y" },
+    RegisterInfo { index: 0x47F2, kind: RegisterKind::Float, name: "SHADER_CONSTANT_508_Z" },
+    RegisterInfo { index: 0x47F3, kind: RegisterKind::Float, name: "SHADER_CONSTANT_508_W" },
+    RegisterInfo { index: 0x47F4, kind: RegisterKind::Float, name: "SHADER_CONSTANT_509_X" },
+    RegisterInfo { index: 0x47F5, kind: RegisterKind::Float, name: "SHADER_CONSTANT_509_Y" },
+    RegisterInfo { index: 0x47F6, kind: RegisterKind::Float, name: "SHADER_CONSTANT_509_Z" },
+    RegisterInfo { index: 0x47F7, kind: RegisterKind::Float, name: "SHADER_CONSTANT_509_W" },
+    RegisterInfo { index: 0x47F8, kind: RegisterKind::Float, name: "SHADER_CONSTANT_510_X" },
+    RegisterInfo { index: 0x47F9, kind: RegisterKind::Float, name: "SHADER_CONSTANT_510_Y" },
+    RegisterInfo { index: 0x47FA, kind: RegisterKind::Float, name: "SHADER_CONSTANT_510_Z" },
+    RegisterInfo { index: 0x47FB, kind: RegisterKind::Float, name: "SHADER_CONSTANT_510_W" },
+    RegisterInfo { index: 0x47FC, kind: RegisterKind::Float, name: "SHADER_CONSTANT_511_X" },
+    RegisterInfo { index: 0x47FD, kind: RegisterKind::Float, name: "SHADER_CONSTANT_511_Y" },
+    RegisterInfo { index: 0x47FE, kind: RegisterKind::Float, name: "SHADER_CONSTANT_511_Z" },
+    RegisterInfo { index: 0x47FF, kind: RegisterKind::Float, name: "SHADER_CONSTANT_511_W" },
+    RegisterInfo { index: 0x4800, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_00_0" },
+    RegisterInfo { index: 0x4801, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_00_1" },
+    RegisterInfo { index: 0x4802, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_00_2" },
+    RegisterInfo { index: 0x4803, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_00_3" },
+    RegisterInfo { index: 0x4804, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_00_4" },
+    RegisterInfo { index: 0x4805, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_00_5" },
+    RegisterInfo { index: 0x4806, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_01_0" },
+    RegisterInfo { index: 0x4807, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_01_1" },
+    RegisterInfo { index: 0x4808, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_01_2" },
+    RegisterInfo { index: 0x4809, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_01_3" },
+    RegisterInfo { index: 0x480A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_01_4" },
+    RegisterInfo { index: 0x480B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_01_5" },
+    RegisterInfo { index: 0x480C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_02_0" },
+    RegisterInfo { index: 0x480D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_02_1" },
+    RegisterInfo { index: 0x480E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_02_2" },
+    RegisterInfo { index: 0x480F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_02_3" },
+    RegisterInfo { index: 0x4810, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_02_4" },
+    RegisterInfo { index: 0x4811, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_02_5" },
+    RegisterInfo { index: 0x4812, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_03_0" },
+    RegisterInfo { index: 0x4813, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_03_1" },
+    RegisterInfo { index: 0x4814, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_03_2" },
+    RegisterInfo { index: 0x4815, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_03_3" },
+    RegisterInfo { index: 0x4816, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_03_4" },
+    RegisterInfo { index: 0x4817, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_03_5" },
+    RegisterInfo { index: 0x4818, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_04_0" },
+    RegisterInfo { index: 0x4819, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_04_1" },
+    RegisterInfo { index: 0x481A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_04_2" },
+    RegisterInfo { index: 0x481B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_04_3" },
+    RegisterInfo { index: 0x481C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_04_4" },
+    RegisterInfo { index: 0x481D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_04_5" },
+    RegisterInfo { index: 0x481E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_05_0" },
+    RegisterInfo { index: 0x481F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_05_1" },
+    RegisterInfo { index: 0x4820, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_05_2" },
+    RegisterInfo { index: 0x4821, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_05_3" },
+    RegisterInfo { index: 0x4822, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_05_4" },
+    RegisterInfo { index: 0x4823, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_05_5" },
+    RegisterInfo { index: 0x4824, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_06_0" },
+    RegisterInfo { index: 0x4825, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_06_1" },
+    RegisterInfo { index: 0x4826, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_06_2" },
+    RegisterInfo { index: 0x4827, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_06_3" },
+    RegisterInfo { index: 0x4828, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_06_4" },
+    RegisterInfo { index: 0x4829, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_06_5" },
+    RegisterInfo { index: 0x482A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_07_0" },
+    RegisterInfo { index: 0x482B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_07_1" },
+    RegisterInfo { index: 0x482C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_07_2" },
+    RegisterInfo { index: 0x482D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_07_3" },
+    RegisterInfo { index: 0x482E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_07_4" },
+    RegisterInfo { index: 0x482F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_07_5" },
+    RegisterInfo { index: 0x4830, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_08_0" },
+    RegisterInfo { index: 0x4831, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_08_1" },
+    RegisterInfo { index: 0x4832, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_08_2" },
+    RegisterInfo { index: 0x4833, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_08_3" },
+    RegisterInfo { index: 0x4834, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_08_4" },
+    RegisterInfo { index: 0x4835, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_08_5" },
+    RegisterInfo { index: 0x4836, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_09_0" },
+    RegisterInfo { index: 0x4837, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_09_1" },
+    RegisterInfo { index: 0x4838, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_09_2" },
+    RegisterInfo { index: 0x4839, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_09_3" },
+    RegisterInfo { index: 0x483A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_09_4" },
+    RegisterInfo { index: 0x483B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_09_5" },
+    RegisterInfo { index: 0x483C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_10_0" },
+    RegisterInfo { index: 0x483D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_10_1" },
+    RegisterInfo { index: 0x483E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_10_2" },
+    RegisterInfo { index: 0x483F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_10_3" },
+    RegisterInfo { index: 0x4840, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_10_4" },
+    RegisterInfo { index: 0x4841, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_10_5" },
+    RegisterInfo { index: 0x4842, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_11_0" },
+    RegisterInfo { index: 0x4843, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_11_1" },
+    RegisterInfo { index: 0x4844, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_11_2" },
+    RegisterInfo { index: 0x4845, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_11_3" },
+    RegisterInfo { index: 0x4846, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_11_4" },
+    RegisterInfo { index: 0x4847, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_11_5" },
+    RegisterInfo { index: 0x4848, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_12_0" },
+    RegisterInfo { index: 0x4849, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_12_1" },
+    RegisterInfo { index: 0x484A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_12_2" },
+    RegisterInfo { index: 0x484B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_12_3" },
+    RegisterInfo { index: 0x484C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_12_4" },
+    RegisterInfo { index: 0x484D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_12_5" },
+    RegisterInfo { index: 0x484E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_13_0" },
+    RegisterInfo { index: 0x484F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_13_1" },
+    RegisterInfo { index: 0x4850, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_13_2" },
+    RegisterInfo { index: 0x4851, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_13_3" },
+    RegisterInfo { index: 0x4852, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_13_4" },
+    RegisterInfo { index: 0x4853, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_13_5" },
+    RegisterInfo { index: 0x4854, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_14_0" },
+    RegisterInfo { index: 0x4855, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_14_1" },
+    RegisterInfo { index: 0x4856, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_14_2" },
+    RegisterInfo { index: 0x4857, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_14_3" },
+    RegisterInfo { index: 0x4858, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_14_4" },
+    RegisterInfo { index: 0x4859, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_14_5" },
+    RegisterInfo { index: 0x485A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_15_0" },
+    RegisterInfo { index: 0x485B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_15_1" },
+    RegisterInfo { index: 0x485C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_15_2" },
+    RegisterInfo { index: 0x485D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_15_3" },
+    RegisterInfo { index: 0x485E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_15_4" },
+    RegisterInfo { index: 0x485F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_15_5" },
+    RegisterInfo { index: 0x4860, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_16_0" },
+    RegisterInfo { index: 0x4861, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_16_1" },
+    RegisterInfo { index: 0x4862, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_16_2" },
+    RegisterInfo { index: 0x4863, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_16_3" },
+    RegisterInfo { index: 0x4864, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_16_4" },
+    RegisterInfo { index: 0x4865, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_16_5" },
+    RegisterInfo { index: 0x4866, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_17_0" },
+    RegisterInfo { index: 0x4867, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_17_1" },
+    RegisterInfo { index: 0x4868, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_17_2" },
+    RegisterInfo { index: 0x4869, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_17_3" },
+    RegisterInfo { index: 0x486A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_17_4" },
+    RegisterInfo { index: 0x486B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_17_5" },
+    RegisterInfo { index: 0x486C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_18_0" },
+    RegisterInfo { index: 0x486D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_18_1" },
+    RegisterInfo { index: 0x486E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_18_2" },
+    RegisterInfo { index: 0x486F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_18_3" },
+    RegisterInfo { index: 0x4870, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_18_4" },
+    RegisterInfo { index: 0x4871, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_18_5" },
+    RegisterInfo { index: 0x4872, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_19_0" },
+    RegisterInfo { index: 0x4873, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_19_1" },
+    RegisterInfo { index: 0x4874, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_19_2" },
+    RegisterInfo { index: 0x4875, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_19_3" },
+    RegisterInfo { index: 0x4876, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_19_4" },
+    RegisterInfo { index: 0x4877, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_19_5" },
+    RegisterInfo { index: 0x4878, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_20_0" },
+    RegisterInfo { index: 0x4879, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_20_1" },
+    RegisterInfo { index: 0x487A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_20_2" },
+    RegisterInfo { index: 0x487B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_20_3" },
+    RegisterInfo { index: 0x487C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_20_4" },
+    RegisterInfo { index: 0x487D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_20_5" },
+    RegisterInfo { index: 0x487E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_21_0" },
+    RegisterInfo { index: 0x487F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_21_1" },
+    RegisterInfo { index: 0x4880, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_21_2" },
+    RegisterInfo { index: 0x4881, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_21_3" },
+    RegisterInfo { index: 0x4882, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_21_4" },
+    RegisterInfo { index: 0x4883, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_21_5" },
+    RegisterInfo { index: 0x4884, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_22_0" },
+    RegisterInfo { index: 0x4885, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_22_1" },
+    RegisterInfo { index: 0x4886, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_22_2" },
+    RegisterInfo { index: 0x4887, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_22_3" },
+    RegisterInfo { index: 0x4888, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_22_4" },
+    RegisterInfo { index: 0x4889, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_22_5" },
+    RegisterInfo { index: 0x488A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_23_0" },
+    RegisterInfo { index: 0x488B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_23_1" },
+    RegisterInfo { index: 0x488C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_23_2" },
+    RegisterInfo { index: 0x488D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_23_3" },
+    RegisterInfo { index: 0x488E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_23_4" },
+    RegisterInfo { index: 0x488F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_23_5" },
+    RegisterInfo { index: 0x4890, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_24_0" },
+    RegisterInfo { index: 0x4891, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_24_1" },
+    RegisterInfo { index: 0x4892, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_24_2" },
+    RegisterInfo { index: 0x4893, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_24_3" },
+    RegisterInfo { index: 0x4894, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_24_4" },
+    RegisterInfo { index: 0x4895, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_24_5" },
+    RegisterInfo { index: 0x4896, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_25_0" },
+    RegisterInfo { index: 0x4897, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_25_1" },
+    RegisterInfo { index: 0x4898, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_25_2" },
+    RegisterInfo { index: 0x4899, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_25_3" },
+    RegisterInfo { index: 0x489A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_25_4" },
+    RegisterInfo { index: 0x489B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_25_5" },
+    RegisterInfo { index: 0x489C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_26_0" },
+    RegisterInfo { index: 0x489D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_26_1" },
+    RegisterInfo { index: 0x489E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_26_2" },
+    RegisterInfo { index: 0x489F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_26_3" },
+    RegisterInfo { index: 0x48A0, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_26_4" },
+    RegisterInfo { index: 0x48A1, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_26_5" },
+    RegisterInfo { index: 0x48A2, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_27_0" },
+    RegisterInfo { index: 0x48A3, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_27_1" },
+    RegisterInfo { index: 0x48A4, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_27_2" },
+    RegisterInfo { index: 0x48A5, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_27_3" },
+    RegisterInfo { index: 0x48A6, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_27_4" },
+    RegisterInfo { index: 0x48A7, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_27_5" },
+    RegisterInfo { index: 0x48A8, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_28_0" },
+    RegisterInfo { index: 0x48A9, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_28_1" },
+    RegisterInfo { index: 0x48AA, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_28_2" },
+    RegisterInfo { index: 0x48AB, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_28_3" },
+    RegisterInfo { index: 0x48AC, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_28_4" },
+    RegisterInfo { index: 0x48AD, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_28_5" },
+    RegisterInfo { index: 0x48AE, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_29_0" },
+    RegisterInfo { index: 0x48AF, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_29_1" },
+    RegisterInfo { index: 0x48B0, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_29_2" },
+    RegisterInfo { index: 0x48B1, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_29_3" },
+    RegisterInfo { index: 0x48B2, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_29_4" },
+    RegisterInfo { index: 0x48B3, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_29_5" },
+    RegisterInfo { index: 0x48B4, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_30_0" },
+    RegisterInfo { index: 0x48B5, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_30_1" },
+    RegisterInfo { index: 0x48B6, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_30_2" },
+    RegisterInfo { index: 0x48B7, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_30_3" },
+    RegisterInfo { index: 0x48B8, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_30_4" },
+    RegisterInfo { index: 0x48B9, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_30_5" },
+    RegisterInfo { index: 0x48BA, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_31_0" },
+    RegisterInfo { index: 0x48BB, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_31_1" },
+    RegisterInfo { index: 0x48BC, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_31_2" },
+    RegisterInfo { index: 0x48BD, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_31_3" },
+    RegisterInfo { index: 0x48BE, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_31_4" },
+    RegisterInfo { index: 0x48BF, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FETCH_31_5" },
+    RegisterInfo { index: 0x4900, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_BOOL_000_031" },
+    RegisterInfo { index: 0x4901, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_BOOL_032_063" },
+    RegisterInfo { index: 0x4902, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_BOOL_064_095" },
+    RegisterInfo { index: 0x4903, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_BOOL_096_127" },
+    RegisterInfo { index: 0x4904, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_BOOL_128_159" },
+    RegisterInfo { index: 0x4905, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_BOOL_160_191" },
+    RegisterInfo { index: 0x4906, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_BOOL_192_223" },
+    RegisterInfo { index: 0x4907, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_BOOL_224_255" },
+    RegisterInfo { index: 0x4908, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_00" },
+    RegisterInfo { index: 0x4909, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_01" },
+    RegisterInfo { index: 0x490A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_02" },
+    RegisterInfo { index: 0x490B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_03" },
+    RegisterInfo { index: 0x490C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_04" },
+    RegisterInfo { index: 0x490D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_05" },
+    RegisterInfo { index: 0x490E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_06" },
+    RegisterInfo { index: 0x490F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_07" },
+    RegisterInfo { index: 0x4910, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_08" },
+    RegisterInfo { index: 0x4911, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_09" },
+    RegisterInfo { index: 0x4912, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_10" },
+    RegisterInfo { index: 0x4913, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_11" },
+    RegisterInfo { index: 0x4914, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_12" },
+    RegisterInfo { index: 0x4915, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_13" },
+    RegisterInfo { index: 0x4916, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_14" },
+    RegisterInfo { index: 0x4917, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_15" },
+    RegisterInfo { index: 0x4918, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_16" },
+    RegisterInfo { index: 0x4919, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_17" },
+    RegisterInfo { index: 0x491A, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_18" },
+    RegisterInfo { index: 0x491B, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_19" },
+    RegisterInfo { index: 0x491C, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_20" },
+    RegisterInfo { index: 0x491D, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_21" },
+    RegisterInfo { index: 0x491E, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_22" },
+    RegisterInfo { index: 0x491F, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_23" },
+    RegisterInfo { index: 0x4920, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_24" },
+    RegisterInfo { index: 0x4921, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_25" },
+    RegisterInfo { index: 0x4922, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_26" },
+    RegisterInfo { index: 0x4923, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_27" },
+    RegisterInfo { index: 0x4924, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_28" },
+    RegisterInfo { index: 0x4925, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_29" },
+    RegisterInfo { index: 0x4926, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_30" },
+    RegisterInfo { index: 0x4927, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_LOOP_31" },
+    RegisterInfo { index: 0x5000, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FLUSH_FETCH_0" },
+    RegisterInfo { index: 0x5001, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FLUSH_FETCH_1" },
+    RegisterInfo { index: 0x5002, kind: RegisterKind::Dword, name: "SHADER_CONSTANT_FLUSH_FETCH_2" },
+];
+
+/// Looks up the description of a register by index.
+pub fn register_info(index: u32) -> Option<&'static RegisterInfo> {
+    REGISTERS.binary_search_by_key(&index, |r| r.index).ok().map(|i| &REGISTERS[i])
+}
+
+/// Name of a register, if it is in the table.
+pub fn register_name(index: u32) -> Option<&'static str> {
+    register_info(index).map(|r| r.name)
+}

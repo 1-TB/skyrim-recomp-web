@@ -1,0 +1,13 @@
+[package]
+name = "xenos-texture"
+description = "Xenos texture fetch constants, formats, tiling and conversion to host layouts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+# Only for the ignored real-data test (Xbox 360 DDX textures are XMemCompress/LZX streams).
+lzxd = "=0.2.7"

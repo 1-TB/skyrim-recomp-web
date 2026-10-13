@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skyrim Runtime</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6f4; --fg: #1c1c1a; --muted: #6b6b66; --panel: #ffffff; --line: #d9d9d3; --accent: #2f5d8a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #151514; --fg: #e8e8e3; --muted: #9a9a93; --panel: #1f1f1d; --line: #34342f; --accent: #7fa8d1; } }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, input { font: inherit; }
+  button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=text] { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); min-width: 0; flex: 1 1 200px; }
+  #status { color: var(--muted); }
+  canvas { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 4px; }
+  pre { margin: 0; max-height: 60vh; overflow: auto; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Skyrim Runtime</h1>
+  <p>Boots your own dumped title, renders it with WebGPU and logs every kernel import it calls. Game files and saves stay in this browser's private storage.</p>
+
+  <section>
+    <div class="row">
+      <button id="pick">Import game folder…</button>
+      <button id="clear">Clear imported files</button>
+      <span id="status"></span>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <input id="args" type="text" value="--log info" aria-label="Runtime arguments">
+      <button id="boot" class="primary">Boot</button>
+      <button id="export-saves">Export saves</button>
+      <button id="import-saves">Import saves</button>
+    </div>
+  </section>
+
+  <section>
+    <canvas id="canvas" width="1280" height="720"></canvas>
+  </section>
+
+  <section>
+    <p>Controller: the first connected gamepad, or keyboard and mouse — WASD move, mouse (click the game
+      to capture it, Esc to release) or arrows look, left/right click or C/Z right/left triggers, Space A,
+      Tab or Esc B, R X, F Y, Q/E bumpers, Enter Start, Backspace Back, 1–4 D-pad.</p>
+    <div class="row"><button id="copy-log">Copy log</button></div>
+    <pre id="log"></pre>
+  </section>
+</main>
+<script src="boot.js"></script>
+</body>
+</html>

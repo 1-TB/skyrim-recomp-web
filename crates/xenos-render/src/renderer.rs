@@ -1,0 +1,209 @@
+//! The renderer thread's main object: executes queued commands in order and presents swaps.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use gpu_webgpu::{Device, FeatureName, TextureFormat};
+
+use crate::executor::Executor;
+use crate::present::Presenter;
+use crate::targets::RenderTargetCache;
+use crate::{Command, PhysicalMemory, RendererHandle};
+
+/// Milliseconds on a monotonic clock.
+pub(crate) fn now_ms() -> f64 {
+    #[cfg(target_os = "emscripten")]
+    {
+        gpu_webgpu::web::now_ms()
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1000.0
+    }
+}
+
+/// Creates the EDRAM emulation on the renderer thread once the device exists.
+pub type TargetsFactory = Box<dyn FnOnce(&Device) -> Box<dyn RenderTargetCache> + Send>;
+
+/// Optional features the renderer and its caches use when the adapter has them.
+pub fn wanted_features(available: &[FeatureName]) -> Vec<FeatureName> {
+    let mut wanted = vec![
+        FeatureName::TextureCompressionBC,
+        FeatureName::TextureCompressionBCSliced3D,
+        FeatureName::Float32Filterable,
+        FeatureName::TextureFormatsTier1,
+        FeatureName::Depth32FloatStencil8,
+    ];
+    #[cfg(not(target_os = "emscripten"))]
+    wanted.push(xenos_texture_cache::NATIVE_TEXTURE_FORMAT_16BIT_NORM);
+    wanted.retain(|f| available.contains(f));
+    wanted
+}
+
+pub(crate) struct Renderer {
+    pub device: Device,
+    pub executor: Executor,
+    pub presenter: Presenter,
+    /// Commands taken from the queue but not executed yet (waiting behind a resolve).
+    backlog: std::collections::VecDeque<(u64, Command)>,
+    /// A command whose resolve is in flight; it completes when the resolve does.
+    blocked: Option<u64>,
+    /// Frame count and WebGPU call counters at the last frame report.
+    calls_at: (u64, gpu_webgpu::counters::Counters),
+}
+
+impl Renderer {
+    pub fn new(
+        device: &Device,
+        memory: Arc<dyn PhysicalMemory>,
+        present_format: TextureFormat,
+        targets: TargetsFactory,
+    ) -> Self {
+        let targets = targets(device);
+        Renderer {
+            device: device.clone(),
+            executor: Executor::new(device, memory, targets),
+            presenter: Presenter::new(device, present_format),
+            backlog: Default::default(),
+            blocked: None,
+            calls_at: (0, gpu_webgpu::counters::snapshot()),
+        }
+    }
+
+    #[cfg_attr(not(target_os = "emscripten"), allow(dead_code))]
+    pub fn backlog_len(&self) -> usize {
+        self.backlog.len()
+    }
+
+    /// Executes queued commands (waiting up to `timeout` for some if there are none) until the
+    /// queue is drained or a resolve is in flight. `on_swap` runs for each swap after its frame
+    /// has been submitted, with the front buffer size if it could be decoded.
+    ///
+    /// With `budget_ms` it returns once that much time has been spent even if more work is
+    /// queued: on the web the thread must yield to its event loop regularly, or WebGPU calls
+    /// (whose commands only reach the GPU process between tasks) eventually block.
+    pub fn pump(
+        &mut self,
+        handle: &RendererHandle,
+        timeout: Option<Duration>,
+        budget_ms: Option<f64>,
+        mut on_swap: impl FnMut(&mut Self, Option<(u32, u32)>),
+    ) {
+        if self.backlog.is_empty() {
+            self.backlog = handle.take(timeout);
+        }
+        let start = now_ms();
+        // Completion is reported once per batch (waiters are woken at most then), the time
+        // budget is checked every few commands, and commands are timed on a sample: on the web
+        // every clock read is a call out to JavaScript.
+        let mut done = None;
+        let mut executed = 0u64;
+        while !self.executor.busy() {
+            if executed.is_multiple_of(BUDGET_CHECK_INTERVAL) && budget_ms.is_some_and(|b| now_ms() - start >= b) {
+                break;
+            }
+            if let Some(seq) = self.blocked.take() {
+                done = Some(seq);
+            }
+            let Some((seq, cmd)) = self.backlog.pop_front() else {
+                // More may have arrived meanwhile.
+                self.backlog = handle.take(None);
+                if self.backlog.is_empty() {
+                    break;
+                }
+                continue;
+            };
+            executed += 1;
+            let what: (&str, usize) = match &cmd {
+                Command::Registers(w) => ("registers", w.len()),
+                Command::Shader { code, .. } => ("shader", code.len()),
+                Command::Draw => ("draw", 0),
+                Command::Swap { .. } => ("swap", 0),
+            };
+            log::trace!("renderer: command {seq}: {what:?}");
+            let timed = matches!(cmd, Command::Swap { .. }) || seq.is_multiple_of(TIMED_COMMAND_INTERVAL);
+            let started = if timed { now_ms() } else { 0.0 };
+            match cmd {
+                Command::Registers(writes) => self.executor.write_registers(&writes),
+                Command::Shader { stage, code } => self.executor.load_shader(stage, code),
+                Command::Draw => self.executor.draw(),
+                Command::Swap { fetch, .. } => {
+                    self.executor.end_frame();
+                    let front = self.executor.front_buffer(fetch);
+                    let size = self.presenter.swap(&self.device, front);
+                    if self.presenter.frames == 1 || self.presenter.frames.is_multiple_of(300) {
+                        log::info!(
+                            "renderer: frame {}: {:?}; textures {:?}",
+                            self.presenter.frames,
+                            self.executor.stats,
+                            self.executor.texture_stats()
+                        );
+                        let calls = gpu_webgpu::counters::snapshot();
+                        let frames = self.presenter.frames - self.calls_at.0;
+                        log::info!("renderer: per frame: {}", calls_per_frame(&calls.since(&self.calls_at.1), frames));
+                        self.calls_at = (self.presenter.frames, calls);
+                    }
+                    on_swap(self, size);
+                }
+            }
+            if timed {
+                let took = now_ms() - started;
+                if took > 250.0 {
+                    let stages = if what.0 == "draw" { self.executor.last_draw_timing() } else { String::new() };
+                    log::warn!(
+                        "renderer: command {seq} {what:?} took {took:.0} ms ({stages}); {:?}",
+                        self.executor.stats
+                    );
+                }
+            }
+            // A draw that started a resolve completes once the resolve has.
+            if self.executor.busy() {
+                self.blocked = Some(seq);
+            } else {
+                done = Some(seq);
+            }
+        }
+        if let Some(seq) = done {
+            handle.complete(seq);
+        }
+    }
+}
+
+/// Commands between checks of the pump's time budget.
+const BUDGET_CHECK_INTERVAL: u64 = 16;
+/// One command in this many is timed for the slow-command warning (and every swap).
+const TIMED_COMMAND_INTERVAL: u64 = 64;
+
+/// WebGPU operations per frame over `frames` frames, for the perf log.
+pub(crate) fn calls_per_frame(c: &gpu_webgpu::counters::Counters, frames: u64) -> String {
+    let f = frames.max(1);
+    let by_label: Vec<String> = gpu_webgpu::counters::take_created_by_label()
+        .into_iter()
+        .take(6)
+        .map(|(kind, label, n)| format!("{kind} \"{label}\" {}", n / f))
+        .collect();
+    format!(
+        "{} draws, {} set_pipeline, {} set_bind_group, {} render passes, {} compute passes ({} dispatches), \
+         {} submits, {} write_buffer ({} KiB), {} write_texture, {} copies; created: {} buffers, {} textures, \
+         {} views, {} bind groups, {} samplers, {} pipelines (most: {})",
+        c.draws / f,
+        c.set_pipelines / f,
+        c.set_bind_groups / f,
+        c.render_passes / f,
+        c.compute_passes / f,
+        c.dispatches / f,
+        c.submits / f,
+        c.write_buffers / f,
+        c.write_buffer_bytes / f / 1024,
+        c.write_textures / f,
+        c.copies / f,
+        c.buffers / f,
+        c.textures / f,
+        c.views / f,
+        c.bind_groups / f,
+        c.samplers / f,
+        c.pipelines / f,
+        by_label.join(", "),
+    )
+}

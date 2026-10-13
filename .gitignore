@@ -1,0 +1,20 @@
+# Game material and anything derived from it must never be committed.
+*.iso
+*.xex
+*.xexp
+*.god
+*.stfs
+/game/
+/generated/
+/recomp-out/
+config/*.toml
+!config/*.toml.template
+
+# Build output
+/target/
+/build/
+/cpp/build*/
+/web-dist/
+
+# Profiler output (holds memory samples)
+perf.data*

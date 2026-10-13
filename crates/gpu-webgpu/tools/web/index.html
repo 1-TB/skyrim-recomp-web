@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gpu-webgpu web proof</title>
+<style>
+  body { margin: 0; background: #111; }
+  canvas { display: block; width: 256px; height: 256px; }
+</style>
+</head>
+<body>
+<canvas id="canvas" width="256" height="256"></canvas>
+<script>
+  // With -sOFFSCREENCANVAS_SUPPORT and PROXY_TO_PTHREAD, Emscripten hands Module.canvas to the
+  // main pthread at startup; spawn_canvas_thread("#canvas") passes it on to the renderer.
+  window.__log = [];
+  const log = (l) => { window.__log.push(l); console.log(l); };
+  window.Module = { canvas: document.getElementById('canvas'), print: log, printErr: log };
+</script>
+<script src="web_triangle.js"></script>
+</body>
+</html>

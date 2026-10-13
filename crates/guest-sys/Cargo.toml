@@ -1,0 +1,18 @@
+[package]
+name = "guest-sys"
+description = "Builds and links the XenonRecomp output (XENON_RECOMP_OUT) with the generated import shim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+links = "skyrim_guest"
+
+[dependencies]
+kernel-hle.workspace = true
+runtime-core.workspace = true
+
+[build-dependencies]
+kernel-hle.workspace = true
+runtime-core.workspace = true
+xex.workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "xenos-shader"
+description = "Xenos (Xbox 360 GPU) shader microcode to WGSL translation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }
+miniz_oxide = "=0.9.1"

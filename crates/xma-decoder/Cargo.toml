@@ -1,0 +1,11 @@
+[package]
+name = "xma-decoder"
+description = "Xbox 360 XMA audio: WMA Pro frame decoder (ported from FFmpeg) and the XMA context processor (ported from Xenia)"
+version.workspace = true
+edition.workspace = true
+# The frame decoder is a port of FFmpeg's LGPL wmaprodec.c, so this crate as a
+# whole is LGPL; it is kept separate from the MIT/Apache workspace crates.
+license = "LGPL-2.1-or-later"
+publish.workspace = true
+
+[dependencies]

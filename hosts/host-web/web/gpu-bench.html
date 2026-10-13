@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebGPU Cost Bench</title>
+<style>
+  :root { --bg: #111; --fg: #ddd; --muted: #888; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #fafafa; --fg: #222; --muted: #666; } }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; margin: 0 16px; }
+  pre { white-space: pre-wrap; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>WebGPU cost bench</h1>
+<p class="muted">Replays the renderer's per-frame mix of WebGPU operations (measured in Skyrim's cart scene) with
+  trivial shaders, removing one kind of operation at a time, to find which ones the browser's GPU process spends
+  the frame on. Takes about a minute; the result is sent to the dev server's log.</p>
+<button id="run">Run</button>
+<pre id="out"></pre>
+<script>
+'use strict';
+const out = document.getElementById('out');
+const print = (s) => { out.textContent += s + '\n'; };
+
+// Per-frame counts from the renderer's `perf: per frame` log line in the cart scene.
+const FULL = {
+  draws: 2260, setBindGroups: 2650, setPipelines: 530, renderPasses: 80, computePasses: 43, dispatches: 158,
+  submits: 63, writeCalls: 90, writeBytes: 13 << 20, buffersCreated: 250, bindGroupsCreated: 290,
+};
+const CONFIGS = [
+  ['full mix', {}],
+  ['no uploads (writeBuffer 64 KiB)', { writeBytes: 64 << 10, writeCalls: 4 }],
+  ['1 submit', { submits: 1 }],
+  ['no buffer/bind group creation', { buffersCreated: 0, bindGroupsCreated: 0 }],
+  ['4 render passes', { renderPasses: 4 }],
+  ['no compute', { computePasses: 0, dispatches: 0 }],
+  ['no draws/state', { draws: 0, setBindGroups: 0, setPipelines: 0 }],
+  ['draws/state only', { submits: 1, renderPasses: 4, computePasses: 0, dispatches: 0, writeCalls: 1,
+                          writeBytes: 64 << 10, buffersCreated: 0, bindGroupsCreated: 0 }],
+  ['uploads only', { draws: 0, setBindGroups: 0, setPipelines: 0, renderPasses: 1, computePasses: 0, dispatches: 0,
+                     submits: 1, buffersCreated: 0, bindGroupsCreated: 0 }],
+];
+const WARMUP = 5, FRAMES = 30, IN_FLIGHT = 2;
+
+const SHADER = `
+@group(0) @binding(0) var<storage, read> consts: array<vec4f, 256>;
+@group(0) @binding(1) var<uniform> sys: vec4f;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let p = vec2f(f32(i & 1u), f32(i >> 1u)) * 0.01 + consts[i & 255u].xy * 0.0 + sys.xy * 0.0;
+  return vec4f(p, 0.5, 1.0);
+}
+@fragment fn fs() -> @location(0) vec4f { return consts[0] + sys; }
+@group(0) @binding(0) var<storage, read_write> cdata: array<u32>;
+@compute @workgroup_size(64) fn cs(@builtin(global_invocation_id) g: vec3u) { cdata[g.x & 1023u] = g.x; }
+`;
+
+async function bench() {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) { print('WebGPU unavailable'); return; }
+  const device = await adapter.requestDevice();
+  let errors = 0;
+  device.addEventListener('uncapturederror', (e) => {
+    if (errors++ < 3) print(`GPU error: ${e.error.message}`);
+  });
+  print(`adapter: ${adapter.info?.vendor ?? ''} ${adapter.info?.architecture ?? ''} ${adapter.info?.description ?? ''}`);
+  const module = device.createShaderModule({ code: SHADER.split('@group(0) @binding(0) var<storage, read_write>')[0] });
+  const cmodule = device.createShaderModule({ code: '@group(0) @binding(0) var<storage, read_write>' + SHADER.split('@group(0) @binding(0) var<storage, read_write>')[1] });
+  const bgl = device.createBindGroupLayout({ entries: [
+    { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+      buffer: { type: 'read-only-storage', hasDynamicOffset: true, minBindingSize: 4096 } },
+    { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+      buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 16 } },
+  ] });
+  const layout = device.createPipelineLayout({ bindGroupLayouts: [bgl] });
+  const pipelines = [0, 1].map((n) => device.createRenderPipeline({
+    layout, vertex: { module, entryPoint: 'vs' },
+    fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba8unorm', writeMask: n ? 0xF : 0x7 }] },
+    primitive: { topology: 'triangle-list' },
+  }));
+  const cbgl = device.createBindGroupLayout({ entries: [
+    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }] });
+  const cpipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [cbgl] }), compute: { module: cmodule, entryPoint: 'cs' } });
+  const cbuf = device.createBuffer({ size: 4096, usage: GPUBufferUsage.STORAGE });
+  const cgroup = device.createBindGroup({ layout: cbgl, entries: [{ binding: 0, resource: { buffer: cbuf } }] });
+  const ringSize = 32 << 20;
+  const ring = device.createBuffer({ size: ringSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const group = device.createBindGroup({ layout: bgl, entries: [
+    { binding: 0, resource: { buffer: ring, size: 4096 } }, { binding: 1, resource: { buffer: ring, size: 16 } }] });
+  const index = device.createBuffer({ size: 16, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(index, 0, new Uint16Array([0, 1, 2, 0]));
+  const target = device.createTexture({ size: [1280, 720], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+  const view = target.createView();
+  const upload = new Uint8Array(16 << 20);
+  for (let i = 0; i < upload.length; i += 4096) upload[i] = i & 255;
+
+  function frame(c) {
+    const t0 = performance.now();
+    // Uploads (queue-level, like the renderer's ring and page uploads).
+    const per = Math.floor(c.writeBytes / Math.max(1, c.writeCalls)) & ~3;
+    for (let i = 0; i < c.writeCalls && per > 0; i++) {
+      device.queue.writeBuffer(ring, (i * per) % (ringSize - per) & ~255, upload, 0, per);
+    }
+    // Transient objects (uniform params and their bind groups), destroyed after submitting.
+    const created = [];
+    for (let i = 0; i < c.buffersCreated; i++) {
+      const b = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE, mappedAtCreation: true });
+      new Uint32Array(b.getMappedRange()).fill(i);
+      b.unmap();
+      created.push(b);
+    }
+    for (let i = 0; i < c.bindGroupsCreated; i++) {
+      const b = created[i % Math.max(1, created.length)] ?? ring;
+      device.createBindGroup({ layout: bgl, entries: [
+        { binding: 0, resource: { buffer: ring, size: 4096 } }, { binding: 1, resource: { buffer: b, size: 16 } }] });
+    }
+    // Work, split across submits; passes and draws spread evenly.
+    const submits = Math.max(1, c.submits);
+    const passes = Math.max(c.renderPasses, c.draws ? 1 : 0);
+    let drawn = 0, bound = 0, piped = 0, cdone = 0, dispatched = 0, passesDone = 0;
+    for (let s = 0; s < submits; s++) {
+      const enc = device.createCommandEncoder();
+      const passEnd = Math.round(passes * (s + 1) / submits);
+      for (; passesDone < passEnd; passesDone++) {
+        const cpEnd = Math.round(c.computePasses * (passesDone + 1) / passes);
+        for (; cdone < cpEnd; cdone++) {
+          const cp = enc.beginComputePass();
+          cp.setPipeline(cpipeline);
+          cp.setBindGroup(0, cgroup);
+          const dEnd = Math.round(c.dispatches * (cdone + 1) / Math.max(1, c.computePasses));
+          for (; dispatched < dEnd; dispatched++) cp.dispatchWorkgroups(1);
+          cp.end();
+        }
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: 'load', storeOp: 'store' }] });
+        rp.setIndexBuffer(index, 'uint16');
+        const drawEnd = Math.round(c.draws * (passesDone + 1) / passes);
+        const first = drawn;
+        for (; drawn < drawEnd; drawn++) {
+          // State resets with each pass: its first draw always sets both.
+          if (drawn === first || piped < c.setPipelines * drawn / Math.max(1, c.draws)) {
+            rp.setPipeline(pipelines[piped++ & 1]);
+          }
+          if (drawn === first && bound >= c.setBindGroups * (drawn + 1) / Math.max(1, c.draws)) {
+            rp.setBindGroup(0, group, [0, 4096]);
+            bound++;
+          }
+          while (bound < c.setBindGroups * (drawn + 1) / Math.max(1, c.draws)) {
+            const off = ((drawn * 4352 + bound * 256) % (ringSize - 8192)) & ~255;
+            rp.setBindGroup(0, group, [off, off + 4096]);
+            bound++;
+          }
+          rp.drawIndexed(3);
+        }
+        rp.end();
+      }
+      device.queue.submit([enc.finish()]);
+    }
+    for (const b of created) b.destroy();
+    return { cpu: performance.now() - t0, done: device.queue.onSubmittedWorkDone() };
+  }
+
+  async function run(name, overrides) {
+    const c = { ...FULL, ...overrides };
+    const inFlight = [];
+    let cpu = 0, start = 0;
+    for (let f = 0; f < WARMUP + FRAMES; f++) {
+      if (f === WARMUP) { await Promise.all(inFlight.splice(0)); start = performance.now(); cpu = 0; }
+      const r = frame(c);
+      if (f >= WARMUP) cpu += r.cpu;
+      inFlight.push(r.done);
+      if (inFlight.length > IN_FLIGHT) await inFlight.shift();
+      // Let the browser breathe like the renderer's event loop does.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await Promise.all(inFlight);
+    const ms = (performance.now() - start) / FRAMES;
+    const line = `${name.padEnd(36)} ${ms.toFixed(1).padStart(7)} ms/frame  (JS ${(cpu / FRAMES).toFixed(1)} ms)`;
+    print(line);
+    return line;
+  }
+
+  const lines = [`adapter: ${adapter.info?.vendor ?? ''} ${adapter.info?.description ?? ''}`];
+  for (const [name, o] of CONFIGS) lines.push(await run(name, o));
+  print('done');
+  try {
+    await fetch(`log?session=gpu-bench-${Date.now()}`, { method: 'POST', body: lines.join('\n') + '\n' });
+    print('(sent to the server log)');
+  } catch {}
+}
+
+document.getElementById('run').addEventListener('click', () => {
+  document.getElementById('run').disabled = true;
+  bench().catch((e) => print(`error: ${e.message}`));
+});
+</script>
+</body>
+</html>

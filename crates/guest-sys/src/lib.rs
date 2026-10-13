@@ -1,0 +1,40 @@
+//! The recompiled title, linked in from XENON_RECOMP_OUT (see build.rs).
+
+use runtime_core::{FuncMapping, GuestModule, PPCContext};
+
+include!(concat!(env!("OUT_DIR"), "/imports.rs"));
+
+unsafe extern "C" {
+    fn skyrt_init_context(ctx: *mut PPCContext);
+    fn skyrt_func_mappings(count: *mut usize) -> *const FuncMapping;
+    fn skyrt_ppc_config(out: *mut u64);
+}
+
+// The generated C++ calls these; referencing them here keeps the linker from
+// discarding the objects that define them.
+#[used]
+static KEEP_KERNEL_CALL: unsafe extern "C-unwind" fn(u32, u32, *mut PPCContext, *mut u8) =
+    kernel_hle::dispatch::skyrt_kernel_call;
+#[used]
+static KEEP_TIMEBASE: extern "C" fn() -> u64 = runtime_core::timebase::skyrt_guest_timebase;
+
+/// Descriptor of the recompiled code for runtime-core.
+pub fn module() -> GuestModule {
+    let mut config = [0u64; 4];
+    let mut count = 0usize;
+    // SAFETY: the shim fills exactly four values and returns XenonRecomp's
+    // static, terminator-ended PPCFuncMappings array.
+    let functions = unsafe {
+        skyrt_ppc_config(config.as_mut_ptr());
+        let ptr = skyrt_func_mappings(&mut count);
+        std::slice::from_raw_parts(ptr, count + 1)
+    };
+    GuestModule {
+        image_base: config[0] as u32,
+        image_size: config[1] as u32,
+        code_base: config[2] as u32,
+        code_size: config[3] as u32,
+        functions,
+        init_context: skyrt_init_context,
+    }
+}

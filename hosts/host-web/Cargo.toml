@@ -1,0 +1,21 @@
+[package]
+name = "host-web"
+description = "Runs the recompiled title in the browser (wasm32-unknown-emscripten, pthreads, OPFS)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "host-web"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "emscripten")'.dependencies]
+guest-sys.workspace = true
+kernel-hle.workspace = true
+log.workspace = true
+runtime-core.workspace = true
+vfs.workspace = true
+xex.workspace = true
+xenos-render.workspace = true

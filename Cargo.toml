@@ -1,0 +1,64 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/xex",
+    "crates/runtime-core",
+    "crates/kernel-hle",
+    "crates/vfs",
+    "crates/guest-sys",
+    "crates/xenos-shader",
+    "crates/xenos-texture",
+    "crates/xenos-state",
+    "crates/gpu-webgpu",
+    "crates/xenos-render",
+    "crates/xenos-texture-cache",
+    "crates/xenos-edram",
+    "crates/xma-decoder",
+    "hosts/host-native",
+    "hosts/host-web",
+    "xtask",
+]
+# guest-sys and the hosts need recompiled guest code (XENON_RECOMP_OUT), so a bare
+# `cargo build` / `cargo test` only covers the crates that build without it.
+default-members = [
+    "crates/xex",
+    "crates/runtime-core",
+    "crates/kernel-hle",
+    "crates/vfs",
+    "crates/xenos-shader",
+    "crates/xenos-texture",
+    "crates/xenos-state",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+rustc-hash = "=1.1.0"
+xex = { path = "crates/xex" }
+runtime-core = { path = "crates/runtime-core" }
+kernel-hle = { path = "crates/kernel-hle" }
+vfs = { path = "crates/vfs" }
+guest-sys = { path = "crates/guest-sys" }
+xenos-shader = { path = "crates/xenos-shader" }
+xenos-texture = { path = "crates/xenos-texture" }
+xenos-state = { path = "crates/xenos-state" }
+gpu-webgpu = { path = "crates/gpu-webgpu" }
+xenos-render = { path = "crates/xenos-render" }
+xenos-texture-cache = { path = "crates/xenos-texture-cache" }
+xma-decoder = { path = "crates/xma-decoder" }
+xenos-edram = { path = "crates/xenos-edram" }
+log = { version = "0.4", features = ["std"] }
+libc = "0.2"
+
+[profile.dev]
+# Guest code is called through host frames on every kernel import; unoptimized
+# Rust makes the HLE layer the bottleneck even in debug builds.
+opt-level = 1
+
+[profile.release]
+debug = "line-tables-only"

@@ -1,0 +1,132 @@
+# XenonRecomp configuration for Skyrim (Xbox 360).
+#
+# Copy to config/skyrim.toml (gitignored) and fill in the addresses, then:
+#   cargo xtask scan --xex game/default.xex          # proposes most addresses below
+#   cargo xtask recompile --config config/skyrim.toml
+#
+# All paths are relative to this file. Nothing referenced here is committed:
+# game/ and generated/ are gitignored.
+#
+# Addresses are guest virtual addresses (the XEX image normally loads at
+# 0x82000000). Verify every value in a disassembler (IDA / Ghidra with an
+# Xbox 360 XEX loader) before trusting it.
+
+[main]
+
+# The title executable. It must be decrypted and decompressed so the runtime
+# can load the same image at boot (it never handles the retail AES key):
+#   xextool -e u -c u -o game/default.xex <original default.xex>
+file_path = "../game/default.xex"
+
+# Title update. If you apply one, XenonRecomp writes the patched image to
+# patched_file_path; that patched file is what the runtime must load (pass it
+# as SKYRIM_XEX and as --xex). Leave both commented out to recompile the disc
+# version.
+# patch_file_path = "../game/default.xexp"
+# patched_file_path = "../game/default_patched.xex"
+
+# Where the generated C++ goes (created by `cargo xtask recompile`). Point
+# XENON_RECOMP_OUT here when building guest-sys.
+out_directory_path = "../generated/recomp"
+
+# Jump tables found by XenonAnalyse, which turn `bctr` dispatch into real
+# switch statements. Generate with:
+#   ~/tools/XenonRecomp/build/XenonAnalyse/XenonAnalyse ../game/default.xex skyrim_switch_tables.toml
+# XenonAnalyse's pattern matching was tuned on Sonic Unleashed; if XenonRecomp
+# prints "Found a switch jump table at X with no switch table entry present",
+# add the missing tables to that file by hand ([[switch]] base/r/labels).
+# Uncomment once the file exists (XenonRecomp fails if it is missing).
+# switch_table_file_path = "skyrim_switch_tables.toml"
+
+# --- Register-in-context options ------------------------------------------------
+# Keep every one of these false. runtime-core's PPCContext mirrors the layout
+# in which all registers live in the context, and guest-sys refuses to build
+# output generated with any of them enabled.
+skip_lr = false
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+reserved_as_local = false
+cr_as_local = false
+non_argument_as_local = false
+non_volatile_as_local = false
+
+# --- Register save/restore helpers ----------------------------------------------
+# The compiler emits shared prologue/epilogue helpers that store or reload
+# non-volatile registers by falling through from __xxx_N to __xxx_31. Give the
+# address of the *first* entry (register 14, or 64 for the VMX128 set);
+# XenonRecomp derives the other entry points. `cargo xtask scan` searches the
+# code sections for these byte patterns; there should be exactly one hit each.
+#
+#   restgprlr_14  ld r14, -0x98(r1)    ... then lwz r12,-8(r1); mtlr r12; blr   e9 c1 ff 68
+#   savegprlr_14  std r14, -0x98(r1)   ... then stw r12,-8(r1); blr              f9 c1 ff 68
+#   restfpr_14    lfd f14, -0x90(r12)  ... through f31; blr                      c9 cc ff 70
+#   savefpr_14    stfd f14, -0x90(r12) ... through f31; blr                      d9 cc ff 70
+#   restvmx_14    li r11, -0x120; lvx v14, r11, r12       ... through v31        39 60 fe e0 7d cb 60 ce
+#   savevmx_14    li r11, -0x120; stvx v14, r11, r12      ... through v31        39 60 fe e0 7d cb 61 ce
+#   restvmx_64    li r11, -0x400; lvx128 v64, r11, r12    ... through v127       39 60 fc 00 10 0b 60 cb
+#   savevmx_64    li r11, -0x400; stvx128 v64, r11, r12   ... through v127       39 60 fc 00 10 0b 61 cb
+restgprlr_14_address = 0x00000000
+savegprlr_14_address = 0x00000000
+restfpr_14_address = 0x00000000
+savefpr_14_address = 0x00000000
+restvmx_14_address = 0x00000000
+savevmx_14_address = 0x00000000
+restvmx_64_address = 0x00000000
+savevmx_64_address = 0x00000000
+
+# --- setjmp / longjmp -------------------------------------------------------------
+# XenonRecomp replaces calls to these with the host's setjmp/longjmp, storing
+# the *host* jmp_buf in the guest's jmp_buf memory (at r3). The host jmp_buf is
+# 200 bytes on x86-64 glibc and 156 bytes under Emscripten, so the guest buffer
+# must be at least that large. Confirm it from the disassembly: the highest
+# offset the guest setjmp stores to through r3, plus 8, is the minimum size of
+# the guest jmp_buf (callers also show it in how much stack they reserve).
+#
+# Finding them: longjmp calls RtlUnwind (xboxkrnl ordinal 0x147) to run
+# termination handlers before restoring registers. `cargo xtask scan` lists
+# every call site of the RtlUnwind thunk; the function containing it is
+# normally longjmp, and setjmp usually starts shortly after it. setjmp is a
+# leaf that stores the non-volatile registers through r3 and returns 0.
+# If the title never imports RtlUnwind it likely doesn't use setjmp/longjmp;
+# delete both keys.
+longjmp_address = 0x00000000
+setjmp_address = 0x00000000
+
+# --- Explicit function boundaries -----------------------------------------------------
+# Only needed where analysis gets a function's extent wrong (typically
+# functions whose jump tables XenonAnalyse missed, or code reached only through
+# pointers that .pdata doesn't describe). Symptoms: "ERROR <addr>" comments in
+# the generated code for branch targets, or functions ending mid-instruction.
+functions = [
+    # { address = 0x82000000, size = 0x40 },
+]
+
+# --- Data embedded in .text -------------------------------------------------------
+# 32-bit values XenonRecomp should skip (with the number of bytes to skip) when
+# sweeping code sections. Zero padding between functions is the common one.
+# MSVC also places exception-handler data between functions: when the recompiler
+# prints repeated "Unable to decode instruction <X> at <addr>" for the same X,
+# X is usually the address of __CxxFrameHandler / __C_specific_handler and the
+# record is 8 bytes. Add one entry per such value.
+invalid_instructions = [
+    { data = 0x00000000, size = 4 }, # padding
+]
+
+# --- Mid-asm hooks -------------------------------------------------------------------
+# Insert a call to a host function before (or after) a guest instruction.
+# Phase 1 needs none; kept here as the shape for later phases. Hooks are
+# implemented in C++ next to the generated code and receive the listed
+# registers by reference.
+#
+# [[midasm_hook]]
+# name = "ExampleHook"
+# address = 0x82000000
+# registers = ["r3", "r4"]
+# after_instruction = false
+# return = false              # return from the guest function after the hook
+# return_on_true = false      # ... if the hook returns true
+# return_on_false = false
+# jump_address = 0x00000000   # continue here instead (same function)
+# jump_address_on_true = 0x00000000
+# jump_address_on_false = 0x00000000

@@ -1,0 +1,9 @@
+[package]
+name = "vfs"
+description = "Xbox 360 device paths (game:, d:, \\Device\\...) mapped onto host directories or OPFS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

@@ -1,0 +1,12 @@
+[package]
+name = "runtime-core"
+description = "Guest memory, PPC context, timebase and thread model for recompiled Xbox 360 code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+libc.workspace = true
+xex.workspace = true
