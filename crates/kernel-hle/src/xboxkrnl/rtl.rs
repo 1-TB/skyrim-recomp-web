@@ -21,6 +21,8 @@ pub(super) const EXPORTS: &[Export] = &[
     export!(K, 0x11D, RtlCompareStringN),
     export!(K, 0x121, RtlCopyString),
     export!(K, 0x149, RtlUpcaseUnicodeChar),
+    export!(K, 0x124, RtlDowncaseUnicodeChar),
+    export!(K, 0x13D, _snwprintf),
     export!(K, 0x11A, RtlCompareMemory),
     export!(K, 0x11B, RtlCompareMemoryUlong),
     export!(K, 0x126, RtlFillMemoryUlong),
@@ -198,6 +200,57 @@ fn RtlUpcaseUnicodeChar(c: &mut Call) -> u64 {
             (up.next().is_none() && (first as u32) <= 0xFFFF).then_some(first as u32)
         })
         .unwrap_or(ch as u32) as u64
+}
+
+/// Single-character lower case, like towlower: characters whose lower case is
+/// not one BMP character are returned unchanged.
+fn RtlDowncaseUnicodeChar(c: &mut Call) -> u64 {
+    let ch = c.arg(0) as u16;
+    char::from_u32(ch as u32)
+        .and_then(|c| {
+            let mut low = c.to_lowercase();
+            let first = low.next()?;
+            (low.next().is_none() && (first as u32) <= 0xFFFF).then_some(first as u32)
+        })
+        .unwrap_or(ch as u32) as u64
+}
+
+/// (wchar* Buffer, s32 Count, wchar* Format, ...) -> characters written, or
+/// -1 when the output didn't fit (MSVC semantics, as Xenia: the first Count
+/// characters are still stored, unterminated; the terminator is only added
+/// when there is room for it).
+fn _snwprintf(c: &mut Call) -> u64 {
+    let (buffer, count, format) = (c.arg(0), c.arg_i32(1), c.arg(2));
+    if buffer == 0 || count <= 0 || format == 0 {
+        return -1i32 as u32 as u64;
+    }
+    let mem = c.mem();
+    let mut fmt = Vec::new();
+    while fmt.len() < MAX_STRING_SCAN as usize / 2 {
+        let u = mem.read_u16(format + fmt.len() as u32 * 2);
+        if u == 0 {
+            break;
+        }
+        fmt.push(u);
+    }
+    let mut n = 3;
+    let text = crate::dbgprint::format_wide(c.kernel.mem(), &fmt, || {
+        let v = c.arg64(n);
+        n += 1;
+        v
+    });
+    let count = count as usize;
+    let mem = c.mem();
+    if text.len() <= count {
+        mem.write_utf16(buffer, &text);
+        if text.len() < count {
+            mem.write_u16(buffer + text.len() as u32 * 2, 0);
+        }
+        text.len() as u64
+    } else {
+        mem.write_utf16(buffer, &text[..count]);
+        -1i32 as u32 as u64
+    }
 }
 
 fn RtlCompareMemory(c: &mut Call) -> u64 {

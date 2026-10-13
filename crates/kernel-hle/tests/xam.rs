@@ -412,3 +412,106 @@ fn keyboard_ui_asks_the_host_and_fills_the_buffer() {
         win32::INVALID_PARAMETER
     );
 }
+
+#[test]
+fn title_update_queries_report_no_kinect_and_plain_accounts() {
+    let k = kernel();
+    let mut ctx = guest(k);
+    let io = scratch(k, 0x1000);
+    let mem = k.mem();
+    // The synthetic title has no execution info.
+    assert_eq!(k.call_export("XamGetCurrentTitleId", &mut ctx, &[]), 0);
+    // US / English offline account; nobody in slot 1.
+    assert_eq!(k.call_export("XamUserGetCachedUserFlags", &mut ctx, &[0]), 0x0200_6700);
+    assert_eq!(k.call_export("XamUserGetCachedUserFlags", &mut ctx, &[1]), 0);
+
+    mem.fill(io, 0x10, 0xAA);
+    assert_eq!(k.call_export("XamNuiGetDeviceStatus", &mut ctx, &[io]), 0xC005_0006);
+    assert_eq!(mem.read_vec(io, 0x10), vec![0; 0x10]);
+    mem.write_u32(io, 0x50);
+    mem.write_u32(io + 4, 0x5874_5373);
+    assert_eq!(k.call_export("XamNuiCameraTiltGetStatus", &mut ctx, &[io]) as u32, hresult::E_FAIL);
+    assert_eq!(k.call_export("XamVoiceGetMicArrayStatus", &mut ctx, &[]), 0);
+    assert_eq!(k.call_export("XamXStudioRequest", &mut ctx, &[6, io]) as u32, hresult::E_FAIL);
+    assert_eq!(k.call_export("XamShowNuiTroubleshooterUI", &mut ctx, &[0xFF, 0, 0]), 0);
+    mem.fill(io, 0xC, 0xAA);
+    k.call_export("XamGetActiveDashAppInfo", &mut ctx, &[io]);
+    assert_eq!(mem.read_vec(io, 0xC), vec![0; 0xC]);
+}
+
+#[test]
+fn ui_is_active_while_a_system_dialog_is_open() {
+    let k = kernel();
+    let mut ctx = guest(k);
+    let io = scratch(k, 0x1000);
+    let mem = k.mem();
+    assert_eq!(k.call_export("XamIsUIActive", &mut ctx, &[]), 0);
+    let (device, ov) = (io, io + 0x100);
+    mem.fill(ov, 0x1C, 0);
+    let r = k.call_export("XamShowDeviceSelectorUI", &mut ctx, &[0, 1, 0, 0, device, ov]);
+    assert_eq!(r as u32, win32::IO_PENDING);
+    // Open from just before the answer until a moment after it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut seen_active = false;
+    while mem.read_u32(device) != 1 && Instant::now() < deadline {
+        seen_active |= k.call_export("XamIsUIActive", &mut ctx, &[]) == 1;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    seen_active |= k.call_export("XamIsUIActive", &mut ctx, &[]) == 1;
+    assert!(seen_active, "dialog never reported active");
+    while k.call_export("XamIsUIActive", &mut ctx, &[]) == 1 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(k.call_export("XamIsUIActive", &mut ctx, &[]), 0);
+}
+
+#[test]
+fn device_enumerator_and_internal_content() {
+    let k = kernel();
+    let mut ctx = guest(k);
+    let root = game_dir().join("content");
+    k.content.set_root(&root);
+    let io = scratch(k, 0x2000);
+    let mem = k.mem();
+    let (size_ptr, handle_ptr, count, buf) = (io, io + 4, io + 8, io + 0x400);
+
+    assert_eq!(k.call_export("XamContentCreateDeviceEnumerator", &mut ctx, &[1, 0, 4, size_ptr, handle_ptr]), 0);
+    assert_eq!(mem.read_u32(size_ptr), 4 * 0x50);
+    let e = mem.read_u32(handle_ptr);
+    assert_eq!(k.call_export("XamEnumerate", &mut ctx, &[e, 0, buf, 4 * 0x50, count, 0]), 0);
+    assert_eq!(mem.read_u32(count), 2);
+    assert_eq!((mem.read_u32(buf), mem.read_u32(buf + 4)), (1, 1), "hard drive");
+    assert_eq!(mem.read_u64(buf + 8), 20 << 30);
+    assert_eq!(mem.read_utf16(buf + 0x18, 9), "Dummy HDD".encode_utf16().collect::<Vec<_>>());
+    assert_eq!(mem.read_u32(buf + 0x50), 2, "disc drive");
+    k.call_export("NtClose", &mut ctx, &[e]);
+    // Without read-only devices, only the hard drive.
+    assert_eq!(
+        k.call_export("XamContentCreateDeviceEnumerator", &mut ctx, &[1, 0x8000_0000, 4, size_ptr, handle_ptr]),
+        0
+    );
+    let e = mem.read_u32(handle_ptr);
+    assert_eq!(k.call_export("XamEnumerate", &mut ctx, &[e, 0, buf, 4 * 0x50, count, 0]), 0);
+    assert_eq!(mem.read_u32(count), 1);
+
+    // XCONTENT_DATA_INTERNAL for another title: shared content (no user) filed under it.
+    let (data, disp, lic) = (io + 0x100, io + 12, io + 16);
+    mem.fill(data, 0x200, 0);
+    mem.write_u32(data, 1);
+    mem.write_u32(data + 4, 2);
+    mem.write_bytes(data + 0x108, b"pkg");
+    mem.write_u32(data + 0x140, 0x1234_5678);
+    let root_name = cstr(k, io + 0x380, "dlc");
+    assert_eq!(k.call_export("XamContentCreateInternal", &mut ctx, &[root_name, data, 1, disp, lic, 0, 0, 0]), 0);
+    assert_eq!(mem.read_u32(disp), 1);
+    let package = root.join("0000000000000000").join("12345678").join("00000002").join("pkg");
+    assert!(package.is_dir(), "{}", package.display());
+    k.call_export("XamContentClose", &mut ctx, &[root_name, 0]);
+    assert_eq!(k.call_export("XamContentDeleteInternal", &mut ctx, &[data, 0]), 0);
+    assert!(!package.exists());
+    assert_eq!(k.call_export("XamContentDeleteInternal", &mut ctx, &[data, 0]) as u32, win32::FILE_NOT_FOUND);
+
+    let path = cstr(k, io + 0x3C0, "update:\\x.pkg");
+    let r = k.call_export("XamContentOpenFile", &mut ctx, &[0, root_name, path, 3, disp, lic, 0]);
+    assert_eq!(r as u32, win32::FILE_NOT_FOUND);
+}

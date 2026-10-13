@@ -28,6 +28,13 @@ pub use path::matches_pattern;
 /// The device the game disc is mounted on.
 pub const CDROM_DEVICE: &str = "\\Device\\Cdrom0";
 
+/// Folder of the game root holding an installed title update's files. When it
+/// exists, `update:` points at it: a patched executable reads its updated data
+/// (`update:\Update.esm`, `update:\Grammars\...`) from there, as from the
+/// update package a console mounts. The `$` keeps it apart from disc content
+/// (like the disc's own `$SystemUpdate`).
+pub const TITLE_UPDATE_DIR: &str = "$TitleUpdate";
+
 #[derive(Debug)]
 pub enum VfsError {
     /// No device or symbolic link matches the path.
@@ -358,7 +365,8 @@ impl Vfs {
     }
 
     /// The standard title layout: the disc device at `root`, reachable as
-    /// `game:` and `d:`, read-only like the physical disc.
+    /// `game:` and `d:`, read-only like the physical disc, plus `update:` when
+    /// the root has a [`TITLE_UPDATE_DIR`].
     pub fn with_game_root(root: impl Into<PathBuf>) -> Self {
         Self::with_game(&GameRoot::Dir(root.into()))
     }
@@ -366,12 +374,21 @@ impl Vfs {
     /// [`Vfs::with_game_root`] for either kind of game root.
     pub fn with_game(game: &GameRoot) -> Self {
         let vfs = Vfs::new();
-        match game {
-            GameRoot::Dir(root) => vfs.mount(CDROM_DEVICE, root.clone(), true),
-            GameRoot::Remote(tree) => vfs.mount_remote(CDROM_DEVICE, tree.clone()),
-        }
+        let has_update = match game {
+            GameRoot::Dir(root) => {
+                vfs.mount(CDROM_DEVICE, root.clone(), true);
+                resolve_case_insensitive(root, &[TITLE_UPDATE_DIR]).is_dir()
+            }
+            GameRoot::Remote(tree) => {
+                vfs.mount_remote(CDROM_DEVICE, tree.clone());
+                matches!(tree.lookup(TITLE_UPDATE_DIR), Some((remote::RemoteKind::Dir, _)))
+            }
+        };
         vfs.add_symlink("game:", CDROM_DEVICE);
         vfs.add_symlink("d:", CDROM_DEVICE);
+        if has_update {
+            vfs.add_symlink("update:", &format!("{CDROM_DEVICE}\\{TITLE_UPDATE_DIR}"));
+        }
         vfs
     }
 

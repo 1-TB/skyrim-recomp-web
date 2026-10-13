@@ -19,6 +19,7 @@ pub(super) const EXPORTS: &[Export] = &[
     export!(K, 0x05D, KeEnableFpuExceptions),
     export!(K, 0x015, ExRegisterTitleTerminateNotification),
     export!(K, 0x136, RtlRaiseException),
+    export!(K, 0x18A, XeCryptRandom),
 ];
 
 fn XexCheckExecutablePrivilege(c: &mut Call) -> u64 {
@@ -204,5 +205,32 @@ fn RtlRaiseException(c: &mut Call) -> u64 {
             );
         }
     }
+    0
+}
+
+/// (u8* Buffer, u32 Length): fills the buffer with random bytes. Xenia fills
+/// 0xFD; titles use these for nonces and identifiers, so they get real (if
+/// not cryptographically strong) randomness: SipHash with the process's
+/// random keys over a running counter.
+fn XeCryptRandom(c: &mut Call) -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::LazyLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static KEYS: LazyLock<std::collections::hash_map::RandomState> =
+        LazyLock::new(std::collections::hash_map::RandomState::new);
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let (buf, len) = (c.arg(0), c.arg(1));
+    if buf == 0 {
+        return 0;
+    }
+    let mut bytes = Vec::with_capacity(len as usize + 8);
+    while bytes.len() < len as usize {
+        let mut h = KEYS.build_hasher();
+        h.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+        bytes.extend_from_slice(&h.finish().to_le_bytes());
+    }
+    c.mem().write_bytes(buf, &bytes[..len as usize]);
     0
 }

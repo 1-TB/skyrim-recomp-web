@@ -32,6 +32,10 @@ pub(super) const EXPORTS: &[Export] = &[
     export!(X, 0x265, XamContentGetDeviceState),
     export!(X, 0x266, XamContentGetLicenseMask),
     export!(X, 0x267, XamContentFlush),
+    export!(X, 0x25D, XamContentCreateDeviceEnumerator),
+    export!(X, 0x269, XamContentOpenFile),
+    export!(X, 0x270, XamContentDeleteInternal),
+    export!(X, 0x271, XamContentCreateInternal),
 ];
 
 /// Storage device ids (Xenia's dummy devices).
@@ -40,6 +44,14 @@ pub const DEVICE_ODD: u32 = 2;
 
 /// sizeof(XCONTENT_DATA).
 pub const CONTENT_DATA_SIZE: u32 = 0x134;
+/// XCONTENT_DATA_INTERNAL (XCONTENT_DATA plus ownership fields): title id offset.
+const INTERNAL_TITLE_ID: u32 = 0x140;
+/// Title id meaning "the running title" in XCONTENT_DATA_INTERNAL.
+const CURRENT_TITLE: u32 = 0xFFFF_FFFF;
+/// The user index of the *Internal content calls: no user (shared content).
+const USER_INDEX_NONE: u32 = 0xFE;
+/// sizeof(XCONTENT_DEVICE_DATA).
+const DEVICE_DATA_SIZE: u32 = 0x50;
 const DISPLAY_NAME_CHARS: usize = 128;
 const FILE_NAME_LEN: usize = 42;
 
@@ -51,6 +63,7 @@ mod flag {
     pub const OPEN_ALWAYS: u32 = 4;
     pub const TRUNCATE_EXISTING: u32 = 5;
     pub const EXCLUDE_COMMON: u32 = 0x1000;
+    pub const EXCLUDE_READ_ONLY_DEVICES: u32 = 0x8000_0000;
 }
 
 /// XamContentCreate dispositions.
@@ -167,21 +180,21 @@ fn root_key(root_name: &str) -> String {
 }
 
 impl Kernel {
-    fn title_id(&self) -> u32 {
+    pub(crate) fn title_id(&self) -> u32 {
         self.rt.xex.execution_info().map_or(0, |i| i.title_id)
     }
 
     fn content_type_dir(&self, xuid: u64, content_type: u32) -> Option<PathBuf> {
-        let root = self.content.root()?;
-        Some(
-            root.join(format!("{xuid:016X}"))
-                .join(format!("{:08X}", self.title_id()))
-                .join(format!("{content_type:08X}")),
-        )
+        self.content_dir_for(xuid, self.title_id(), content_type)
     }
 
-    fn package_path(&self, xuid: u64, data: &ContentData) -> Option<PathBuf> {
-        Some(self.content_type_dir(xuid, data.content_type)?.join(&data.file_name))
+    fn content_dir_for(&self, xuid: u64, title: u32, content_type: u32) -> Option<PathBuf> {
+        let root = self.content.root()?;
+        Some(root.join(format!("{xuid:016X}")).join(format!("{title:08X}")).join(format!("{content_type:08X}")))
+    }
+
+    fn package_path_for(&self, xuid: u64, title: u32, data: &ContentData) -> Option<PathBuf> {
+        Some(self.content_dir_for(xuid, title, data.content_type)?.join(&data.file_name))
     }
 
     /// Packages of one type stored for `xuid` on the hard drive.
@@ -324,6 +337,7 @@ fn XamContentGetLicenseMask(c: &mut Call) -> u64 {
 #[allow(clippy::too_many_arguments)]
 fn content_create(
     c: &Call,
+    title: u32,
     user: u32,
     root_name_ptr: u32,
     data_ptr: u32,
@@ -354,7 +368,7 @@ fn content_create(
     if overlapped != 0 && disposition_ptr != 0 {
         c.mem().write_u32(disposition_ptr, 0);
     }
-    let Some(path) = c.kernel.package_path(xuid, &data) else {
+    let Some(path) = c.kernel.package_path_for(xuid, title, &data) else {
         log::warn!("XamContentCreate({root_name}): no content root configured");
         return finish(c, overlapped, win32::ACCESS_DENIED, 0);
     };
@@ -424,13 +438,34 @@ fn content_create(
 /// (u32 UserIndex, char* RootName, XCONTENT_DATA* Data, u32 Flags,
 ///  u32* Disposition, u32* LicenseMask, XOVERLAPPED* Overlapped)
 fn XamContentCreate(c: &mut Call) -> u64 {
-    content_create(c, c.arg(0), c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5), c.arg(6))
+    content_create(c, c.kernel.title_id(), c.arg(0), c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5), c.arg(6))
 }
 
 /// As XamContentCreate, plus (u32 CacheSize, u64 ContentSize) before the
 /// XOVERLAPPED (the ninth argument, on the stack).
 fn XamContentCreateEx(c: &mut Call) -> u64 {
-    content_create(c, c.arg(0), c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5), c.arg(8))
+    content_create(c, c.kernel.title_id(), c.arg(0), c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5), c.arg(8))
+}
+
+/// The title an XCONTENT_DATA_INTERNAL names (the running title for 0 / -1).
+fn internal_title(c: &Call, data_ptr: u32) -> u32 {
+    match c.mem().read_u32(data_ptr + INTERNAL_TITLE_ID) {
+        0 | CURRENT_TITLE => c.kernel.title_id(),
+        t => t,
+    }
+}
+
+/// (char* RootName, XCONTENT_DATA_INTERNAL* Data, u32 Flags, u32* Disposition,
+///  u32* LicenseMask, u32 CacheSize, u64 ContentSize, XOVERLAPPED* Overlapped):
+/// XamContentCreate for no particular user (shared content), in the title the
+/// data names (Xenia's xeXamContentCreate with XUserIndexNone).
+fn XamContentCreateInternal(c: &mut Call) -> u64 {
+    let data_ptr = c.arg(1);
+    if data_ptr == 0 {
+        return win32::INVALID_PARAMETER as u64;
+    }
+    let title = internal_title(c, data_ptr);
+    content_create(c, title, USER_INDEX_NONE, c.arg(0), data_ptr, c.arg(2), c.arg(3), c.arg(4), c.arg(7))
 }
 
 /// (char* RootName, XOVERLAPPED* Overlapped)
@@ -462,12 +497,27 @@ fn XamContentFlush(c: &mut Call) -> u64 {
 /// (u32 UserIndex, XCONTENT_DATA* Data, XOVERLAPPED* Overlapped)
 fn XamContentDelete(c: &mut Call) -> u64 {
     let (user, data_ptr, overlapped) = (c.arg(0), c.arg(1), c.arg(2));
+    content_delete(c, c.kernel.title_id(), user, data_ptr, overlapped)
+}
+
+/// (XCONTENT_DATA_INTERNAL* Data, XOVERLAPPED* Overlapped): XamContentDelete of
+/// shared content in the title the data names.
+fn XamContentDeleteInternal(c: &mut Call) -> u64 {
+    let (data_ptr, overlapped) = (c.arg(0), c.arg(1));
+    if data_ptr == 0 {
+        return win32::INVALID_PARAMETER as u64;
+    }
+    let title = internal_title(c, data_ptr);
+    content_delete(c, title, USER_INDEX_NONE, data_ptr, overlapped)
+}
+
+fn content_delete(c: &Call, title: u32, user: u32, data_ptr: u32, overlapped: u32) -> u64 {
     let xuid = match user_xuid(c, user) {
         Ok(x) => x,
         Err(e) => return e as u64,
     };
     let data = ContentData::read(c, data_ptr);
-    let result = match c.kernel.package_path(xuid, &data) {
+    let result = match c.kernel.package_path_for(xuid, title, &data) {
         Some(p) if valid_file_name(&data.file_name) && p.is_dir() => {
             let _ = std::fs::remove_file(p.with_file_name(format!("{}.title", data.file_name)));
             match std::fs::remove_dir_all(&p) {
@@ -496,19 +546,68 @@ fn device(id: u32) -> Option<(u32, u32, &'static str, u64, u64)> {
     DEVICES.iter().copied().find(|d| d.0 == id)
 }
 
+/// XCONTENT_DEVICE_DATA (big-endian): id, type, total and free bytes, name.
+fn device_data((id, ty, name, total, free): (u32, u32, &str, u64, u64)) -> Vec<u8> {
+    let mut b = vec![0u8; DEVICE_DATA_SIZE as usize];
+    b[0..4].copy_from_slice(&id.to_be_bytes());
+    b[4..8].copy_from_slice(&ty.to_be_bytes());
+    b[8..0x10].copy_from_slice(&total.to_be_bytes());
+    b[0x10..0x18].copy_from_slice(&free.to_be_bytes());
+    for (i, u) in name.encode_utf16().take(27).enumerate() {
+        b[0x18 + i * 2..0x1A + i * 2].copy_from_slice(&u.to_be_bytes());
+    }
+    b
+}
+
 /// (u32 DeviceId, XCONTENT_DEVICE_DATA* Data), 0x50 bytes.
 fn XamContentGetDeviceData(c: &mut Call) -> u64 {
     let (id, out) = (c.arg(0), c.arg(1));
-    let Some((id, ty, name, total, free)) = device(id) else { return win32::DEVICE_NOT_CONNECTED as u64 };
-    let mem = c.mem();
-    mem.fill(out, 0x50, 0);
-    mem.write_u32(out, id);
-    mem.write_u32(out + 4, ty);
-    mem.write_u64(out + 8, total);
-    mem.write_u64(out + 0x10, free);
-    let units: Vec<u16> = name.encode_utf16().take(27).collect();
-    mem.write_utf16(out + 0x18, &units);
+    let Some(d) = device(id) else { return win32::DEVICE_NOT_CONNECTED as u64 };
+    c.mem().write_bytes(out, &device_data(d));
     win32::SUCCESS as u64
+}
+
+/// (u32 ContentType, u32 ContentFlags, u32 MaxCount, u32* BufferSize, HANDLE* Enumerator):
+/// an enumerator of the storage devices (XCONTENT_DEVICE_DATA items), without the
+/// read-only disc drive when the flags exclude read-only devices (Xenia).
+fn XamContentCreateDeviceEnumerator(c: &mut Call) -> u64 {
+    let (flags, max_count, size_ptr, handle_ptr) = (c.arg(1), c.arg(2), c.arg(3), c.arg(4));
+    if handle_ptr == 0 {
+        return win32::INVALID_PARAMETER as u64;
+    }
+    if size_ptr != 0 {
+        c.mem().write_u32(size_ptr, DEVICE_DATA_SIZE * max_count);
+    }
+    let items: Vec<Vec<u8>> = DEVICES
+        .iter()
+        .filter(|d| !(d.0 == DEVICE_ODD && flags & flag::EXCLUDE_READ_ONLY_DEVICES != 0))
+        .take(max_count as usize)
+        .map(|&d| device_data(d))
+        .collect();
+    let e = Enumerator::new(DEVICE_DATA_SIZE, max_count, items);
+    match c.kernel.objects.create(&c.kernel.rt.space, ObjectType::Other(0), None, Payload::Enumerator(e), None) {
+        Ok(obj) => {
+            let h = c.kernel.objects.insert_handle(&obj);
+            c.mem().write_u32(handle_ptr, h);
+            win32::SUCCESS as u64
+        }
+        Err(s) => {
+            log::error!("XamContentCreateDeviceEnumerator: {s:#010X}");
+            win32::NOT_ENOUGH_MEMORY as u64
+        }
+    }
+}
+
+/// (u32 UserIndex, char* RootName, char* Path, u32 Flags, u32* Disposition,
+///  u32* LicenseMask, XOVERLAPPED* Overlapped): mounts a content package *file*
+/// as RootName. Content here is stored as plain directories, so there is never
+/// a package file to open: ERROR_FILE_NOT_FOUND, as Xenia.
+fn XamContentOpenFile(c: &mut Call) -> u64 {
+    let (root_ptr, path_ptr) = (c.arg(1), c.arg(2));
+    let read =
+        |p: u32| if p == 0 { String::new() } else { String::from_utf8_lossy(&c.mem().read_cstr(p, 260)).into_owned() };
+    log::info!("XamContentOpenFile({:?} as {:?}): no package files", read(path_ptr), read(root_ptr));
+    win32::FILE_NOT_FOUND as u64
 }
 
 /// (u32 DeviceId, char16_t* Name, u32 Capacity)

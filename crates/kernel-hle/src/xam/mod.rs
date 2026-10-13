@@ -5,6 +5,7 @@ pub mod content;
 mod input;
 pub mod msg;
 pub mod notify;
+mod nui;
 pub mod profile;
 mod ui;
 
@@ -16,7 +17,7 @@ use std::sync::LazyLock;
 use runtime_core::heap::protect;
 
 use crate::dispatch::{Call, Export, ModuleId};
-use crate::status::win32;
+use crate::status::{hresult, win32};
 use crate::xconfig::{LANGUAGE_ENGLISH, category};
 
 const X: ModuleId = ModuleId::XAM;
@@ -33,6 +34,9 @@ const INFO: &[Export] = &[
     export!(X, 0x1A8, XamLoaderGetLaunchData),
     export!(X, 0x001, NetDll_WSAStartup),
     export!(X, 0x002, NetDll_WSACleanup),
+    export!(X, 0x1CF, XamGetCurrentTitleId),
+    export!(X, 0x686, XamXStudioRequest),
+    export!(X, 0x7E1, XamGetActiveDashAppInfo),
 ];
 
 pub static EXPORTS: LazyLock<Vec<Export>> = LazyLock::new(|| {
@@ -42,6 +46,7 @@ pub static EXPORTS: LazyLock<Vec<Export>> = LazyLock::new(|| {
         input::EXPORTS,
         msg::EXPORTS,
         notify::EXPORTS,
+        nui::EXPORTS,
         profile::EXPORTS,
         ui::EXPORTS,
         user::EXPORTS,
@@ -174,5 +179,27 @@ fn NetDll_WSAStartup(c: &mut Call) -> u64 {
 }
 
 fn NetDll_WSACleanup(_c: &mut Call) -> u64 {
+    0
+}
+
+/// () -> the running title's id (from its execution info).
+fn XamGetCurrentTitleId(c: &mut Call) -> u64 {
+    c.kernel.title_id() as u64
+}
+
+/// (u32 Request, u32* Result): a request to the Kinect studio service
+/// (xstudio.xex), which isn't loaded: E_FAIL, as Xenia.
+fn XamXStudioRequest(_c: &mut Call) -> u64 {
+    hresult::E_FAIL as u64
+}
+
+/// (X_DASH_APP_INFO* Info): 0xC bytes describing the dashboard app the title
+/// was launched from; titles here are never launched by one, so it is zeroed
+/// (Xenia's initial state).
+fn XamGetActiveDashAppInfo(c: &mut Call) -> u64 {
+    let out = c.arg(0);
+    if out != 0 {
+        c.mem().fill(out, 0xC, 0);
+    }
     0
 }

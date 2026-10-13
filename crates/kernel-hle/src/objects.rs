@@ -54,8 +54,13 @@ pub enum ObjectType {
     Mutant,
     Thread,
     File,
-    /// Dispatcher type the kernel can wait on but never signals (timers,
-    /// queues): only the title's own code changes its state.
+    /// KTIMER: armed by [`crate::timer`], waited on like an event
+    /// (notification timers stay signaled, synchronization timers auto-reset).
+    Timer,
+    /// Opened by NtOpenSymbolicLinkObject; not waitable.
+    SymbolicLink,
+    /// Dispatcher type the kernel can wait on but never signals (queues):
+    /// only the title's own code changes its state.
     Other(u8),
 }
 
@@ -114,6 +119,8 @@ pub enum Payload {
     Thread { tid: u32 },
     NotifyListener(Arc<crate::xam::notify::Listener>),
     Enumerator(crate::xam::content::Enumerator),
+    // A symbolic link's target (`\Device\...`).
+    SymbolicLink(String),
 }
 
 pub struct KObject {
@@ -592,10 +599,11 @@ impl ObjectManager {
             // A KTHREAD whose kernel object was already released has exited;
             // its header still carries the mirrored signal state.
             object_type::THREAD => (ObjectType::Thread, SyncState::Thread { exited: signal != 0 }),
+            // A timer that never went through KeInitializeTimerEx (pre-initialized data):
+            // KeSetTimer arms it like any other.
             timer @ (object_type::TIMER_NOTIFICATION | object_type::TIMER_SYNCHRONIZATION) => {
-                log::warn!("waiting on timer {ptr:#010X}; timers are not armed by this kernel yet");
                 let manual_reset = timer == object_type::TIMER_NOTIFICATION;
-                (ObjectType::Other(timer), SyncState::Event { manual_reset, signaled: signal != 0 })
+                (ObjectType::Timer, SyncState::Event { manual_reset, signaled: signal != 0 })
             }
             object_type::SEMAPHORE => {
                 (ObjectType::Semaphore, SyncState::Semaphore { count: signal, limit: mem.read_i32(ptr + 0x10) })
@@ -722,6 +730,23 @@ impl ObjectManager {
             _ => 0,
         };
         d.mirror(mem, obj.id);
+        Some(prev)
+    }
+
+    /// Sets a timer's signal state (expiry, or KeSetTimer clearing it); returns
+    /// the previous state. Unlike [`ObjectManager::reset_event`] a clear does
+    /// not wait for released threads: timers are re-armed by the thread that
+    /// waits on them, not reset under a running round of waiters.
+    pub fn set_timer_signaled(&self, mem: &GuestMemory, obj: &KObject, signaled: bool) -> Option<bool> {
+        let mut d = self.lock();
+        let prev = match d.sync.get_mut(&obj.id)? {
+            SyncState::Event { signaled: s, .. } => std::mem::replace(s, signaled),
+            _ => return None,
+        };
+        d.mirror(mem, obj.id);
+        if signaled {
+            d.wake_waiters(mem);
+        }
         Some(prev)
     }
 

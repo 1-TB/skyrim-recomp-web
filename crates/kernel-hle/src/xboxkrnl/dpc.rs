@@ -100,7 +100,14 @@ fn KeInitializeDpc(c: &mut Call) -> u64 {
 /// Routine(Dpc, Context, Arg1, Arg2) before returning.
 fn KeInsertQueueDpc(c: &mut Call) -> u64 {
     let (dpc, arg1, arg2) = (c.arg(0), c.arg(1), c.arg(2));
-    let mem = c.mem();
+    run_dpc(c.kernel, c.ctx, dpc, arg1, arg2, None);
+    1
+}
+
+/// Delivers a KDPC with its system arguments: runs Routine(Dpc, Context, Arg1, Arg2) on
+/// `ctx`'s thread, as KeInsertQueueDpc and expiring timers do.
+pub(crate) fn run_dpc(kernel: &Kernel, ctx: &mut PPCContext, dpc: u32, arg1: u32, arg2: u32, process_type: Option<u8>) {
+    let mem = kernel.mem();
     mem.write_u32(dpc + kdpc::ARG1, arg1);
     mem.write_u32(dpc + kdpc::ARG2, arg2);
     // Never left on a queue: the list entry stays unlinked.
@@ -109,9 +116,8 @@ fn KeInsertQueueDpc(c: &mut Call) -> u64 {
     let routine = mem.read_u32(dpc + kdpc::ROUTINE);
     let context = mem.read_u32(dpc + kdpc::CONTEXT);
     if routine != 0 {
-        call_as_dpc(c.kernel, c.ctx, routine, &[dpc, context, arg1, arg2], None);
+        call_as_dpc(kernel, ctx, routine, &[dpc, context, arg1, arg2], process_type);
     }
-    1
 }
 
 /// Queued DPCs have always run by the time KeInsertQueueDpc returns, so there

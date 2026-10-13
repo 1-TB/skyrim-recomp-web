@@ -195,6 +195,7 @@ name = "kernel-hle"
 version = "0.1.0"
 dependencies = [
  "log",
+ "lzxd",
  "runtime-core",
  "vfs",
  "xex",

@@ -62,6 +62,23 @@ fn unknown_devices_are_rejected() {
     let v = Vfs::with_game_root(fixture());
     assert!(matches!(v.resolve("cache:\\x"), Err(VfsError::NoSuchDevice(_))));
     assert!(matches!(v.resolve("\\Device\\Harddisk0\\Partition1\\x"), Err(VfsError::NoSuchDevice(_))));
+    // Without a title update folder there is no update: device.
+    assert!(matches!(v.resolve("update:\\Update.esm"), Err(VfsError::NoSuchDevice(_))));
+}
+
+#[test]
+fn update_links_to_the_title_update_folder() {
+    let root = fixture();
+    fs::create_dir_all(root.join("$titleupdate/Grammars")).unwrap();
+    fs::write(root.join("$titleupdate/Update.esm"), b"TES4").unwrap();
+    let v = Vfs::with_game_root(&root);
+    assert_eq!(v.symlink_target("update:").as_deref(), Some("\\Device\\Cdrom0\\$TitleUpdate"));
+    let r = v.resolve("UPDATE:\\update.ESM").unwrap();
+    assert_eq!(r.host_path, root.join("$titleupdate/Update.esm"));
+    assert_eq!(r.guest_path, "\\Device\\Cdrom0\\$TitleUpdate\\update.ESM");
+    let Ok((Node::File(f), _)) = v.open("update:\\Update.esm", OpenRequest::read()) else { panic!("not opened") };
+    assert_eq!(f.len().unwrap(), 4);
+    assert!(v.metadata("update:\\Grammars").unwrap().is_dir);
 }
 
 #[test]
@@ -158,7 +175,8 @@ mod remote_game {
 
     #[test]
     fn a_streamed_game_reads_like_a_local_one_and_is_read_only() {
-        let tree = Arc::new(RemoteTree::from_manifest("1000\tData/Skyrim.esm\n4\tdefault.xex\n", Arc::new(Counting), 8));
+        let tree =
+            Arc::new(RemoteTree::from_manifest("1000\tData/Skyrim.esm\n4\tdefault.xex\n", Arc::new(Counting), 8));
         let game = GameRoot::Remote(tree);
         let vfs = Vfs::with_game(&game);
         assert_eq!(game.read("DEFAULT.XEX").unwrap(), [0, 1, 2, 3]);
@@ -181,5 +199,18 @@ mod remote_game {
         let write = OpenRequest { write: true, disposition: Disposition::OpenIf, kind: Kind::NonDirectory };
         assert!(matches!(vfs.open("game:\\data\\skyrim.esm", write), Err(VfsError::AccessDenied)));
         assert!(matches!(vfs.open("game:\\new.txt", write), Err(VfsError::AccessDenied)));
+        assert!(vfs.symlink_target("update:").is_none());
+    }
+
+    #[test]
+    fn a_streamed_title_update_folder_is_linked_as_update() {
+        let manifest = "4\tdefault.xex\n4\t$TitleUpdate/Update.esm\n6\t$TitleUpdate/Grammars/a.cfg\n";
+        let vfs =
+            Vfs::with_game(&GameRoot::Remote(Arc::new(RemoteTree::from_manifest(manifest, Arc::new(Counting), 8))));
+        let Ok((Node::File(f), _)) = vfs.open("update:\\UPDATE.esm", OpenRequest::read()) else { panic!("not opened") };
+        assert_eq!(f.len().unwrap(), 4);
+        let Ok((Node::Directory(d), _)) = vfs.open("update:\\Grammars", OpenRequest::read()) else { panic!("no dir") };
+        let names: Vec<String> = d.entries().unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["a.cfg"]);
     }
 }

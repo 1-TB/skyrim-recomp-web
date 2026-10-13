@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::Kernel;
@@ -54,6 +55,8 @@ pub struct Notifications {
     listeners: Mutex<Vec<Weak<KObject>>>,
     startup: Mutex<(bool, bool)>,
     ui_position: Mutex<u32>,
+    /// System dialogs currently open (XamIsUIActive).
+    ui_open: AtomicU32,
 }
 
 fn listener_of(obj: &KObject) -> Option<&Arc<Listener>> {
@@ -72,6 +75,25 @@ impl Kernel {
         }
         l.queue.lock().unwrap().push_back((notification, data));
         self.objects.set_event(self.mem(), obj);
+    }
+
+    /// A system dialog opens: counted for XamIsUIActive and announced with
+    /// XN_SYS_UI(TRUE).
+    pub(crate) fn system_ui_shown(&self) {
+        self.notifications.ui_open.fetch_add(1, Ordering::AcqRel);
+        self.broadcast_notification(id::SYSTEM_UI, 1);
+    }
+
+    /// The dialog closes: XN_SYS_UI(FALSE) once the last one has.
+    pub(crate) fn system_ui_hidden(&self) {
+        let prev = self.notifications.ui_open.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+        if prev == Ok(1) {
+            self.broadcast_notification(id::SYSTEM_UI, 0);
+        }
+    }
+
+    pub(crate) fn system_ui_active(&self) -> bool {
+        self.notifications.ui_open.load(Ordering::Acquire) != 0
     }
 
     /// XNotifyBroadcast: every live listener whose mask accepts it.

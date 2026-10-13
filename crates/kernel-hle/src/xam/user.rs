@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use crate::dispatch::{Call, Export, ModuleId};
 use crate::input::MAX_USERS;
 use crate::status::{hresult, win32};
+use crate::xconfig::{COUNTRY_UNITED_STATES, LANGUAGE_ENGLISH, category};
 
 const X: ModuleId = ModuleId::XAM;
 
@@ -16,6 +17,7 @@ pub(super) const EXPORTS: &[Export] = &[
     export!(X, 0x20E, XamUserGetName),
     export!(X, 0x210, XamUserGetSigninState),
     export!(X, 0x227, XamUserGetSigninInfo),
+    export!(X, 0x222, XamUserGetCachedUserFlags),
 ];
 
 /// eXUserSigninState.
@@ -170,6 +172,27 @@ fn XamUserGetSigninInfo(c: &mut Call) -> u64 {
     hresult::S_OK as u64
 }
 
+/// XAMACCOUNTINFO cached user flags: country in bits 8-15, subscription tier in
+/// bits 20-23, language in bits 25-29 (Xenia's xam.h masks).
+pub fn cached_user_flags(country: u8, language: u32) -> u32 {
+    ((country as u32) << 8) & 0xFF00 | (language << 25) & 0x3E00_0000
+}
+
+/// (u32 UserIndex) -> the account's cached flags, 0 if nobody is signed in.
+/// Profiles here are offline accounts created on this console: they carry its
+/// country and language and no Live subscription tier.
+fn XamUserGetCachedUserFlags(c: &mut Call) -> u64 {
+    let user = c.arg(0);
+    if user as usize >= MAX_USERS || c.kernel.users.get(user).is_none() {
+        return 0;
+    }
+    let xconfig = &c.kernel.xconfig;
+    let country = xconfig.read(category::USER, 0x0E).map_or(COUNTRY_UNITED_STATES, |b| b[0]);
+    let language =
+        xconfig.read(category::USER, 0x09).map_or(LANGUAGE_ENGLISH, |b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+    cached_user_flags(country, language) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +208,10 @@ mod tests {
         assert_eq!(users.get(0).unwrap().name, "Player");
         assert!(users.get(1).is_none());
         assert_eq!(users.index_of(users.get(0).unwrap().xuid), Some(0));
+    }
+
+    #[test]
+    fn cached_flags_pack_country_and_language() {
+        assert_eq!(cached_user_flags(103, 1), 0x0200_6700);
     }
 }

@@ -11,12 +11,15 @@ use crate::dispatch::{Call, Export, ModuleId};
 use crate::input::MAX_USERS;
 use crate::status::win32;
 use crate::xam::content::DEVICE_HDD;
-use crate::xam::notify::id;
 
 const X: ModuleId = ModuleId::XAM;
 
-pub(super) const EXPORTS: &[Export] =
-    &[export!(X, 0x2CB, XamShowDeviceSelectorUI), export!(X, 0x2C1, XamShowKeyboardUI)];
+pub(super) const EXPORTS: &[Export] = &[
+    export!(X, 0x2CB, XamShowDeviceSelectorUI),
+    export!(X, 0x2C1, XamShowKeyboardUI),
+    export!(X, 0x2EC, XamIsUIActive),
+    export!(X, 0x46B, XamShowNuiTroubleshooterUI),
+];
 
 /// What the title's on-screen keyboard asks for.
 #[derive(Clone, Debug)]
@@ -76,7 +79,7 @@ fn XamShowDeviceSelectorUI(c: &mut Call) -> u64 {
     k.complete_overlapped_deferred(
         overlapped,
         move || {
-            k.broadcast_notification(id::SYSTEM_UI, 1);
+            k.system_ui_shown();
             std::thread::sleep(UI_OPEN_DELAY);
         },
         move || {
@@ -86,7 +89,7 @@ fn XamShowDeviceSelectorUI(c: &mut Call) -> u64 {
         },
         move || {
             std::thread::sleep(UI_CLOSE_DELAY);
-            k.broadcast_notification(id::SYSTEM_UI, 0);
+            k.system_ui_hidden();
         },
     );
     win32::IO_PENDING as u64
@@ -111,7 +114,7 @@ fn XamShowKeyboardUI(c: &mut Call) -> u64 {
     k.complete_overlapped_deferred(
         overlapped,
         move || {
-            k.broadcast_notification(id::SYSTEM_UI, 1);
+            k.system_ui_shown();
             std::thread::sleep(UI_OPEN_DELAY);
         },
         move || {
@@ -132,8 +135,21 @@ fn XamShowKeyboardUI(c: &mut Call) -> u64 {
         },
         move || {
             std::thread::sleep(UI_CLOSE_DELAY);
-            k.broadcast_notification(id::SYSTEM_UI, 0);
+            k.system_ui_hidden();
         },
     );
     win32::IO_PENDING as u64
+}
+
+/// () -> BOOL: whether a system dialog is open.
+fn XamIsUIActive(c: &mut Call) -> u64 {
+    c.kernel.system_ui_active() as u64
+}
+
+/// (u32 UserIndex, u32 TrackingId, u32 Flags): the Kinect troubleshooter. No Kinect
+/// is ever connected and there is nothing to troubleshoot; answered at once as
+/// Xenia's headless mode does.
+fn XamShowNuiTroubleshooterUI(c: &mut Call) -> u64 {
+    log::info!("NUI troubleshooter requested (user {}, flags {:#X}): no Kinect", c.arg(0), c.arg(2));
+    win32::SUCCESS as u64
 }
