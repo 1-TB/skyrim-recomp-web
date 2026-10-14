@@ -129,8 +129,11 @@ impl<'a> RenderPassDepthStencilAttachment<'a> {
 impl Device {
     pub fn create_command_encoder(&self, label_: &str) -> CommandEncoder {
         let desc = ffi::WGPUCommandEncoderDescriptor { label: label(label_), ..Default::default() };
-        CommandEncoder::from_created(unsafe { ffi::wgpuDeviceCreateCommandEncoder(self.raw(), &desc) }, "encoder")
-            .expect("wgpuDeviceCreateCommandEncoder returned null")
+        let encoder =
+            CommandEncoder::from_created(unsafe { ffi::wgpuDeviceCreateCommandEncoder(self.raw(), &desc) }, "encoder")
+                .expect("wgpuDeviceCreateCommandEncoder returned null");
+        crate::timing::encoder_created(encoder.raw());
+        encoder
     }
 }
 
@@ -170,11 +173,13 @@ impl CommandEncoder {
             stencilReadOnly: wbool(d.stencil_read_only),
             ..Default::default()
         });
+        let timestamps = crate::timing::pass_writes(self.raw(), label_);
         let desc = ffi::WGPURenderPassDescriptor {
             label: label(label_),
             colorAttachmentCount: colors.len(),
             colorAttachments: colors.as_ptr(),
             depthStencilAttachment: depth.as_ref().map_or(ptr::null(), ptr::from_ref),
+            timestampWrites: timestamps.as_ref().map_or(ptr::null(), ptr::from_ref),
             ..Default::default()
         };
         let raw = unsafe { ffi::wgpuCommandEncoderBeginRenderPass(self.raw(), &desc) };
@@ -184,7 +189,12 @@ impl CommandEncoder {
 
     pub fn begin_compute_pass(&mut self, label_: &str) -> ComputePass<'_> {
         crate::counters::add(&crate::counters::count::compute_passes, 1);
-        let desc = ffi::WGPUComputePassDescriptor { label: label(label_), ..Default::default() };
+        let timestamps = crate::timing::pass_writes(self.raw(), label_);
+        let desc = ffi::WGPUComputePassDescriptor {
+            label: label(label_),
+            timestampWrites: timestamps.as_ref().map_or(ptr::null(), ptr::from_ref),
+            ..Default::default()
+        };
         let raw = unsafe { ffi::wgpuCommandEncoderBeginComputePass(self.raw(), &desc) };
         assert!(!raw.is_null(), "wgpuCommandEncoderBeginComputePass returned null");
         ComputePass { raw, ended: false, _encoder: PhantomData }
@@ -244,7 +254,8 @@ impl CommandEncoder {
         unsafe { ffi::wgpuCommandEncoderInsertDebugMarker(self.raw(), sv(label_)) };
     }
 
-    pub fn finish(self, label_: &str) -> CommandBuffer {
+    pub fn finish(mut self, label_: &str) -> CommandBuffer {
+        crate::timing::encoder_finishing(&mut self);
         let desc = ffi::WGPUCommandBufferDescriptor { label: label(label_), ..Default::default() };
         CommandBuffer::from_created(unsafe { ffi::wgpuCommandEncoderFinish(self.raw(), &desc) }, "command buffer")
             .expect("wgpuCommandEncoderFinish returned null")

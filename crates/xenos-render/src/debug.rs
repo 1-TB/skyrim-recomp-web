@@ -38,6 +38,9 @@ pub(crate) static MAX_FRAMES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(2);
 /// textures are decompressed), to measure what that costs.
 pub(crate) static NO_BC: AtomicBool = AtomicBool::new(false);
 
+/// Pass GPU times are measured with timestamp queries and logged with the frame reports.
+pub(crate) static GPU_TIME: AtomicBool = AtomicBool::new(false);
+
 /// Turns on experiment `mode`: `scissor`, `nodraw` or `frames=N` (frames in flight).
 pub fn enable(mode: &str) -> Result<(), String> {
     if let Some(n) = mode.strip_prefix("trace-frame=") {
@@ -73,9 +76,13 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "cpu-resolve" => &CPU_RESOLVES,
         "cpu-texture" => &CPU_TEXTURES,
         "no-bc" => &NO_BC,
+        "gpu-time" => {
+            GPU_TIME.store(true, Ordering::Relaxed);
+            return Ok(());
+        }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, frames=N, mirror=MIB, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, gpu-time, frames=N, mirror=MIB, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };

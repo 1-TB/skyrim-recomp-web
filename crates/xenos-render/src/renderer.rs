@@ -37,6 +37,9 @@ pub fn wanted_features(available: &[FeatureName]) -> Vec<FeatureName> {
     ];
     #[cfg(not(target_os = "emscripten"))]
     wanted.push(xenos_texture_cache::NATIVE_TEXTURE_FORMAT_16BIT_NORM);
+    if crate::debug::GPU_TIME.load(std::sync::atomic::Ordering::Relaxed) {
+        wanted.push(FeatureName::TimestampQuery);
+    }
     if crate::debug::NO_BC.load(std::sync::atomic::Ordering::Relaxed) {
         wanted.retain(|f| *f != FeatureName::TextureCompressionBC && *f != FeatureName::TextureCompressionBCSliced3D);
     }
@@ -75,6 +78,13 @@ impl Renderer {
         targets: TargetsFactory,
     ) -> Self {
         let targets = targets(device);
+        if crate::debug::GPU_TIME.load(std::sync::atomic::Ordering::Relaxed) {
+            if gpu_webgpu::timing::enable(device) {
+                log::info!("renderer: measuring GPU time per pass");
+            } else {
+                log::warn!("renderer: gpu-time: the device has no timestamp queries");
+            }
+        }
         Renderer {
             device: device.clone(),
             executor: Executor::new(device, memory, targets),
@@ -150,6 +160,7 @@ impl Renderer {
                     self.executor.end_frame();
                     let front = self.executor.front_buffer(fetch);
                     let size = self.presenter.swap(&self.device, front);
+                    gpu_webgpu::timing::collect();
                     if self.presenter.frames == 1 || self.presenter.frames.is_multiple_of(300) {
                         log::info!(
                             "renderer: frame {}: {:?}; textures {:?}; shared memory {:?}; shaders: {:.0} ms translating, {:.0} ms creating modules, {:.0} ms creating pipelines",
@@ -165,6 +176,9 @@ impl Renderer {
                         let frames = self.presenter.frames - self.calls_at.0;
                         log::info!("renderer: per frame: {}", calls_per_frame(&calls.since(&self.calls_at.1), frames));
                         log::info!("renderer: {}", self.gpu_memory());
+                        if let Some(times) = gpu_times(frames) {
+                            log::info!("renderer: {times}");
+                        }
                         self.calls_at = (self.presenter.frames, calls);
                     }
                     on_swap(self, size);
@@ -191,6 +205,28 @@ impl Renderer {
             handle.complete(seq);
         }
     }
+}
+
+/// GPU time per frame by pass label since the last call (`gpu-time`), over `frames` frames.
+pub(crate) fn gpu_times(frames: u64) -> Option<String> {
+    if !gpu_webgpu::timing::enabled() {
+        return None;
+    }
+    let (times, untimed) = gpu_webgpu::timing::take();
+    let frames = frames.max(1) as f64;
+    let total: u64 = times.iter().map(|(_, t)| t.nanos).sum();
+    let parts: Vec<String> = times
+        .iter()
+        .map(|(label, t)| {
+            format!("{label} {:.2} ms ({:.0} passes)", t.nanos as f64 / 1e6 / frames, t.passes as f64 / frames)
+        })
+        .collect();
+    Some(format!(
+        "GPU time per frame {:.2} ms: {}{}",
+        total as f64 / 1e6 / frames,
+        parts.join(", "),
+        if untimed > 0 { format!("; {untimed} passes untimed") } else { String::new() }
+    ))
 }
 
 impl Renderer {

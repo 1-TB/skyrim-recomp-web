@@ -960,6 +960,14 @@ impl EdramCache {
             let mut entries = vec![BindGroupEntry { binding: 0, resource: params.binding() }];
             entries.extend(src_entries(src));
             let bind_group = cached_bind_group(&self.groups, device, "edram transfer", layout, &entries);
+            log::trace!(
+                "edram: transfer tiles {}..{} from {:?} to {dest_key:?}{}{}: rows {y0}..{y1} of {dest_width}x{dest_height}",
+                range.start,
+                range.end,
+                src.key,
+                if outgrown.is_some() { " (grown)" } else { "" },
+                if cutout.is_some() { " (clear)" } else { "" },
+            );
             draws.push(Draw { pipelines, bind_group, params, scissor: [0, y0, dest_width, y1 - y0] });
         }
         if draws.is_empty() {

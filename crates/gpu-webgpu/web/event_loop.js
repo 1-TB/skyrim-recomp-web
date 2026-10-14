@@ -29,7 +29,17 @@ addToLibrary({
     // worker's event loop.
     const result = Atomics.waitAsync(HEAP32, addr >> 2, value | 0, timeoutMs);
     if (result.async) {
-      result.value.then(() => _gpu_webgpu_schedule(func, arg, 0));
+      // WebKit never fires waitAsync timeouts in workers (only notifies), so a timer runs
+      // alongside; whichever comes first schedules the callback, once.
+      let done = false;
+      const fire = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        _gpu_webgpu_schedule(func, arg, 0);
+      };
+      const timer = setTimeout(fire, timeoutMs);
+      result.value.then(fire);
     } else {
       _gpu_webgpu_schedule(func, arg, 0);
     }
