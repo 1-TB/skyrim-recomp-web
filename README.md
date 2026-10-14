@@ -23,6 +23,32 @@ The steps below go from your disc image to the game running in a browser tab.
 - **A browser with WebGPU** to play in: desktop Chrome or Edge, or Android Chrome. A gamepad works; so do keyboard
   and mouse, or the on-screen touch controls.
 
+## Quick start: `setup.sh`
+
+`setup.sh` runs steps 1–6 below for you. It installs missing tools (system packages through
+pacman/apt/dnf/zypper, the Rust nightly, emsdk 6.0.12, extract-xiso), then unpacks, decrypts, configures,
+recompiles and builds:
+
+```sh
+./setup.sh path/to/skyrim1.iso --serve
+```
+
+Every step checks whether its work is already done and skips it if so, so you can re-run the script after an
+interruption, a failure or a code change. It also checks the helper addresses against your executable before it
+writes `config/skyrim.toml`, and stops if they don't match the tested version. Useful options:
+
+| Option | Effect |
+|---|---|
+| `--status` | Show which steps are done. |
+| `--only build` / `--skip deps` | Run or skip particular steps (comma-separated). |
+| `-y` | Install missing dependencies without asking. |
+| `-j N` | Limit parallel compile jobs (lower it if the build runs out of memory). |
+| `--debug` | Build a debug web version instead of a release one. |
+| `--reconfigure`, `--force-recompile` | Regenerate the config, or rerun the recompiler. |
+
+Logs go to `generated/logs/`. `source generated/env.sh` sets up a shell for running the `cargo xtask` commands
+yourself. The sections below describe what each step does.
+
 ## 1. Unpack the disc
 
 From the repository root:
