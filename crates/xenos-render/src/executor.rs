@@ -51,7 +51,9 @@ const PIXEL_TEXTURE_BINDING_BASE: u32 = 96;
 /// Per-submission constants (a submission is made first when full; Skyrim submits every ~20
 /// draws on average, at each resolve).
 const CONSTANT_RING_SIZE: u64 = 4 << 20;
-const INDEX_RING_SIZE: u64 = 8 << 20;
+/// Per-submission indices (converted on the CPU, or copied out of shared memory); a draw with
+/// more is skipped.
+const INDEX_RING_SIZE: u64 = 4 << 20;
 const FLOAT_CONSTANTS_SIZE: u64 = bindings::FLOAT_CONSTANTS_SIZE;
 const BOOL_LOOP_SIZE: u64 = 160;
 const FETCH_SIZE: u64 = bindings::FETCH_CONSTANTS_SIZE;
@@ -589,6 +591,11 @@ impl Executor {
                     reuse_textures: !crate::debug::NO_TEXTURE_POOL.load(std::sync::atomic::Ordering::Relaxed),
                     gpu_conversion: !crate::debug::CPU_TEXTURES.load(std::sync::atomic::Ordering::Relaxed),
                     ..Default::default()
+                };
+                let config = if crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed) {
+                    xenos_texture_cache::CacheConfig { max_unused_frames: 120, ..config }
+                } else {
+                    config
                 };
                 TextureCache::with_config(device, xenos_texture_cache::host_caps(device), config)
             },

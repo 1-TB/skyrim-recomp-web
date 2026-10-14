@@ -36,6 +36,17 @@ pub use queue::RendererHandle;
 pub use renderer::{TargetsFactory, wanted_features};
 pub use shared_memory::{MirrorStats, default_mirror_limit, set_mirror_limit};
 
+/// Whether renderers started afterwards use phone-sized GPU memory budgets.
+pub(crate) static HANDHELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Phone and tablet browsers close tabs long before desktop ones: renderers started afterwards
+/// keep less in GPU memory (a 64 MiB guest memory mirror unless set explicitly, and textures
+/// dropped after 4 seconds unused instead of 10).
+pub fn handheld_budgets() {
+    HANDHELD.store(true, std::sync::atomic::Ordering::Relaxed);
+    default_mirror_limit(64);
+}
+
 /// Guest physical memory, shared with the emulated CPU.
 pub trait PhysicalMemory: Send + Sync {
     /// Copies `out.len()` bytes starting at physical address `addr`. Unmapped bytes read as 0.

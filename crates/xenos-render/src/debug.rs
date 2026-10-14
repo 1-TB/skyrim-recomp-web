@@ -50,6 +50,10 @@ pub fn enable(mode: &str) -> Result<(), String> {
         TRACE_EVERY.store(n, Ordering::Relaxed);
         return Ok(());
     }
+    if mode == "handheld" {
+        crate::handheld_budgets();
+        return Ok(());
+    }
     if let Some(n) = mode.strip_prefix("mirror=") {
         let mib: u32 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
         crate::set_mirror_limit(mib);
@@ -71,7 +75,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "no-bc" => &NO_BC,
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, frames=N, mirror=MIB, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, frames=N, mirror=MIB, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };

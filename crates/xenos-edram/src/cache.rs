@@ -1012,6 +1012,8 @@ impl EdramCache {
                 copy.readback.unmap();
                 if self.readback_pool.len() < READBACK_POOL_LIMIT {
                     self.readback_pool.push(copy.readback.clone());
+                } else {
+                    copy.readback.destroy();
                 }
                 match read {
                     Err(e) => Err(EdramError::Readback(e.to_string())),
@@ -1289,9 +1291,14 @@ impl EdramCache {
 
         let out_size = plan.out_bytes.max(4);
         if self.resolve_out.as_ref().is_none_or(|b| b.size() < out_size) {
+            // The old one is destroyed (after the work using it, all submitted): only dropped,
+            // a browser keeps it until garbage collection.
+            if let Some(old) = self.resolve_out.take() {
+                old.destroy();
+            }
             self.resolve_out = Some(device.create_buffer(&BufferDescriptor {
                 label: "edram resolve output",
-                size: out_size.next_multiple_of(1 << 16),
+                size: out_size.max(1 << 16).next_power_of_two(),
                 usage: BufferUsage::Storage | BufferUsage::CopySrc,
                 mapped_at_creation: false,
             }));

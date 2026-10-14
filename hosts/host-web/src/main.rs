@@ -85,7 +85,7 @@ fn main() {
         if unsafe { skyrt_handheld() } != 0 {
             // Browsers on phones and tablets close tabs long before desktop ones.
             log::info!("phone or tablet: smaller GPU memory budgets");
-            xenos_render::default_mirror_limit(64);
+            xenos_render::handheld_budgets();
         }
         let memory = std::sync::Arc::new(gpu::GuestPhysical(kernel));
         match xenos_render::web::start(memory, "#canvas", gpu::render_targets()) {
