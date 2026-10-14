@@ -41,6 +41,28 @@ struct HostSurface {
     header: [u32; d3d_hle::args::SURFACE_WORDS],
     /// Where it is in EDRAM on the console, and its layout there.
     edram: RenderTargetKey,
+    /// The last frame (present) it was bound or drawn to in.
+    last_used: u64,
+    /// Its texture in [`D3dRenderer::textures`].
+    texture_key: TextureKey,
+}
+
+/// Surfaces with the same EDRAM layout, size and format share one texture: they are the same
+/// memory on the console (the title makes several surface objects for one buffer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TextureKey {
+    edram: RenderTargetKey,
+    width: u32,
+    height: u32,
+    samples: u32,
+    format: TextureFormat,
+}
+
+/// A texture shared by the surfaces with its [`TextureKey`].
+struct SharedTexture {
+    texture: Texture,
+    view: TextureView,
+    users: u32,
 }
 
 impl HostSurface {
@@ -67,6 +89,8 @@ pub(crate) struct D3dRenderer {
     /// Rows surfaces were grown to: a surface rendered with predicated tiling is one tile tall
     /// on the console, and stands for the whole screen here (see [`D3dRenderer::grow`]).
     rows: HashMap<SurfaceKey, u32>,
+    /// The surfaces' textures.
+    textures: HashMap<TextureKey, SharedTexture>,
     /// The surface last drawn to or cleared at each EDRAM base tile. Surfaces at the same base
     /// share their EDRAM on the console, and titles rely on it (Skyrim restores its depth
     /// buffer by drawing the depth texture into a color target at the depth buffer's base):
@@ -94,6 +118,8 @@ pub(crate) struct D3dRenderer {
 
 /// Presents between per-frame operation logs.
 const LOG_PERIOD: u64 = 600;
+/// Frames a surface stays without being bound (see [`D3dRenderer::evict`]).
+const EVICT_FRAMES: u64 = 60;
 /// Size of the surface mosaic.
 const MOSAIC_SIZE: (u32, u32) = (1280, 720);
 
@@ -182,6 +208,7 @@ impl D3dRenderer {
         D3dRenderer {
             surfaces: HashMap::new(),
             rows: HashMap::new(),
+            textures: HashMap::new(),
             edram_owners: HashMap::new(),
             retired: Vec::new(),
             targets: [None; 4],
@@ -345,6 +372,7 @@ impl D3dRenderer {
                 }
                 self.frame_log.clear();
                 self.used.clear();
+                self.evict();
                 self.presents += 1;
                 return shown;
             }
@@ -356,7 +384,9 @@ impl D3dRenderer {
     /// its key.
     fn surface(&mut self, device: &Device, s: &Surface) -> SurfaceKey {
         let key = (s.address, s.depth);
-        if self.surfaces.get(&key).is_some_and(|h| h.header == s.header.words) {
+        let frame = self.presents;
+        if let Some(h) = self.surfaces.get_mut(&key).filter(|h| h.header == s.header.words) {
+            h.last_used = frame;
             return key;
         }
         let format = if s.depth {
@@ -371,7 +401,9 @@ impl D3dRenderer {
         let width = s.width();
         let height = s.height().max(self.rows.get(&key).copied().unwrap_or(0));
         let samples = if s.samples() > 1 { 4 } else { 1 };
-        let (texture, view) = surface_texture(device, s.depth, width, height, samples, format);
+        let edram = edram_key(s);
+        let texture_key = TextureKey { edram, width, height, samples, format };
+        let (texture, view) = self.acquire(device, texture_key, s.depth);
         log::debug!("d3d renderer: surface {:#010X} {width}x{height}x{samples} {format:?}", s.address);
         if let Some(old) = self.surfaces.insert(
             key,
@@ -386,12 +418,67 @@ impl D3dRenderer {
                 depth: s.depth,
                 float24: s.depth && s.format() & 1 != 0,
                 header: s.header.words,
-                edram: edram_key(s),
+                edram,
+                last_used: frame,
+                texture_key,
             },
         ) {
-            old.texture.destroy();
+            self.release(old.texture_key);
         }
         key
+    }
+
+    /// The texture for surfaces with `key` (created for the first).
+    fn acquire(&mut self, device: &Device, key: TextureKey, depth: bool) -> (Texture, TextureView) {
+        let shared = self.textures.entry(key).or_insert_with(|| {
+            let (texture, view) = surface_texture(device, depth, key.width, key.height, key.samples, key.format);
+            SharedTexture { texture, view, users: 0 }
+        });
+        shared.users += 1;
+        (shared.texture.clone(), shared.view.clone())
+    }
+
+    /// A surface no longer uses the texture with `key`; the last one retires it.
+    fn release(&mut self, key: TextureKey) {
+        if let Some(shared) = self.textures.get_mut(&key) {
+            shared.users -= 1;
+            if shared.users == 0
+                && let Some(shared) = self.textures.remove(&key)
+            {
+                self.retired.push(shared.texture);
+            }
+        }
+    }
+
+    /// Drops the surfaces not bound for [`EVICT_FRAMES`] frames: the title creates surface
+    /// objects for passes it stops running (and new ones at other addresses), whose textures
+    /// would otherwise stay for good.
+    fn evict(&mut self) {
+        let now = self.presents;
+        let bound: Vec<SurfaceKey> = self.targets.iter().flatten().chain(self.depth.iter()).copied().collect();
+        let old: Vec<SurfaceKey> = self
+            .surfaces
+            .iter()
+            .filter(|(k, s)| now.saturating_sub(s.last_used) > EVICT_FRAMES && !bound.contains(k))
+            .map(|(k, _)| *k)
+            .collect();
+        for key in old {
+            if let Some(s) = self.surfaces.remove(&key) {
+                log::debug!("d3d renderer: surface {:#010X} evicted", key.0);
+                self.release(s.texture_key);
+            }
+            self.rows.remove(&key);
+            self.edram_owners.retain(|_, owner| *owner != key);
+        }
+        if self.logging() {
+            let bytes: u64 = self.textures.keys().map(texture_bytes).sum();
+            log::info!(
+                "d3d renderer: {} surfaces in {} textures, {} MiB",
+                self.surfaces.len(),
+                self.textures.len(),
+                bytes >> 20
+            );
+        }
     }
 
     /// Makes surface `key` at least `rows` tall. With predicated tiling the title's surfaces are
@@ -400,17 +487,18 @@ impl D3dRenderer {
     /// the draws' viewport and scissor tell. The texture is replaced (its contents are lost:
     /// this happens once, on the surface's first tiled use).
     fn grow(&mut self, device: &Device, key: SurfaceKey, rows: u32) {
-        let Some(s) = self.surfaces.get_mut(&key) else { return };
+        let Some(s) = self.surfaces.get(&key) else { return };
         if s.height >= rows {
             return;
         }
         let rows = rows.min(device.limits().maxTextureDimension2D);
         log::debug!("d3d renderer: surface {:#010X} grows from {} to {rows} rows", key.0, s.height);
-        let (texture, view) = surface_texture(device, s.depth, s.width, rows, s.samples, s.format);
-        let old = std::mem::replace(&mut s.texture, texture);
-        self.retired.push(old);
-        s.view = view;
-        s.height = rows;
+        let (old, depth) = (s.texture_key, s.depth);
+        let new = TextureKey { height: rows, ..old };
+        let (texture, view) = self.acquire(device, new, depth);
+        self.release(old);
+        let s = self.surfaces.get_mut(&key).expect("checked above");
+        (s.texture, s.view, s.height, s.texture_key) = (texture, view, rows, new);
         self.rows.insert(key, rows);
     }
 
@@ -425,31 +513,13 @@ impl D3dRenderer {
         let Some(p) = previous.filter(|&p| p != key).and_then(|p| self.surfaces.get(&p)) else { return };
         let same_layout = (p.width, p.height, p.samples, p.edram.msaa_samples, p.edram.pitch_tiles_at_32bpp)
             == (s.width, s.height, s.samples, s.edram.msaa_samples, s.edram.pitch_tiles_at_32bpp);
-        if !same_layout {
+        // Surfaces with the same format share their texture already.
+        if !same_layout || p.texture_key == s.texture_key {
             return;
         }
-        let done = if p.edram == s.edram {
-            // Same format too: the contents as they are.
-            encoder.copy_texture_to_texture(
-                &TexelCopyTextureInfo {
-                    texture: &p.texture,
-                    mip_level: 0,
-                    origin: Origin3d::default(),
-                    aspect: TextureAspect::All,
-                },
-                &TexelCopyTextureInfo {
-                    texture: &s.texture,
-                    mip_level: 0,
-                    origin: Origin3d::default(),
-                    aspect: TextureAspect::All,
-                },
-                extent(s.width, s.height, 1),
-            );
-            true
-        } else {
-            let edram = self.edram.get_or_insert_with(|| xenos_edram::EdramCache::new(device));
-            edram.transfer_external(device, encoder, (&p.external([0, 0]), p.edram), (&s.external([0, 0]), s.edram))
-        };
+        let edram = self.edram.get_or_insert_with(|| xenos_edram::EdramCache::new(device));
+        let done =
+            edram.transfer_external(device, encoder, (&p.external([0, 0]), p.edram), (&s.external([0, 0]), s.edram));
         if done {
             log::debug!(
                 "d3d renderer: EDRAM base {base} passes from {:#010X} to {:#010X}",
@@ -517,6 +587,13 @@ fn edram_key(s: &Surface) -> RenderTargetKey {
     }
 }
 
+fn texture_bytes(key: &TextureKey) -> u64 {
+    // Depth/stencil: 32-bit float depth plus stencil, or 24+8 bits.
+    let per_sample = format_block_info(key.format)
+        .map_or(if key.format == TextureFormat::Depth32FloatStencil8 { 8 } else { 4 }, |(bytes, _)| bytes);
+    u64::from(key.width) * u64::from(key.height) * u64::from(key.samples) * u64::from(per_sample)
+}
+
 fn surface_texture(
     device: &Device,
     depth: bool,
@@ -530,10 +607,7 @@ fn surface_texture(
         size: extent(width, height, 1),
         sample_count: samples,
         format,
-        usage: TextureUsage::RenderAttachment
-            | TextureUsage::TextureBinding
-            | TextureUsage::CopySrc
-            | TextureUsage::CopyDst,
+        usage: TextureUsage::RenderAttachment | TextureUsage::TextureBinding,
         ..Default::default()
     });
     let view = texture.create_view(None);
@@ -557,8 +631,12 @@ impl crate::targets::RenderTargetCache for D3dTargets {
             .filter_map(|i| r.targets[i])
             .chain(r.depth.filter(|_| setup.depth.is_some()))
             .collect();
+        let frame = r.presents;
         for &key in &bound {
             r.grow(device, key, min_height);
+            if let Some(s) = r.surfaces.get_mut(&key) {
+                s.last_used = frame;
+            }
         }
         for &key in &bound {
             r.take_edram(device, encoder, key);
