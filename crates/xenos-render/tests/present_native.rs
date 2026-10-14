@@ -66,7 +66,7 @@ fn swap_of_a_tiled_front_buffer_is_presented() {
     let _ = std::fs::remove_dir_all(&dir);
     let handle = native::start(
         memory,
-        NativeOptions { dump_dir: Some(dir.clone()), dump_every: 1 },
+        NativeOptions { dump_dir: Some(dir.clone()), dump_every: 1, window: None },
         Box::new(|device| Box::new(common::OneTarget::new(device, 16))),
     )
     .expect("renderer");
