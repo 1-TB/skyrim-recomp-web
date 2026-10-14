@@ -269,7 +269,7 @@ pub(crate) fn calls_per_frame(c: &gpu_webgpu::counters::Counters, frames: u64) -
     let uploads: Vec<String> = gpu_webgpu::counters::take_written_by_label()
         .into_iter()
         .take(6)
-        .map(|(label, bytes)| format!("\"{label}\" {} KiB", bytes / f / 1024))
+        .map(|(label, calls, bytes)| format!("\"{label}\" {}x {} KiB", calls / f, bytes / f / 1024))
         .collect();
     format!(
         "{} draws, {} set_pipeline, {} set_bind_group, {} render passes, {} compute passes ({} dispatches), \

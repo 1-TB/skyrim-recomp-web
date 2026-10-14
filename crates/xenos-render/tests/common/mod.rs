@@ -117,6 +117,8 @@ impl RenderTargetCache for OneTarget {
     }
 
     fn end_frame(&mut self) {}
+
+    fn flush_uploads(&mut self, _device: &Device) {}
 }
 
 pub fn device() -> Device {

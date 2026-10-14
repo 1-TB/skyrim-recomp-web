@@ -68,4 +68,7 @@ pub trait RenderTargetCache {
 
     /// Frame boundary; everything recorded has been submitted, so unused targets can be freed.
     fn end_frame(&mut self);
+
+    /// Sends data the work recorded so far needs (call before submitting it).
+    fn flush_uploads(&mut self, device: &Device);
 }

@@ -90,6 +90,10 @@ impl RenderTargetCache for EdramTargets {
         self.cache.end_frame();
     }
 
+    fn flush_uploads(&mut self, device: &Device) {
+        self.cache.flush_uploads(device);
+    }
+
     fn poll_resolve(&mut self, device: &Device, memory: &dyn PhysicalMemory) -> ResolveStatus {
         let Some(pending) = self.pending.as_mut() else {
             return ResolveStatus::Done { written: None, in_gpu_memory: false };

@@ -81,21 +81,24 @@ pub fn take_created_by_label() -> Vec<(&'static str, String, u64)> {
     v
 }
 
-/// Bytes uploaded with `Queue::write_buffer` per destination buffer label, to find what the
+/// Calls and bytes of `Queue::write_buffer` per destination buffer label, to find what the
 /// uploads are.
-static WRITTEN_BY_LABEL: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
+static WRITTEN_BY_LABEL: std::sync::Mutex<Vec<(String, u64, u64)>> = std::sync::Mutex::new(Vec::new());
 
 pub(crate) fn written(label: &str, bytes: u64) {
     let mut v = WRITTEN_BY_LABEL.lock().unwrap_or_else(|e| e.into_inner());
-    match v.iter_mut().find(|(l, _)| l == label) {
-        Some(e) => e.1 += bytes,
-        None => v.push((label.to_string(), bytes)),
+    match v.iter_mut().find(|(l, ..)| l == label) {
+        Some(e) => {
+            e.1 += 1;
+            e.2 += bytes;
+        }
+        None => v.push((label.to_string(), 1, bytes)),
     }
 }
 
-/// Bytes uploaded per buffer label since the last call, most first.
-pub fn take_written_by_label() -> Vec<(String, u64)> {
+/// (label, calls, bytes) uploaded per buffer label since the last call, most bytes first.
+pub fn take_written_by_label() -> Vec<(String, u64, u64)> {
     let mut v = std::mem::take(&mut *WRITTEN_BY_LABEL.lock().unwrap_or_else(|e| e.into_inner()));
-    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.sort_by(|a, b| b.2.cmp(&a.2));
     v
 }

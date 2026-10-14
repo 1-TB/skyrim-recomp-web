@@ -751,6 +751,7 @@ impl Executor {
             self.stats.constant_upload_bytes += bytes;
             commands
         });
+        self.targets.flush_uploads(&self.device);
         let main = self.encoder.take().map(|encoder| encoder.finish("xenos"));
         if patches.is_some() || main.is_some() || !self.queued.is_empty() {
             self.device.queue().submit(patches.into_iter().chain(self.queued.drain(..)).chain(main));

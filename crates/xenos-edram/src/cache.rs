@@ -407,6 +407,20 @@ const PARAMS_SLOT: u64 = 256;
 struct ParamsArena {
     buffer: Buffer,
     next: u64,
+    /// Parameters written since the last [`EdramCache::flush_uploads`], for slots from
+    /// `pending_start` on: sent in one `write_buffer` (an operation's parameters are a few dozen
+    /// bytes, and a frame has hundreds of operations; each WebGPU call has a fixed cost).
+    pending: Vec<u8>,
+    pending_start: u64,
+}
+
+impl ParamsArena {
+    fn flush(&mut self, device: &Device) {
+        if !self.pending.is_empty() {
+            device.queue().write_buffer(&self.buffer, self.pending_start, &self.pending);
+            self.pending.clear();
+        }
+    }
 }
 
 /// One operation's parameters in the arena.
@@ -443,13 +457,20 @@ type GroupCache = HashMap<Vec<u64>, (BindGroup, Vec<Held>)>;
 const MAX_CACHED_GROUPS: usize = 2048;
 
 fn uniform(arena: &RefCell<ParamsArena>, device: &Device, words: &[u32]) -> Params {
-    let mut bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    bytes.resize(bytes.len().next_multiple_of(16).max(16), 0);
-    let _ = PARAMS_SLOT.checked_sub(bytes.len() as u64).expect("EDRAM parameters larger than a slot");
+    let _ = PARAMS_SLOT.checked_sub(words.len() as u64 * 4).expect("EDRAM parameters larger than a slot");
     let mut arena = arena.borrow_mut();
     let offset = arena.next;
+    if offset == 0 {
+        // Wrapped: the staged run ends at the end of the arena.
+        arena.flush(device);
+    }
+    if arena.pending.is_empty() {
+        arena.pending_start = offset;
+    }
+    let slot_start = arena.pending.len();
+    arena.pending.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+    arena.pending.resize(slot_start + PARAMS_SLOT as usize, 0);
     arena.next = (offset + PARAMS_SLOT) % PARAMS_ARENA_BYTES;
-    device.queue().write_buffer(&arena.buffer, offset, &bytes);
     Params { buffer: arena.buffer.clone(), offset }
 }
 
@@ -570,9 +591,17 @@ impl EdramCache {
                     mapped_at_creation: false,
                 }),
                 next: 0,
+                pending: Vec::new(),
+                pending_start: 0,
             }),
             groups: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Sends the parameters of the operations recorded since the last call: call before
+    /// submitting work recorded with this cache (its own submissions do).
+    pub fn flush_uploads(&self, device: &Device) {
+        self.params.borrow_mut().flush(device);
     }
 
     /// Current tile ownership (for diagnostics).
@@ -949,6 +978,7 @@ impl EdramCache {
         }
         let mut encoder = device.create_command_encoder("edram resolve");
         let (copy, result) = self.encode_resolve(device, &mut encoder, info, shared)?;
+        self.flush_uploads(device);
         device.queue().submit([encoder.finish("edram resolve")]);
         let mut pending = PendingResolve {
             copy,

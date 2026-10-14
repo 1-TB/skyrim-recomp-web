@@ -199,6 +199,7 @@ fn draw(
         }
         pass.end();
     }
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("test draw")]);
     t
 }
@@ -788,6 +789,7 @@ fn ownership_transfers(gpu: &Gpu, cache: &mut EdramCache) {
     // Same tiles through pitch 160 (2 tiles per row): 128 rows.
     let mut enc = device.create_command_encoder("transfer");
     cache.targets(device, &mut enc, &color_setup(160, MsaaSamples::X1, 10, C::K8888), 128).expect("targets");
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("transfer")]);
     let b = key(10, 160, MsaaSamples::X1, false, C::K8888.raw());
     assert_eq!(cache.ownership(), &[OwnedRange { start: 10, end: 26, owner: b }]);
@@ -814,6 +816,7 @@ fn ownership_transfers(gpu: &Gpu, cache: &mut EdramCache) {
     // Color -> depth (tile halves swapped, stencil through the 8 bit passes) -> color again.
     let mut enc = device.create_command_encoder("to depth");
     cache.targets(device, &mut enc, &depth_setup(256, MsaaSamples::X1, 10, D::D24S8), 64).expect("targets");
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("to depth")]);
     let info = Resolve { depth_base: 10, src_select: 4, rect: [0.0, 0.0, 256.0, 64.0], ..Default::default() }.info();
     run(gpu, cache, &info, &mem);
@@ -827,6 +830,7 @@ fn ownership_transfers(gpu: &Gpu, cache: &mut EdramCache) {
     check_depth(&mem, &expected);
     let mut enc = device.create_command_encoder("back to color");
     cache.targets(device, &mut enc, &color_setup(256, MsaaSamples::X1, 10, C::K8888), 64).expect("targets");
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("back to color")]);
     run(gpu, cache, &Resolve { color_base: 10, ..Default::default() }.info(), &mem);
     for y in 0..64 {
@@ -854,9 +858,11 @@ fn color_through_float24_depth_is_lossless() {
     draw(&gpu, &mut cache, &color_setup(256, MsaaSamples::X1, 10, C::K8888), 64, FS_8888, &[([0, 0, 320, 64], 0)]);
     let mut enc = device.create_command_encoder("to depth");
     cache.targets(device, &mut enc, &depth_setup(256, MsaaSamples::X1, 10, D::D24FS8), 64).expect("targets");
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("to depth")]);
     let mut enc = device.create_command_encoder("back to color");
     cache.targets(device, &mut enc, &color_setup(256, MsaaSamples::X1, 10, C::K8888), 64).expect("targets");
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("back to color")]);
     let mut expected = mem.snapshot();
     run(&gpu, &mut cache, &Resolve { color_base: 10, ..Default::default() }.info(), &mem);
@@ -892,6 +898,7 @@ fn transfer_32bpp_to_64bpp_preserves_bits() {
     let original = edram_map(0, 256, 320, 32, pattern_half_safe);
     let mut enc = device.create_command_encoder("to 64bpp");
     cache.targets(device, &mut enc, &color_setup(256, MsaaSamples::X1, 0, C::K16161616Float), 16).expect("targets");
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("to 64bpp")]);
     let info = Resolve {
         color_format: C::K16161616Float,
@@ -959,6 +966,7 @@ fn gamma_targets_store_linear_and_resolve_decoded() {
     // Viewed as k_8_8_8_8 the same tiles hold the PWL codes.
     let mut enc = device.create_command_encoder("gamma as 8888");
     cache.targets(device, &mut enc, &color_setup(256, MsaaSamples::X1, 0, C::K8888), 16).expect("targets");
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("gamma as 8888")]);
     run(&gpu, &mut cache, &Resolve { rect: [0.0, 0.0, 256.0, 16.0], ..Default::default() }.info(), &mem);
     for y in 0..16 {
@@ -1068,6 +1076,7 @@ fn aliased_bindings_and_errors() {
     assert!(matches!(cache.targets(device, &mut enc, &wide, 64), Err(EdramError::PitchTooLarge { .. })));
     let none = cache.targets(device, &mut enc, &empty_setup(0, MsaaSamples::X1), 64).expect("empty");
     assert!(none.is_empty());
+    cache.flush_uploads(device);
     device.queue().submit([enc.finish("errors")]);
 
     let mut info = Resolve::default().info();
@@ -1107,6 +1116,7 @@ fn msaa_transfers_to_1x_and_back() {
         let rows_1x = 32 << msaa.samples_y_log2();
         let mut enc = device.create_command_encoder("to 1x");
         cache.targets(device, &mut enc, &color_setup(pitch_1x, MsaaSamples::X1, base, C::K8888), rows_1x).unwrap();
+        cache.flush_uploads(device);
         device.queue().submit([enc.finish("to 1x")]);
         let info = Resolve {
             pitch: pitch_1x,
@@ -1129,6 +1139,7 @@ fn msaa_transfers_to_1x_and_back() {
         // Back to the multisampled surface: every guest sample is restored.
         let mut enc = device.create_command_encoder("back to msaa");
         cache.targets(device, &mut enc, &color_setup(128, msaa, base, C::K8888), 32).unwrap();
+        cache.flush_uploads(device);
         device.queue().submit([enc.finish("back to msaa")]);
         let last = msaa.count().unwrap() - 1;
         let info = Resolve {
