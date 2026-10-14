@@ -143,17 +143,39 @@ impl Generator<'_> {
         if !is_set && tf.result.used_write_mask() == 0 {
             return;
         }
-        let predicated = self.predicated(tf.is_predicated, tf.predicate_condition);
+        let pixel = self.stage == ShaderStage::Pixel;
+        // In pixel shaders the fetch runs in the control flow of the guard (sampling needs
+        // quad-uniform control flow, see `Generator::push_guard`); only its effects depend on the
+        // predicate.
+        let (predicated, guard) = if pixel {
+            (false, self.instruction_condition(tf.is_predicated, tf.predicate_condition))
+        } else {
+            (self.predicated(tf.is_predicated, tf.predicate_condition), None)
+        };
         self.open("{");
         let coords: Vec<String> = (0..tf.src.component_count).map(|i| self.operand_scalar(&tf.src, i)).collect();
-        let pixel = self.stage == ShaderStage::Pixel;
+        let store_guard = guard.clone();
+        let effect = move |g: &mut Self, f: &mut dyn FnMut(&mut Self)| match &store_guard {
+            Some(c) => {
+                g.open(&format!("if ({c}) {{"));
+                f(g);
+                g.close();
+            }
+            None => f(g),
+        };
+        let store = |g: &mut Self, value: Value<'_>| effect(g, &mut |g| g.store(&tf.result, value));
         match tf.opcode {
-            FetchOpcode::SetTextureLod => self.line(&format!("xe_tfetch_lod = {};", coords[0])),
+            FetchOpcode::SetTextureLod => {
+                let line = format!("xe_tfetch_lod = {};", coords[0]);
+                effect(self, &mut |g| g.line(&line));
+            }
             FetchOpcode::SetTextureGradientsHorz => {
-                self.line(&format!("xe_tfetch_gradients_h = vec3<f32>({});", coords.join(", ")))
+                let line = format!("xe_tfetch_gradients_h = vec3<f32>({});", coords.join(", "));
+                effect(self, &mut |g| g.line(&line));
             }
             FetchOpcode::SetTextureGradientsVert => {
-                self.line(&format!("xe_tfetch_gradients_v = vec3<f32>({});", coords.join(", ")))
+                let line = format!("xe_tfetch_gradients_v = vec3<f32>({});", coords.join(", "));
+                effect(self, &mut |g| g.line(&line));
             }
             FetchOpcode::GetTextureGradients => {
                 let value = if pixel {
@@ -163,34 +185,34 @@ impl Generator<'_> {
                     "vec4<f32>(0.0)"
                 };
                 self.line(&format!("let xe_tr = {value};"));
-                self.store(&tf.result, Value::Vec("xe_tr"));
+                store(self, Value::Vec("xe_tr"));
             }
             FetchOpcode::GetTextureBorderColorFrac => {
                 self.warn("getBCF is not supported (returns 0)".to_string());
-                self.store(&tf.result, Value::Vec("vec4<f32>(0.0)"));
+                store(self, Value::Vec("vec4<f32>(0.0)"));
             }
             FetchOpcode::GetTextureComputedLod => {
                 if pixel && used != 0 {
                     self.emit_computed_lod(tf, &coords);
-                    self.store(&tf.result, Value::Vec("xe_tr"));
+                    store(self, Value::Vec("xe_tr"));
                 } else {
-                    self.store(&tf.result, Value::Vec("vec4<f32>(0.0)"));
+                    store(self, Value::Vec("vec4<f32>(0.0)"));
                 }
             }
             FetchOpcode::GetTextureWeights => {
                 if used != 0 {
                     self.emit_weights(tf, &coords);
-                    self.store(&tf.result, Value::Vec("xe_tr"));
+                    store(self, Value::Vec("xe_tr"));
                 } else {
-                    self.store(&tf.result, Value::None);
+                    store(self, Value::None);
                 }
             }
             FetchOpcode::TextureFetch => {
                 if used != 0 {
                     self.emit_sample(tf, &coords);
-                    self.store(&tf.result, Value::Vec("xe_tr"));
+                    store(self, Value::Vec("xe_tr"));
                 } else {
-                    self.store(&tf.result, Value::None);
+                    store(self, Value::None);
                 }
             }
             FetchOpcode::VertexFetch | FetchOpcode::Unknown(_) => {

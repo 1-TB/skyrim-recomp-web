@@ -104,6 +104,9 @@ pub(crate) struct Generator<'a> {
     warnings: BTreeSet<String>,
     temp_counter: u32,
     structured: bool,
+    /// Pixel shaders: the `let` holding the predicate condition of the enclosing guarded region
+    /// (see [`Generator::push_guard`]), if any.
+    guard: Option<String>,
 }
 
 /// Formats an f32 as a WGSL literal that round-trips exactly.
@@ -146,7 +149,49 @@ impl<'a> Generator<'a> {
             warnings: BTreeSet::new(),
             temp_counter: 0,
             structured: false,
+            guard: None,
         }
+    }
+
+    /// Pixel shaders don't branch on the predicate around texture fetches: implicit derivatives
+    /// (and dpdx/dpdy) are undefined in non-uniform control flow, and while some GPUs return
+    /// sensible values anyway, others (Intel on D3D12) produce garbage LODs, speckling the
+    /// picture. Regions conditional on the predicate become guarded instead: instructions only
+    /// store (and ALU instructions only run) when the guard holds, and fetches sample anyway.
+    /// Returns the previous guard, to restore with [`Generator::pop_guard`].
+    fn push_guard(&mut self, condition: &str) -> Option<String> {
+        let name = self.temp("xe_g");
+        let expr = match &self.guard {
+            Some(outer) => format!("{outer} && ({condition})"),
+            None => condition.to_string(),
+        };
+        self.line(&format!("let {name} = {expr};"));
+        self.guard.replace(name)
+    }
+
+    fn pop_guard(&mut self, previous: Option<String>) {
+        self.guard = previous;
+    }
+
+    /// The condition an instruction's effects depend on: the enclosing guard and its own
+    /// predicate.
+    fn instruction_condition(&self, is_predicated: bool, condition: bool) -> Option<String> {
+        let predicate = is_predicated.then(|| format!("{}xe_p0", if condition { "" } else { "!" }));
+        match (&self.guard, predicate) {
+            (Some(g), Some(p)) => Some(format!("{g} && {p}")),
+            (Some(g), None) => Some(g.clone()),
+            (None, p) => p,
+        }
+    }
+
+    /// Whether `nodes` can be guarded rather than branched over: only execs and nested
+    /// conditional regions (no loops or returns, whose control flow must stay real).
+    fn guardable(nodes: &[structure::Node]) -> bool {
+        nodes.iter().all(|n| match n {
+            structure::Node::Cf(_) => true,
+            structure::Node::If { body, else_body, .. } => Self::guardable(body) && Self::guardable(else_body),
+            structure::Node::Return { .. } | structure::Node::Loop { .. } => false,
+        })
     }
 
     fn line(&mut self, text: &str) {
@@ -325,17 +370,27 @@ impl<'a> Generator<'a> {
     }
 
     fn predicated(&mut self, is_predicated: bool, condition: bool) -> bool {
-        if is_predicated {
-            self.open(&format!("if ({}xe_p0) {{", if condition { "" } else { "!" }));
+        match self.instruction_condition(is_predicated, condition) {
+            Some(c) => {
+                self.open(&format!("if ({c}) {{"));
+                true
+            }
+            None => false,
         }
-        is_predicated
     }
 
     fn emit_exec(&mut self, exec: &ParsedExec, entry_index: usize) -> bool {
         let condition = Self::condition_expr(&exec.condition);
-        if let Some(c) = &condition {
-            self.open(&format!("if ({c}) {{"));
-        }
+        let guarded = self.stage == ShaderStage::Pixel && matches!(exec.condition, CfCondition::Predicate(_));
+        let previous_guard = if guarded {
+            let c = condition.clone().expect("predicate condition");
+            Some(self.push_guard(&c))
+        } else {
+            if let Some(c) = &condition {
+                self.open(&format!("if ({c}) {{"));
+            }
+            None
+        };
         let program: &'a Program = self.program;
         for instruction in &program.cf[entry_index].instructions {
             self.line(&format!("// {}", one_line_disassembly(&instruction.instruction)));
@@ -344,6 +399,16 @@ impl<'a> Generator<'a> {
                 Instruction::VertexFetch(vf) => self.emit_vertex_fetch(vf),
                 Instruction::TextureFetch(tf) => self.emit_texture_fetch(tf),
             }
+        }
+        if let Some(previous) = previous_guard {
+            if exec.is_end {
+                let g = self.guard.clone().expect("pushed above");
+                self.open(&format!("if ({g}) {{"));
+                self.line("return;");
+                self.close();
+            }
+            self.pop_guard(previous);
+            return false;
         }
         if exec.is_end {
             self.line("return;");
@@ -456,6 +521,27 @@ impl<'a> Generator<'a> {
         for node in nodes {
             let terminated = match node {
                 structure::Node::Cf(i) => self.emit_cf(*i, false),
+                structure::Node::If { condition, inverted, body, else_body }
+                    if self.stage == ShaderStage::Pixel
+                        && matches!(condition, CfCondition::Predicate(_))
+                        && Self::guardable(body)
+                        && Self::guardable(else_body) =>
+                {
+                    let c = Self::condition_expr(condition).expect("predicate condition");
+                    let c = if *inverted { format!("!({c})") } else { c };
+                    // Both branches see the predicate as it was before the region.
+                    let entry = self.temp("xe_c");
+                    self.line(&format!("let {entry} = {c};"));
+                    let previous = self.push_guard(&entry);
+                    self.emit_nodes(body);
+                    self.pop_guard(previous.clone());
+                    if !else_body.is_empty() {
+                        let previous = self.push_guard(&format!("!{entry}"));
+                        self.emit_nodes(else_body);
+                        self.pop_guard(previous);
+                    }
+                    false
+                }
                 structure::Node::If { condition, inverted, body, else_body } => {
                     let c = Self::condition_expr(condition).unwrap_or_else(|| "true".to_string());
                     let c = if *inverted { format!("!({c})") } else { c };
