@@ -358,6 +358,10 @@ impl Kernel {
         progress.retain(|p| threads.iter().any(|t| t.tid() == p.0));
         let now = Instant::now();
         for t in &threads {
+            // Not started yet (created suspended) or finished.
+            if t.context.load(Ordering::Acquire).is_null() {
+                continue;
+            }
             let calls = t.kernel_calls.load(Ordering::Relaxed);
             let entry = match progress.iter_mut().find(|p| p.0 == t.tid()) {
                 Some(e) => e,
