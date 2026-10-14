@@ -50,9 +50,20 @@
         <button id="pick">Import game folder…</button>
         <button id="pick-zip">Import .zip…</button>
         <input id="zip-file" type="file" accept=".zip,application/zip" hidden>
+        <span id="server-import-controls" class="row" hidden><button id="pick-server" title="Copy the server's game folder into this browser; files that already match are skipped">Import from server</button></span>
         <span class="spacer"></span>
         <button id="clear" class="danger">Clear imported files</button>
       </div>
+      <div id="import-progress" class="import-progress" hidden>
+        <div class="row">
+          <span id="import-text" class="num"></span>
+          <span class="spacer"></span>
+          <button id="import-cancel" class="small">Cancel</button>
+        </div>
+        <div class="progress"><div id="import-bar"></div></div>
+        <div id="import-file" class="hint import-file"></div>
+      </div>
+      <label class="check hint" id="import-prune-row"><input id="import-prune" type="checkbox"> With Import from server, also delete local files the server doesn't have</label>
       <p id="status" class="status-line" aria-live="polite"></p>
     </div>
   </section>

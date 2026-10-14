@@ -177,6 +177,12 @@ details[open] > .settings-summary::after { transform: rotate(-135deg); margin-to
 /* Game files */
 .files-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 #status:empty { display: none; }
+.import-progress { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); font-size: 13px; }
+.progress { height: 6px; margin: 8px 0 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.progress > div { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+.import-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 1.4em; }
+#import-prune-row { margin-top: 8px; }
+#local-controls:has(#server-import-controls[hidden]) #import-prune-row { display: none; }
 .status-line { margin-top: 10px; font-size: 13px; color: var(--muted); }
 
 /* Boot bar */

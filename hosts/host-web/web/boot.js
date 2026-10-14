@@ -227,18 +227,67 @@ async function localGameReady() {
   }
 }
 
-// The runtime is recompiled against one default.xex (with its title update), so an imported copy
-// goes stale whenever the server's game folder is rebuilt. Before booting imported files, copy
-// default.xex and $TitleUpdate/ from the server when they are missing or differ in size, or when
-// the server's default.xex changed since the last copy (its ETag is remembered).
+// Copies files of the server's game folder into OPFS game/: the whole folder ("Import from
+// server") or, before each boot of imported files, default.xex and $TitleUpdate/ (the runtime is
+// recompiled against one default.xex, so an imported copy goes stale whenever the server's game
+// folder is rebuilt). A file is fetched when it is missing or differs in size, and default.xex also
+// when the server's changed since the last copy (its ETag is remembered), so an interrupted import
+// resumes where it stopped. Each file is written under a temporary name and renamed into place
+// once complete: a partial file never passes the size check.
 const SYNCED_KEY = 'skyrt-synced-xex';
+const PART_SUFFIX = '.skyrt-part';
 
-async function syncFromServer() {
-  if (!(await streamAvailable())) return;
-  const manifest = (await (await fetch(STREAM_BASE + 'manifest')).text())
-    .split('\n')
-    .map((line) => line.split('\t'))
-    .filter(([size, path]) => path && (path === 'default.xex' || path.startsWith('$TitleUpdate/')));
+// The server's manifest: [{ path, size }].
+async function serverManifest() {
+  const r = await fetch(STREAM_BASE + 'manifest');
+  if (!r.ok) throw new Error(`game/manifest: HTTP ${r.status}`);
+  return (await r.text()).split('\n').map((line) => line.split('\t'))
+    .filter(([size, path]) => path && /^\d+$/.test(size))
+    .map(([size, path]) => ({ path, size: Number(size) }));
+}
+
+class Cancelled extends Error {
+  constructor() {
+    super('cancelled');
+    this.name = 'AbortError';
+  }
+}
+
+// Writes `body` (a ReadableStream) to `dir`/`name` through a temporary file. `counted(n)` is
+// called for every chunk; `signal` cancels (the temporary file is removed).
+async function writeFileAtomically(dir, name, body, counted, signal) {
+  const partName = name + PART_SUFFIX;
+  const part = await dir.getFileHandle(partName, { create: true });
+  try {
+    const out = await part.createWritable();
+    const counter = new TransformStream({
+      transform(chunk, controller) {
+        counted(chunk.byteLength);
+        controller.enqueue(chunk);
+      },
+    });
+    await body.pipeThrough(counter).pipeTo(out, { signal });
+    if (typeof part.move === 'function') {
+      await dir.removeEntry(name).catch(() => {});
+      await part.move(name);
+    } else {
+      // No FileSystemHandle.move (older Safari): copy the finished file into place.
+      const final = await (await dir.getFileHandle(name, { create: true })).createWritable();
+      await (await part.getFile()).stream().pipeTo(final);
+      await dir.removeEntry(partName);
+    }
+  } catch (e) {
+    await dir.removeEntry(partName).catch(() => {});
+    throw signal?.aborted ? new Cancelled() : e;
+  }
+}
+
+// Copies the server files whose path passes `filter`. `options`: { signal, prune (also delete
+// local files the server doesn't list; only for the whole folder), progress({ files, totalFiles,
+// bytes, totalBytes, current, rate }) }. Returns { copied, bytes (fetched), deleted }.
+async function copyFromServer(filter, options = {}) {
+  const { signal, progress = () => {} } = options;
+  const manifest = (await serverManifest()).filter((f) => filter(f.path));
   const head = await fetch(STREAM_BASE + 'files/default.xex', { method: 'HEAD' });
   const xexStamp = head.headers.get('ETag') ?? head.headers.get('Content-Length');
   let synced = null;
@@ -246,37 +295,170 @@ async function syncFromServer() {
     synced = localStorage.getItem(SYNCED_KEY);
   } catch {}
   const root = await gameDir(true);
-  let copied = 0;
-  for (const [size, path] of manifest) {
-    const parts = path.split('/');
+  const dirs = new Map([['', root]]);
+  async function dirOf(parts) {
+    let key = '';
     let dir = root;
-    for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
-    const name = parts[parts.length - 1];
+    for (const part of parts) {
+      key += '/' + part;
+      if (!dirs.has(key)) dirs.set(key, await dir.getDirectoryHandle(part, { create: true }));
+      dir = dirs.get(key);
+    }
+    return dir;
+  }
+
+  // What needs fetching.
+  const todo = [];
+  let doneFiles = 0, doneBytes = 0;
+  for (const f of manifest) {
+    const parts = f.path.split('/');
+    const dir = await dirOf(parts.slice(0, -1));
     let local = null;
     try {
-      local = await (await dir.getFileHandle(name)).getFile();
+      local = await (await dir.getFileHandle(parts.at(-1))).getFile();
     } catch {}
-    const stale = !local || local.size !== Number(size) || (path === 'default.xex' && synced !== xexStamp);
-    if (!stale) continue;
-    statusEl.textContent = `Updating ${path} from the server…`;
-    const response = await fetch(STREAM_BASE + 'files/' + parts.map(encodeURIComponent).join('/'));
-    if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
-    const out = await (await dir.getFileHandle(name, { create: true })).createWritable();
-    await response.body.pipeTo(out);
-    copied += 1;
+    const stale = !local || local.size !== f.size || (f.path === 'default.xex' && synced !== xexStamp);
+    if (stale) {
+      todo.push({ ...f, dir, name: parts.at(-1), replacing: local?.size ?? 0 });
+    } else {
+      doneFiles += 1;
+      doneBytes += f.size;
+    }
   }
-  try {
-    localStorage.setItem(SYNCED_KEY, xexStamp);
-  } catch {}
+  const totalFiles = manifest.length;
+  const totalBytes = manifest.reduce((n, f) => n + f.size, 0);
+
+  // Room for it: what is fetched, less what it replaces (the old file goes once a new one is in place).
+  const needed = todo.reduce((n, f) => n + f.size, 0);
+  const largest = todo.reduce((n, f) => Math.max(n, f.size), 0);
+  if (needed > 0 && navigator.storage?.estimate) {
+    const { usage = 0, quota = Infinity } = await navigator.storage.estimate();
+    const growth = needed - todo.reduce((n, f) => n + f.replacing, 0) + largest;
+    if (growth > quota - usage) {
+      throw new Error(`not enough storage: ${gib(needed)} to copy, ${gib(Math.max(0, quota - usage))} available to this page`);
+    }
+  }
+
+  const started = performance.now();
+  let fetched = 0, lastReport = 0, current = '';
+  const report = (force) => {
+    const now = performance.now();
+    if (!force && now - lastReport < 250) return;
+    lastReport = now;
+    const rate = fetched / 2 ** 20 / Math.max(0.001, (now - started) / 1000);
+    progress({ files: doneFiles, totalFiles, bytes: doneBytes, totalBytes, current, rate });
+  };
+  report(true);
+  let copied = 0;
+  for (const f of todo) {
+    if (signal?.aborted) throw new Cancelled();
+    current = f.path;
+    report(true);
+    const response = await fetch(STREAM_BASE + 'files/' + f.path.split('/').map(encodeURIComponent).join('/'), { signal })
+      .catch((e) => { throw signal?.aborted ? new Cancelled() : e; });
+    if (!response.ok) throw new Error(`${f.path}: HTTP ${response.status}`);
+    try {
+      await writeFileAtomically(f.dir, f.name, response.body, (n) => {
+        fetched += n;
+        doneBytes += n;
+        report(false);
+      }, signal);
+    } catch (e) {
+      if (e.name === 'QuotaExceededError') throw new Error(`storage is full (while writing ${f.path}); free some space and import again to resume`);
+      throw e;
+    }
+    copied += 1;
+    doneFiles += 1;
+  }
+  current = '';
+  report(true);
+  if (manifest.some((f) => f.path === 'default.xex')) {
+    try {
+      localStorage.setItem(SYNCED_KEY, xexStamp);
+    } catch {}
+  }
+
+  let deleted = 0;
+  if (options.prune) {
+    const listed = new Set(manifest.map((f) => f.path));
+    const prune = async (dir, prefix) => {
+      for await (const [name, handle] of dir.entries()) {
+        const path = prefix ? `${prefix}/${name}` : name;
+        if (handle.kind === 'directory') {
+          await prune(handle, path);
+        } else if (!listed.has(path)) {
+          await dir.removeEntry(name);
+          deleted += 1;
+        }
+      }
+    };
+    await prune(root, '');
+  }
+  return { copied, bytes: fetched, deleted };
+}
+
+// Before booting imported files: default.xex and the title update.
+async function syncFromServer() {
+  if (!(await streamAvailable())) return;
+  const { copied } = await copyFromServer((path) => path === 'default.xex' || path.startsWith('$TitleUpdate/'), {
+    progress: (p) => {
+      statusEl.textContent = p.current ? `Updating ${p.current} from the server…` : '';
+    },
+  });
   statusEl.textContent = copied ? `Updated ${copied} file(s) from the server.` : '';
   if (copied) log(`Updated ${copied} file(s) (default.xex / title update) from the server.`);
 }
 
+// "Import from server": the whole game folder, with progress and Cancel.
+let serverImport = null;
+$('pick-server').onclick = async () => {
+  if (serverImport || running) return;
+  serverImport = new AbortController();
+  const bar = $('import-progress');
+  bar.hidden = false;
+  $('pick-server').disabled = true;
+  $('import-bar').style.width = '0%';
+  statusEl.textContent = '';
+  const mib = (b) => `${(b / 2 ** 20).toFixed(0)} MiB`;
+  try {
+    const persisted = await navigator.storage?.persist?.().catch(() => false);
+    if (!persisted) log('Storage is not marked persistent: the browser may evict the imported game when space runs low.');
+    const done = await copyFromServer(() => true, {
+      signal: serverImport.signal,
+      prune: $('import-prune').checked,
+      progress: (p) => {
+        $('import-bar').style.width = `${(100 * p.bytes / Math.max(1, p.totalBytes)).toFixed(1)}%`;
+        $('import-text').textContent = `${p.files} of ${p.totalFiles} files · ${gib(p.bytes)} of ${gib(p.totalBytes)}`
+          + (p.current ? ` · ${p.rate.toFixed(1)} MiB/s` : '');
+        $('import-file').textContent = p.current;
+      },
+    });
+    const text = done.copied
+      ? `Imported ${done.copied} file(s) (${mib(done.bytes)}) from the server; the rest already matched.`
+      : 'Every file already matches the server.';
+    statusEl.textContent = text + (done.deleted ? ` Deleted ${done.deleted} local file(s) the server doesn't have.` : '');
+    log(statusEl.textContent);
+  } catch (e) {
+    statusEl.textContent = e.name === 'AbortError'
+      ? 'Import cancelled; importing again resumes it.'
+      : `Import from the server failed: ${e.message}`;
+    log(statusEl.textContent);
+  } finally {
+    serverImport = null;
+    bar.hidden = true;
+    $('pick-server').disabled = running;
+    showSource();
+  }
+};
+$('import-cancel').onclick = () => serverImport?.abort();
+
 async function showSource() {
   const stream = settings.source === 'stream';
   $('local-controls').hidden = stream;
+  const offered = await streamAvailable();
+  $('server-import-controls').hidden = !offered;
   $('source-status').textContent = stream
-    ? ((await streamAvailable()) ? 'The server offers the game files.' : 'The server offers no game files (start it with --game-dir).')
+    ? (offered ? 'The server offers the game files.' : 'The server offers no game files (start it with --game-dir).')
     : ((await localGameReady()) ? '' : 'Nothing imported yet.');
 }
 
@@ -538,8 +720,13 @@ $('boot').onclick = async () => {
       return;
     }
   }
+  if (serverImport) {
+    log('Wait for the import from the server to finish (or cancel it) before booting.');
+    return;
+  }
   $('boot').disabled = true;
   running = true;
+  $('pick-server').disabled = true;
   bootStatus = (await modules).status.createStatus(showPhase);
   bootStatus.start({ logLevel: settings.log, streaming: settings.source === 'stream' });
   $('menu-button').hidden = false;
