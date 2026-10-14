@@ -324,12 +324,13 @@ impl Kernel {
     }
 
     /// Counts a present (VdSwap's XE_SWAP packet reached the command processor).
-    fn gpu_swap(&self, frontbuffer: u32, width: u32, height: u32) {
+    fn gpu_swap(&self, frontbuffer: u32, width: u32, height: u32) -> u64 {
         self.gpu.counter.fetch_add(1, Ordering::Relaxed);
         let n = self.gpu.swaps.fetch_add(1, Ordering::Relaxed) + 1;
         if n == 1 || n.is_multiple_of(600) {
             log::info!("GPU: swap #{n} (front buffer {frontbuffer:#010X}, {width}x{height})");
         }
+        n
     }
 
     /// Runs the graphics interrupt callback as `callback(source, user_data)` in
@@ -413,6 +414,8 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         zpd_samples: 0,
         backend: k.gpu.backend.get().cloned(),
         pending: Vec::new(),
+        syncs: [0; 128],
+        sync_wait: Duration::ZERO,
     };
     let mut read_index = 0u32;
     let mut generation = 0u32;
@@ -438,15 +441,27 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         idle_spins = 0;
         let count = (write_index + ring.size_dwords - read_index) % ring.size_dwords;
         log::trace!("ring {read_index:#X}..{write_index:#X}");
+        let writeback = match ring.rptr_writeback {
+            0 => None,
+            phys => k.rt.space.translate_physical(phys).or_else(|| {
+                log::warn!("GPU: read pointer writeback address {phys:#010X} unmapped");
+                None
+            }),
+        };
         let mut reader = Reader { base: ring.base, capacity: ring.size_dwords, pos: read_index, remaining: count };
-        cp.execute(&mut reader);
-        read_index = write_index;
-        if ring.rptr_writeback != 0 {
-            match k.rt.space.translate_physical(ring.rptr_writeback) {
-                Some(a) => mem.write_u32(a, read_index),
-                None => log::warn!("GPU: read pointer writeback address {:#010X} unmapped", ring.rptr_writeback),
+        // Report progress after every packet, as the hardware's periodic writeback does, rather
+        // than after the whole batch: a title waiting for ring space (D3D spins on it) can go on
+        // while the rest of the batch, which may wait for the renderer at fences, is executed.
+        while reader.remaining > 0 {
+            if !cp.packet(&mut reader) {
+                // Malformed stream: drop the rest of this batch.
+                reader.skip(reader.remaining);
+            }
+            if let Some(a) = writeback {
+                mem.write_u32(a, reader.pos);
             }
         }
+        read_index = write_index;
     }
 }
 
@@ -483,6 +498,9 @@ struct CommandProcessor<'a> {
     backend: Option<Arc<dyn GpuBackend>>,
     /// Register writes not yet sent to the backend.
     pending: Vec<(u32, u32)>,
+    /// Waits for the renderer since the last report (see `report_syncs`).
+    syncs: [u32; 128],
+    sync_wait: Duration,
 }
 
 /// Register-file base of each SET_CONSTANT / LOAD_ALU_CONSTANT type.
@@ -508,10 +526,33 @@ impl CommandProcessor<'_> {
     }
 
     /// Lets the backend catch up before an effect the CPU can observe.
-    fn sync(&mut self) {
+    fn sync(&mut self, opcode: u32) {
         self.flush_registers();
         if let Some(b) = &self.backend {
+            let started = Instant::now();
             b.wait_idle();
+            self.syncs[opcode as usize & 0x7F] += 1;
+            self.sync_wait += started.elapsed();
+        }
+    }
+
+    /// Logs how often and how long the command processor waited for the renderer per frame,
+    /// with the swap report every 600 frames.
+    fn report_syncs(&mut self, swaps: u64) {
+        if swaps.is_multiple_of(600) {
+            let total: u32 = self.syncs.iter().sum();
+            let by_opcode: Vec<String> = (0..128)
+                .filter(|&op| self.syncs[op] != 0)
+                .map(|op| format!("{op:#04X}: {:.1}", f64::from(self.syncs[op]) / 600.0))
+                .collect();
+            log::info!(
+                "GPU: {:.1} renderer waits per frame ({}), {:.2} ms blocked per frame",
+                f64::from(total) / 600.0,
+                by_opcode.join(", "),
+                self.sync_wait.as_secs_f64() * 1000.0 / 600.0
+            );
+            self.syncs = [0; 128];
+            self.sync_wait = Duration::ZERO;
         }
     }
 
@@ -642,7 +683,7 @@ impl CommandProcessor<'_> {
         match opcode {
             pm4::INTERRUPT => {
                 let cpu_mask = r.read(mem);
-                self.sync();
+                self.sync(pm4::INTERRUPT);
                 log::trace!("INTERRUPT cpu mask {cpu_mask:#X}");
                 for cpu in 0..6 {
                     if cpu_mask & (1 << cpu) != 0 {
@@ -661,7 +702,8 @@ impl CommandProcessor<'_> {
                     let fetch = std::array::from_fn(|i| self.read_register(reg::SHADER_CONSTANT_FETCH_00_0 + i as u32));
                     b.swap(fetch, w, h);
                 }
-                self.k.gpu_swap(fb, w, h);
+                let swaps = self.k.gpu_swap(fb, w, h);
+                self.report_syncs(swaps);
             }
             pm4::INDIRECT_BUFFER | pm4::INDIRECT_BUFFER_PFD => {
                 let ptr = r.read(mem) & 0x1FFF_FFFF;
@@ -684,8 +726,12 @@ impl CommandProcessor<'_> {
                     "WAIT_REG_MEM info {info:#X} addr {addr:#010X} (at {:?}) ref {reference:#X} mask {mask:#X} wait {wait:#X}",
                     (info & 0x10 != 0).then(|| self.k.rt.space.translate_physical(addr & !3)).flatten()
                 );
-                self.sync();
-                self.wait_reg_mem(info, addr, reference, mask, wait);
+                // Usually already satisfied (Skyrim issues ~30 per frame): then the renderer
+                // needn't catch up first, which would stall the command processor.
+                if !self.reg_mem_matches(info, addr, reference, mask) {
+                    self.sync(pm4::WAIT_REG_MEM);
+                    self.wait_reg_mem(info, addr, reference, mask, wait);
+                }
             }
             pm4::REG_RMW => {
                 let (info, and_mask, or_mask) = (r.read(mem), r.read(mem), r.read(mem));
@@ -697,12 +743,12 @@ impl CommandProcessor<'_> {
             }
             pm4::REG_TO_MEM => {
                 let (index, addr) = (r.read(mem), r.read(mem));
-                self.sync();
+                self.sync(pm4::REG_TO_MEM);
                 let v = self.read_register(index);
                 self.store(addr, v);
             }
             pm4::MEM_WRITE => {
-                self.sync();
+                self.sync(pm4::MEM_WRITE);
                 let mut addr = r.read(mem);
                 for _ in 1..count {
                     let v = r.read(mem);
@@ -713,7 +759,7 @@ impl CommandProcessor<'_> {
             pm4::COND_WRITE => {
                 let (info, poll, reference, mask, write_addr, data) =
                     (r.read(mem), r.read(mem), r.read(mem), r.read(mem), r.read(mem), r.read(mem));
-                self.sync();
+                self.sync(pm4::COND_WRITE);
                 let value = if info & 0x10 != 0 { self.load(poll) } else { self.read_register(poll) };
                 if match_value_and_ref(value & mask, reference, info) {
                     if info & 0x100 != 0 {
@@ -730,14 +776,16 @@ impl CommandProcessor<'_> {
             pm4::EVENT_WRITE_SHD => {
                 let (initiator, addr, value) = (r.read(mem), r.read(mem), r.read(mem));
                 self.write_register(reg::VGT_EVENT_INITIATOR, initiator & 0x3F);
-                self.sync();
+                self.sync(pm4::EVENT_WRITE_SHD);
                 let data = if initiator >> 31 != 0 { self.k.gpu.counter.load(Ordering::Relaxed) } else { value };
                 self.event_write_shd(addr, data);
             }
             pm4::EVENT_WRITE_EXT => {
                 let (initiator, addr) = (r.read(mem), r.read(mem));
                 self.write_register(reg::VGT_EVENT_INITIATOR, initiator & 0x3F);
-                self.sync();
+                // No wait for the renderer: the extents are constants, not a fence (Skyrim
+                // issues ~500 of these per frame, and waiting at each one serialized the command
+                // processor with the renderer).
                 // Screen extents: min/max x, min/max y (in 8-pixel units), min/max z.
                 const MAX_SIZE: u16 = 8192;
                 let extents = [0, MAX_SIZE >> 3, 0, MAX_SIZE >> 3, 0, 1];
@@ -753,7 +801,7 @@ impl CommandProcessor<'_> {
             pm4::EVENT_WRITE_ZPD => {
                 let initiator = r.read(mem);
                 self.write_register(reg::VGT_EVENT_INITIATOR, initiator & 0x3F);
-                self.sync();
+                self.sync(pm4::EVENT_WRITE_ZPD);
                 self.write_zpd_report();
             }
             pm4::SET_CONSTANT => {
@@ -897,6 +945,12 @@ impl CommandProcessor<'_> {
             Some(a) => self.mem.write_u32(a, gpu_swap(value, addr & 3).swap_bytes()),
             None => log::warn!("GPU: write to unmapped {addr:#010X}"),
         }
+    }
+
+    /// Whether WAIT_REG_MEM's condition holds now.
+    fn reg_mem_matches(&self, info: u32, addr: u32, reference: u32, mask: u32) -> bool {
+        let value = if info & 0x10 != 0 { self.load(addr) } else { self.read_register(addr) };
+        match_value_and_ref(value & mask, reference, info)
     }
 
     fn wait_reg_mem(&self, info: u32, addr: u32, reference: u32, mask: u32, wait: u32) {
