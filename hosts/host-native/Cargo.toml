@@ -20,3 +20,6 @@ runtime-core.workspace = true
 vfs.workspace = true
 xex.workspace = true
 xenos-render.workspace = true
+winit = "0.30"
+gilrs = "0.11.2"
+cpal = "0.18.2"

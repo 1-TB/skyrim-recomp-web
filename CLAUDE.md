@@ -69,6 +69,15 @@ It listens on 127.0.0.1 only and is exposed to the owner's devices with `tailsca
 
 ### Reproducing the game natively
 
+- Without `--dump-frames` (or with `--window`), `skyrim-native` plays in a window (winit;
+  Wayland/X11) with audio (cpal), keyboard/mouse mapped like `web/input.js`, and gamepads (gilrs);
+  F11 fullscreen. `--no-window` runs without a renderer. `SKYRIM_RECOMP_APP_ID` sets the window's
+  app id (test runs here use `skyrt-test`, which a runtime Hyprland rule sends to workspace 10).
+  On the owner's machine (NVIDIA, Vulkan) wgpu-native lives in `~/tools/wgpu-native`
+  (`WGPU_NATIVE_DIR`) instead of mesa-lvp, and a release build reaches Helgen at ~26 fps.
+- Native guest memory is readable/writable below 0xC0000000 from the start, like wasm linear
+  memory: the title reads past 4 KiB commits of 64 KiB-page allocations and through null
+  pointers, which faulted natively before.
 - `skyrim-native --game-dir game --content DIR --run-for SECONDS --dump-frames OUT --dump-every N
   --tap BUTTON@SECONDS ...` (tap times are seconds after boot; the box is slow, so menus take
   minutes). `--render-debug MODE` (repeatable): `scissor`, `nodraw`, `nopool`, `nomemo`,

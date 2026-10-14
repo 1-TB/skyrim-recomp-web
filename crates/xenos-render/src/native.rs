@@ -1,8 +1,9 @@
-//! Native renderer thread: headless (the debug host has no window). Frames are rendered
-//! offscreen and, when asked, written out as PNG files.
+//! Native renderer thread. Presents each swap in a window when the host gives it one, and
+//! otherwise renders offscreen; either way frames can be written out as PNG files.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gpu_webgpu::*;
@@ -15,6 +16,91 @@ pub struct NativeOptions {
     /// Write every `dump_every`-th presented frame to `<dir>/frame_NNNNNN.png`.
     pub dump_dir: Option<PathBuf>,
     pub dump_every: u64,
+    /// Present in this window.
+    pub window: Option<Window>,
+}
+
+/// A window to present in: its window-system handles (addresses, so the renderer thread can
+/// take them) and its size in pixels, which the host updates when the window is resized.
+#[derive(Debug, Clone)]
+pub struct Window {
+    pub handles: WindowHandles,
+    /// Width in the high 32 bits, height in the low ones.
+    pub size: Arc<AtomicU64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum WindowHandles {
+    Xlib { display: usize, window: u64 },
+    Xcb { connection: usize, window: u32 },
+    Wayland { display: usize, surface: usize },
+}
+
+impl Window {
+    pub fn pack_size(width: u32, height: u32) -> u64 {
+        (u64::from(width) << 32) | u64::from(height)
+    }
+
+    fn size(&self) -> (u32, u32) {
+        let v = self.size.load(Ordering::Relaxed);
+        ((v >> 32) as u32, v as u32)
+    }
+}
+
+/// The window's surface and how it is configured.
+struct Presentation {
+    window: Window,
+    surface: Surface,
+    format: TextureFormat,
+    present_mode: PresentMode,
+    configured: (u32, u32),
+}
+
+impl Presentation {
+    fn configure(&mut self, device: &Device) {
+        let (width, height) = self.window.size();
+        self.configured = (width.max(1), height.max(1));
+        self.surface.configure(
+            device,
+            &SurfaceConfiguration {
+                format: self.format,
+                usage: TextureUsage::RenderAttachment,
+                width: self.configured.0,
+                height: self.configured.1,
+                view_formats: &[],
+                alpha_mode: CompositeAlphaMode::Opaque,
+                present_mode: self.present_mode,
+            },
+        );
+    }
+
+    /// Shows the presenter's current frame, reconfiguring first if the window was resized.
+    fn present(&mut self, device: &Device, presenter: &crate::present::Presenter) {
+        let size = self.window.size();
+        if size.0 == 0 || size.1 == 0 {
+            return; // Minimized.
+        }
+        if size != self.configured {
+            self.configure(device);
+        }
+        let frame = match self.surface.current_frame() {
+            Ok(frame) => frame,
+            Err(Error::SurfaceStatus(_)) => {
+                // Outdated or lost (e.g. mid-resize): reconfigure and show the next frame.
+                self.configure(device);
+                return;
+            }
+            Err(e) => {
+                log::warn!("renderer: no window frame: {e}");
+                return;
+            }
+        };
+        let view = frame.texture.create_view(None);
+        let mut encoder = device.create_command_encoder("present");
+        presenter.encode(&mut encoder, &view, self.configured.0, self.configured.1);
+        device.queue().submit([encoder.finish("present")]);
+        frame.present();
+    }
 }
 
 /// Starts the renderer thread. If no WebGPU device can be created the error is logged and
@@ -72,7 +158,26 @@ fn run(
     targets: TargetsFactory,
 ) -> Result<()> {
     let instance = Instance::new()?;
-    let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default()))?;
+    let surface = match &options.window {
+        // SAFETY: the host keeps the window open for the life of the process.
+        Some(window) => Some(unsafe {
+            instance.create_surface(match window.handles {
+                WindowHandles::Xlib { display, window } => SurfaceTarget::Xlib { display: display as *mut _, window },
+                WindowHandles::Xcb { connection, window } => {
+                    SurfaceTarget::Xcb { connection: connection as *mut _, window }
+                }
+                WindowHandles::Wayland { display, surface } => {
+                    SurfaceTarget::Wayland { display: display as *mut _, surface: surface as *mut _ }
+                }
+            })?
+        }),
+        None => None,
+    };
+    let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions {
+        power_preference: PowerPreference::HighPerformance,
+        compatible_surface: surface.as_ref(),
+        ..Default::default()
+    }))?;
     let info = adapter.info();
     log::info!("renderer: {:?} {} ({})", info.backend, info.description, implementation());
     // Xenos programs need more than WebGPU's default limits (e.g. 16 interpolators plus
@@ -83,8 +188,35 @@ fn run(
         required_features: &features,
         required_limits: Some(adapter.limits()),
     }))?;
-    let mut renderer = Renderer::new(&device, memory, TextureFormat::RGBA8Unorm, targets);
+    // RGBA8 (what the PNG dumps read back) when the window takes it.
+    let mut presentation = match (surface, &options.window) {
+        (Some(surface), Some(window)) => {
+            let caps = surface.capabilities(&adapter)?;
+            let format = [TextureFormat::RGBA8Unorm, TextureFormat::BGRA8Unorm]
+                .into_iter()
+                .find(|f| caps.formats.contains(f))
+                .or(caps.formats.first().copied())
+                .ok_or(Error::Surface("the window offers no formats".into()))?;
+            // Mailbox never blocks the renderer on the display (FIFO would, and stalls for good
+            // on Wayland while the window is hidden).
+            let present_mode = if caps.present_modes.contains(&PresentMode::Mailbox) {
+                PresentMode::Mailbox
+            } else {
+                PresentMode::Fifo
+            };
+            log::info!("renderer: presenting in a window as {format:?}, {present_mode:?}");
+            let mut p = Presentation { window: window.clone(), surface, format, present_mode, configured: (0, 0) };
+            p.configure(&device);
+            Some(p)
+        }
+        _ => None,
+    };
+    let format = presentation.as_ref().map_or(TextureFormat::RGBA8Unorm, |p| p.format);
+    let mut renderer = Renderer::new(&device, memory, format, targets);
     let mut offscreen: Option<Offscreen> = None;
+    if options.dump_dir.is_some() && format != TextureFormat::RGBA8Unorm {
+        log::warn!("renderer: the window is {format:?}; frames are not dumped");
+    }
     if let Some(dir) = &options.dump_dir {
         std::fs::create_dir_all(dir).map_err(|e| Error::Invalid(format!("{}: {e}", dir.display())))?;
     }
@@ -94,7 +226,13 @@ fn run(
         instance.process_events();
         renderer.pump(handle, Some(Duration::from_millis(5)), None, |r, size| {
             let Some((w, h)) = size else { return };
+            if let Some(p) = presentation.as_mut() {
+                p.present(&r.device, &r.presenter);
+            }
             let Some(dir) = &options.dump_dir else { return };
+            if format != TextureFormat::RGBA8Unorm {
+                return;
+            }
             if !r.presenter.frames.is_multiple_of(every) {
                 return;
             }
