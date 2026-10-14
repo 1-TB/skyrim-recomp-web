@@ -582,7 +582,7 @@ pub fn leave_critical_section(c: &mut Call, cs: u32) {
 fn RtlEnterCriticalSection(c: &mut Call) -> u64 {
     let cs = c.arg(0);
     if cs == 0 {
-        log::error!("RtlEnterCriticalSection(NULL)");
+        log::error!("RtlEnterCriticalSection(NULL) from {:08X?}", c.guest_backtrace(4));
         return 0;
     }
     enter_critical_section(c, cs);
@@ -592,7 +592,7 @@ fn RtlEnterCriticalSection(c: &mut Call) -> u64 {
 fn RtlLeaveCriticalSection(c: &mut Call) -> u64 {
     let cs = c.arg(0);
     if cs == 0 {
-        log::error!("RtlLeaveCriticalSection(NULL)");
+        log::error!("RtlLeaveCriticalSection(NULL) from {:08X?}", c.guest_backtrace(4));
         return 0;
     }
     leave_critical_section(c, cs);
