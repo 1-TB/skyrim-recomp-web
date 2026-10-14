@@ -94,6 +94,10 @@ pub struct CacheConfig {
     /// Soft budget for uploaded texture data; least recently used textures not bound in the
     /// last frame are dropped while it is exceeded.
     pub max_host_bytes: u64,
+    /// Hard cap on all texture memory alive (cached, pooled, dropped and not yet destroyed),
+    /// enforced when textures are created: phones close tabs on peaks, and a world's first
+    /// frames bind far more than the frame-end budget. See [`TextureCache::over_budget`].
+    pub max_live_bytes: u64,
     /// Budget of the dropped textures kept for reuse (`TexturePool`), and how long they wait.
     pub pool_max_bytes: u64,
     pub pool_max_time: Duration,
@@ -113,6 +117,7 @@ impl Default for CacheConfig {
             max_unused_frames: 300,
             max_unused_time: Duration::from_secs(10),
             max_host_bytes: 512 << 20,
+            max_live_bytes: u64::MAX,
             pool_max_bytes: 256 << 20,
             pool_max_time: Duration::from_secs(2),
             allow_invalid_fetch_constants: false,
@@ -361,6 +366,19 @@ impl TexturePool {
         list.push((p, frame));
     }
 
+    /// The texture pooled longest ago.
+    fn take_oldest(&mut self) -> Option<Pooled> {
+        let key =
+            *self.free.iter().filter_map(|(key, list)| Some((key, list.first()?.1))).min_by_key(|&(_, frame)| frame)?.0;
+        let list = self.free.get_mut(&key)?;
+        let (p, _) = list.remove(0);
+        if list.is_empty() {
+            self.free.remove(&key);
+        }
+        self.bytes -= p.bytes;
+        Some(p)
+    }
+
     fn take(&mut self, key: &PoolKey) -> Option<Pooled> {
         let (p, _) = self.free.get_mut(key)?.pop()?;
         self.bytes -= p.bytes;
@@ -500,6 +518,11 @@ pub struct TextureCache {
     stale: FxHashMap<TextureKey, Pooled>,
     /// The stale texture offered to the load in progress (taken by `new_texture`).
     reload_into: Option<Pooled>,
+    /// Textures were created past `max_live_bytes` with nothing left to free before the work
+    /// recorded in this frame is submitted (see [`TextureCache::over_budget`]).
+    over_budget: bool,
+    /// Raw handle of a view the caller still shows (see [`TextureCache::protect`]).
+    protected: usize,
     pool: TexturePool,
     clock: FrameClock,
     warned: HashSet<([u32; 6], u8)>,
@@ -547,6 +570,8 @@ impl TextureCache {
             retiring: Vec::new(),
             stale: FxHashMap::default(),
             reload_into: None,
+            over_budget: false,
+            protected: 0,
             pool: TexturePool::default(),
             clock: FrameClock::default(),
             warned: HashSet::new(),
@@ -914,7 +939,8 @@ impl TextureCache {
         let pool_key =
             PoolKey { width, height, layers, mip_level_count, is_3d, format: format::webgpu_format(host_format) };
         let fills_all = (0..mip_level_count).all(|m| loaded.levels.iter().any(|l| l.level == m));
-        let (texture, views) = self.new_texture(device, pool_key, fills_all, false);
+        let estimate = loaded.levels.iter().map(|l| l.data.len() as u64).sum();
+        let (texture, views) = self.new_texture(device, pool_key, fills_all, false, estimate);
         let mut bytes = 0u64;
         for level in loaded.levels.iter().filter(|l| l.level < mip_level_count) {
             device.queue().write_texture(
@@ -1014,7 +1040,8 @@ impl TextureCache {
             PoolKey { width, height, layers, mip_level_count, is_3d, format: format::webgpu_format(host_format) };
         // Only loads run in order with the recorded work may refill a texture it still uses.
         let in_place = matches!(data, GpuData::Shared(_));
-        let (texture, views) = self.new_texture(device, pool_key, plan.covers_levels(mip_level_count), in_place);
+        let fills_all = plan.covers_levels(mip_level_count);
+        let (texture, views) = self.new_texture(device, pool_key, fills_all, in_place, plan.host_bytes());
         match data {
             GpuData::Shared(gpu) => {
                 if !self.gpu_loader.encode(device, gpu, &plan, &texture) {
@@ -1054,6 +1081,7 @@ impl TextureCache {
         key: PoolKey,
         fills_all: bool,
         in_place: bool,
+        bytes: u64,
     ) -> (Texture, [Option<TextureView>; 4]) {
         if fills_all
             && in_place
@@ -1069,6 +1097,7 @@ impl TextureCache {
             self.stats.reused += 1;
             return (p.texture, p.views);
         }
+        self.make_room(bytes);
         let texture = device.create_texture(&TextureDescriptor {
             label: "xenos texture",
             size: extent(key.width, key.height, key.layers),
@@ -1079,6 +1108,113 @@ impl TextureCache {
             ..Default::default()
         });
         (texture, [None, None, None, None])
+    }
+
+    /// Bytes of all the textures alive: cached, pooled, and dropped but not destroyed yet.
+    fn live_bytes(&self) -> u64 {
+        let dropped = |list: &[Pooled]| list.iter().map(|p| p.bytes).sum::<u64>();
+        self.textures.values().map(|e| e.bytes).sum::<u64>()
+            + self.pool.bytes
+            + dropped(&self.retired)
+            + dropped(&self.retiring)
+            + self.stale.values().map(|p| p.bytes).sum::<u64>()
+            + self.reload_into.as_ref().map_or(0, |p| p.bytes)
+    }
+
+    /// Frees texture memory for `bytes` more within `max_live_bytes`, with what no unsubmitted
+    /// work uses: pooled textures, ones dropped before this frame, and cached ones not used in
+    /// it (everything recorded before this frame was submitted at its end); oldest first.
+    fn make_room(&mut self, bytes: u64) {
+        let cap = self.config.max_live_bytes;
+        if cap == u64::MAX {
+            return;
+        }
+        let mut live = self.live_bytes();
+        while live + bytes > cap {
+            if let Some(p) = self.pool.take_oldest() {
+                live -= p.bytes;
+                p.texture.destroy();
+            } else if let Some(p) = self.retiring.pop() {
+                live -= p.bytes;
+                p.texture.destroy();
+            } else if let Some(key) = self
+                .textures
+                .iter()
+                .filter(|(_, e)| e.last_used < self.frame && !self.is_protected(e))
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(k, _)| *k)
+            {
+                let e = self.textures.remove(&key).expect("found above");
+                live -= e.bytes;
+                e.texture.destroy();
+                self.stats.evicted += 1;
+            } else {
+                self.over_budget = true;
+                return;
+            }
+        }
+    }
+
+    /// Keeps the texture of `view` (e.g. the front buffer being presented, which is drawn again
+    /// until the next one) from being destroyed to make room; replaces the previous one.
+    pub fn protect(&mut self, view: &TextureView) {
+        self.protected = view.raw() as usize;
+    }
+
+    fn is_protected(&self, e: &Entry) -> bool {
+        self.protected != 0 && e.views.iter().flatten().any(|v| v.raw() as usize == self.protected)
+    }
+
+    /// Whether textures were created past `max_live_bytes` that only submitting the recorded
+    /// work can make room for: then submit it and call [`TextureCache::trim_submitted`] (before
+    /// binding textures for the next draw).
+    pub fn over_budget(&self) -> bool {
+        self.over_budget
+    }
+
+    /// Everything recorded so far was submitted: destroys dropped textures and least recently
+    /// used cached ones (also ones used in this frame, loaded again if needed) until a quarter
+    /// below `max_live_bytes`. Returns the raw handles of the destroyed views, like
+    /// [`TextureCache::invalidate`].
+    pub fn trim_submitted(&mut self) -> Vec<usize> {
+        self.over_budget = false;
+        let mut destroyed_views = Vec::new();
+        let target = self.config.max_live_bytes / 4 * 3;
+        let mut live = self.live_bytes();
+        let dropped: Vec<Pooled> = self
+            .retired
+            .drain(..)
+            .chain(self.retiring.drain(..))
+            .chain(self.stale.drain().map(|(_, p)| p))
+            .chain(self.reload_into.take())
+            .collect();
+        for p in dropped {
+            live -= p.bytes;
+            destroyed_views.extend(p.views.iter().flatten().map(|v| v.raw() as usize));
+            p.texture.destroy();
+        }
+        while live > target {
+            if let Some(p) = self.pool.take_oldest() {
+                live -= p.bytes;
+                p.texture.destroy();
+                continue;
+            }
+            let Some(key) = self
+                .textures
+                .iter()
+                .filter(|(_, e)| !self.is_protected(e))
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(k, _)| *k)
+            else {
+                break;
+            };
+            let e = self.textures.remove(&key).expect("found above");
+            live -= e.bytes;
+            destroyed_views.extend(e.views.iter().flatten().map(|v| v.raw() as usize));
+            e.texture.destroy();
+            self.stats.evicted += 1;
+        }
+        destroyed_views
     }
 
     fn sampler(

@@ -726,6 +726,40 @@ fn eviction_by_time_at_low_frame_rates() {
 }
 
 #[test]
+fn live_texture_memory_is_capped_when_textures_are_created() {
+    let gpu = gpu(true);
+    let mut mem = vec![0u8; MEMORY_SIZE];
+    // 128x128 RGBA8, 64 KiB each.
+    let fetches: Vec<TextureFetchConstant> =
+        (0..4).map(|i| texture_2d(GuestFormat::k_8_8_8_8, 128, 128, 0x10000 * (i + 1), false)).collect();
+    for (i, f) in fetches.iter().enumerate() {
+        write_level(&mut mem, f, 0, |x, y, _| vec![x as u8, y as u8, i as u8, 255]);
+    }
+    let fc = constants(&[(0, &fetches[0]), (1, &fetches[1]), (2, &fetches[2]), (3, &fetches[3])]);
+    let config = CacheConfig { max_live_bytes: 160 << 10, ..Default::default() };
+    let mut cache = TextureCache::with_config(&gpu.device, host_caps(&gpu.device), config);
+    let bind =
+        |cache: &mut TextureCache, i: u32| cache.bind(&gpu.device, &mem, &fc, &binding(i, TextureBindingDimension::D2));
+    // One frame needs three: nothing of this frame can go before its work is submitted.
+    for i in 0..3 {
+        bind(&mut cache, i);
+    }
+    assert!(cache.over_budget());
+    // Submitted: least recently used ones go until a quarter below the cap.
+    let destroyed = cache.trim_submitted();
+    assert!(!cache.over_budget());
+    assert_eq!(destroyed.len(), 2);
+    assert_eq!(cache.stats().textures, 1);
+    // The next frame makes room with textures of earlier frames, without a submission.
+    cache.end_frame();
+    bind(&mut cache, 3);
+    bind(&mut cache, 0);
+    assert!(!cache.over_budget());
+    assert_eq!(cache.stats().textures, 2);
+    assert_no_errors(&gpu);
+}
+
+#[test]
 fn eviction_by_age_and_budget() {
     let gpu = gpu(true);
     let mut mem = vec![0u8; MEMORY_SIZE];

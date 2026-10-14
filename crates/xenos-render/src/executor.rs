@@ -639,6 +639,7 @@ impl Executor {
                         max_unused_frames: 120,
                         max_unused_time: std::time::Duration::from_secs(4),
                         max_host_bytes: 56 << 20,
+                        max_live_bytes: 80 << 20,
                         pool_max_bytes: 16 << 20,
                         ..config
                     }
@@ -698,8 +699,12 @@ impl Executor {
         };
         let bound = self.textures.bind_with(&self.device, &texture_memory, &constants, &binding, Some(&mut source));
         self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
-        // The presenter shows it right away: submit its load.
+        // The presenter shows it right away: submit its load. It's drawn until the next swap, so
+        // it must survive making room for other textures until then.
         self.flush();
+        if !bound.fallback {
+            self.textures.protect(&bound.view);
+        }
         if bound.fallback {
             return None;
         }
@@ -1243,7 +1248,13 @@ impl Executor {
         self.vertex_ranges = ranges;
 
         mark!(self, 4);
-        // Textures.
+        // Textures (past the hard texture memory cap, earlier loads of this frame are dropped
+        // once the work using them is submitted).
+        if self.textures.over_budget() {
+            self.flush();
+            let destroyed = self.textures.trim_submitted();
+            self.texture_sets.retain(|_, set| !set.views.iter().any(|v| destroyed.contains(v)));
+        }
         let textures = self.texture_set(&vs, ps.as_deref());
 
         mark!(self, 5);

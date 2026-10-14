@@ -88,7 +88,7 @@ pub fn install(kernel: &'static Kernel, handle: RendererHandle) {
 /// [`REPORT_GROWTH`] since the last line, else every [`REPORT_PERIOD`]. Phones close tabs that
 /// use too much without an error, so the last line before a silent stop shows what grew.
 pub fn start_memory_report() {
-    const REPORT_GROWTH: u64 = 32 << 20;
+    const REPORT_GROWTH: u64 = 16 << 20;
     const REPORT_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
     let spawned = std::thread::Builder::new().name("memory-report".into()).spawn(|| {
         let mib = |b: u64| b >> 20;
@@ -108,8 +108,19 @@ pub fn start_memory_report() {
                 #[cfg(not(target_os = "emscripten"))]
                 let wasm = String::new();
                 let (pool_used, pool_size) = runtime_core::memory::linear_pool_usage();
+                // On GPU growth, what grew: a phone can be killed before the next report.
+                let labels = if gpu >= last.1 + REPORT_GROWTH {
+                    let top: Vec<String> = gpu_webgpu::memory::live_by_label()
+                        .into_iter()
+                        .take(6)
+                        .map(|g| format!("{} \"{}\" {} MiB ({})", g.kind, g.label, mib(g.bytes), g.count))
+                        .collect();
+                    format!("; largest: {}", top.join(", "))
+                } else {
+                    String::new()
+                };
                 log::info!(
-                    "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB){wasm}",
+                    "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB){wasm}{labels}",
                     mib(committed),
                     mib(gpu),
                     mib(gpu_peak)
