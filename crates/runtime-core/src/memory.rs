@@ -4,8 +4,11 @@
 //! for vector loads/stores, atomics and dcbz, so the whole 32-bit space must be
 //! one flat range starting at `base`.
 //!
-//! * Native: a 4 GiB `PROT_NONE` reservation; pages become readable/writable on
-//!   commit.
+//! * Native: a 4 GiB reservation whose first 3 GiB (everything below the folded
+//!   physical views) is readable and writable from the start, like wasm linear
+//!   memory: pages cost nothing until touched, and the title's stray accesses
+//!   (reads past a commit, through null pointers) behave as in the browser
+//!   instead of faulting.
 //! * Web (wasm32): `base` is 0 and guest addresses *are* linear-memory
 //!   addresses. Emscripten's static data, stacks and heap live below
 //!   [`map::HOST_RESERVED_END`], a range the guest allocators never hand out.
@@ -153,6 +156,11 @@ impl GuestMemory {
             if ptr == libc::MAP_FAILED {
                 return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
             }
+            // SAFETY: the start of the reservation made above.
+            let rc = unsafe { libc::mprotect(ptr, map::PHYS_VIEW_16M as usize, libc::PROT_READ | libc::PROT_WRITE) };
+            if rc != 0 {
+                return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
+            }
             Ok(GuestMemory { base: (ptr as *mut u8).expose_provenance() })
         }
         #[cfg(target_os = "emscripten")]
@@ -203,18 +211,13 @@ impl GuestMemory {
 
     #[cfg(not(target_os = "emscripten"))]
     fn commit_pages(&self, start: u32, end: u64) -> Result<(), MemoryError> {
-        // SAFETY: the range lies inside our own reservation and is only being
-        // committed now, so nothing live is in it. MADV_DONTNEED makes it read
-        // back as zero even if the guest wrote to it after releasing it (see
-        // `release`).
+        // SAFETY: the range lies inside our own (already accessible) reservation and is
+        // only being committed now, so nothing live is in it. MADV_DONTNEED makes it read
+        // back as zero even if the guest wrote to it while uncommitted or after releasing
+        // it (see `release`).
         let rc = unsafe {
             crate::dirty::mark(start, (end - start as u64) as u32);
-            libc::madvise(self.ptr(start) as *mut libc::c_void, (end - start as u64) as usize, libc::MADV_DONTNEED);
-            libc::mprotect(
-                self.ptr(start) as *mut libc::c_void,
-                (end - start as u64) as usize,
-                libc::PROT_READ | libc::PROT_WRITE,
-            )
+            libc::madvise(self.ptr(start) as *mut libc::c_void, (end - start as u64) as usize, libc::MADV_DONTNEED)
         };
         if rc != 0 {
             return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
@@ -268,8 +271,8 @@ impl GuestMemory {
         Ok(())
     }
 
-    /// Discards the contents of `[addr, addr+len)` and makes it inaccessible
-    /// (native) or zero-filled (wasm, which cannot release linear memory).
+    /// Discards the contents of `[addr, addr+len)`: it reads back as zero and
+    /// stays accessible, natively as on wasm (which cannot release linear memory).
     pub fn decommit(&self, addr: u32, len: u32) -> Result<(), MemoryError> {
         Self::check(addr, len as u64)?;
         if len == 0 {
@@ -280,13 +283,10 @@ impl GuestMemory {
             let start = addr & !(PAGE_SIZE - 1);
             let end = (addr as u64 + len as u64 + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
             let size = (end - start as u64) as usize;
-            // SAFETY: inside our reservation; MADV_DONTNEED drops the pages so they
-            // read back as zero if committed again.
+            // SAFETY: inside our reservation; MADV_DONTNEED drops the pages, which then
+            // read back as zero.
             unsafe {
                 libc::madvise(self.ptr(start) as *mut libc::c_void, size, libc::MADV_DONTNEED);
-                if libc::mprotect(self.ptr(start) as *mut libc::c_void, size, libc::PROT_NONE) != 0 {
-                    return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
-                }
             }
             crate::dirty::mark(start, size as u32);
         }
