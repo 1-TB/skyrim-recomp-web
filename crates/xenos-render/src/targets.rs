@@ -72,6 +72,11 @@ pub trait RenderTargetCache {
     /// Sends data the work recorded so far needs (call before submitting it).
     fn flush_uploads(&mut self, device: &Device);
 
+    /// The render target whose host texture holds EDRAM tile `tile`, if any.
+    fn tile_owner(&self, _tile: u32) -> Option<xenos_state::edram::RenderTargetKey> {
+        None
+    }
+
     /// Host pixels per guest pixel along each axis: attachments are this much larger than the
     /// guest's render targets, and draws scale their viewport and scissor to match.
     fn resolution_scale(&self) -> u32 {

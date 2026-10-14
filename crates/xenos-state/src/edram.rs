@@ -271,6 +271,18 @@ impl RenderTargetSetup {
     pub fn bindings(&self) -> impl Iterator<Item = &RenderTargetBinding> {
         self.depth.iter().chain(self.color.iter().flatten())
     }
+
+    /// The same EDRAM ranges viewed with `msaa` samples: the surface pitch in pixels changes by
+    /// the sample counts' horizontal ratio, the bases and pitch in tiles stay.
+    pub fn with_msaa(&self, msaa: MsaaSamples) -> Self {
+        let mut out = self.clone();
+        out.surface_pitch = (self.surface_pitch << self.msaa_samples.samples_x_log2()) >> msaa.samples_x_log2();
+        out.msaa_samples = msaa;
+        for binding in out.depth.iter_mut().chain(out.color.iter_mut().flatten()) {
+            binding.key.msaa_samples = msaa;
+        }
+        out
+    }
 }
 
 /// Window offset (in 32bpp tiles) that can be moved from the vertices into the EDRAM bases

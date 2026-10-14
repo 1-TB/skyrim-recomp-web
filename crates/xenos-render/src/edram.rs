@@ -96,6 +96,10 @@ impl RenderTargetCache for EdramTargets {
         self.cache.flush_uploads(device);
     }
 
+    fn tile_owner(&self, tile: u32) -> Option<xenos_state::edram::RenderTargetKey> {
+        self.cache.ownership().iter().find(|r| (r.start..r.end).contains(&tile)).map(|r| r.owner)
+    }
+
     fn resolution_scale(&self) -> u32 {
         self.cache.resolution_scale()
     }

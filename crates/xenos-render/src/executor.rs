@@ -33,7 +33,7 @@ use xenos_state::viewport::{
     CullMode as GuestCull, FrontFace as GuestFrontFace, RasterizerState, Scissor, ViewportArgs, ViewportRegisters,
     host_viewport_info, scissor,
 };
-use xenos_state::xenos::{self, EdramMode, SourceSelect};
+use xenos_state::xenos::{self, EdramMode, MsaaSamples, SourceSelect};
 use xenos_texture_cache::{GpuSource, TextureCache};
 
 use crate::float_patch::FloatPatcher;
@@ -403,6 +403,8 @@ pub struct ExecutorStats {
     /// Draws skipped without a warning (nothing to rasterize), by reason.
     pub culled: u64,
     pub no_targets: u64,
+    /// Constant 4x MSAA rectangles drawn on the 1x view of their EDRAM instead.
+    pub msaa_clears_on_1x: u64,
     pub empty_viewport: u64,
     pub pipeline_unavailable: u64,
     pub resolves: u64,
@@ -1169,7 +1171,7 @@ impl Executor {
         let depth_control = normalized_depth_control(regs, false);
         let ps_colors = ps.as_ref().map_or(0, |p| p.translation.color_targets_written);
         let color_mask = normalized_color_mask(regs, ps_colors, false);
-        let setup = RenderTargetSetup::from_registers(regs, depth_control, color_mask, 0)
+        let mut setup = RenderTargetSetup::from_registers(regs, depth_control, color_mask, 0)
             .map_err(|e| Skip::Warn(format!("render targets: {e:?}")))?;
         if setup.bindings().next().is_none() {
             return Err(Skip::Warn(format!(
@@ -1184,23 +1186,83 @@ impl Executor {
         let output = OutputMergerState::from_registers(regs, color_mask);
         let back_faces_visible = rasterizer.polygonal && rasterizer.cull_mode != GuestCull::Back;
         let depth_stencil = GuestDepthStencil::from_registers(regs, depth_control, back_faces_visible);
-        let viewport_regs = ViewportRegisters::from_registers(regs, depth_control.z_enable);
+        let mut viewport_regs = ViewportRegisters::from_registers(regs, depth_control.z_enable);
+        let guest_scissor = scissor(regs, true, false);
+        // A constant rectangle drawn with 4x MSAA (how Direct3D 9 clears) is drawn on the 1x
+        // surface over the same EDRAM instead, at twice the size: the stored samples are the same,
+        // and when the 1x surface holds the tiles they don't make a round trip through a 4x
+        // target (two transfers).
+        // Pixel shader inputs (constant when every vertex has the same values).
+        let ps_inputs = ps.as_deref().map_or(0, |p| p.translation.ps_input_interpolators);
+        let msaa_to_1x = setup.msaa_samples == MsaaSamples::X4
+            && setup.with_msaa(MsaaSamples::X1).bindings().all(|b| {
+                let tile = b.key.base_tiles & (xenos_state::edram::EDRAM_TILE_COUNT - 1);
+                self.targets.tile_owner(tile) == Some(b.key)
+            })
+            && output.alpha_to_coverage.is_none()
+            && ps.as_deref().is_none_or(|p| {
+                let t = &p.translation;
+                t.texture_bindings.is_empty() && !t.writes_depth && !t.kills_pixels
+            })
+            && program.param_gen_interpolator.is_none()
+            && crate::extent::flat_rect(&desc, regs, &viewport_regs, &vs.shader, &*self.memory, ps_inputs).is_some_and(
+                |r| {
+                    // Covered pixels within the scissor; the 4x sample layout maps pixel pairs to
+                    // 1x pixel quads, so even edges cover the same samples.
+                    let [x0, y0, x1, y1] = r.pixels;
+                    let s = &guest_scissor;
+                    let x = (x0.max(i64::from(s.offset[0])), x1.min(i64::from(s.offset[0] + s.extent[0])));
+                    let y = (y0.max(i64::from(s.offset[1])), y1.min(i64::from(s.offset[1] + s.extent[1])));
+                    x.0 >= x.1 || y.0 >= y.1 || [x.0, x.1, y.0, y.1].iter().all(|v| v & 1 == 0)
+                },
+            );
+        if setup.msaa_samples == MsaaSamples::X4 && crate::debug::tracing(self.frame) {
+            let owners: Vec<_> = setup
+                .with_msaa(MsaaSamples::X1)
+                .bindings()
+                .map(|b| {
+                    let tile = b.key.base_tiles & (xenos_state::edram::EDRAM_TILE_COUNT - 1);
+                    (b.key, self.targets.tile_owner(tile))
+                })
+                .collect();
+            let flat = crate::extent::flat_rect(&desc, regs, &viewport_regs, &vs.shader, &*self.memory, ps_inputs);
+            log::info!(
+                "trace msaa draw: to 1x {msaa_to_1x}; owners {owners:?}; a2c {}; ps {:?}; flat {flat:?}; scissor {guest_scissor:?}; prim {:?} n {}",
+                output.alpha_to_coverage.is_some(),
+                ps.as_deref().map(|p| (
+                    p.translation.ps_input_interpolators,
+                    p.translation.texture_bindings.len(),
+                    p.translation.writes_depth,
+                    p.translation.kills_pixels
+                )),
+                desc.primitive_type,
+                desc.initiator.num_indices,
+            );
+        }
+        // Guest pixels of the draw's surface per pixel of the targets it's drawn on.
+        let msaa_factor = if msaa_to_1x {
+            setup = setup.with_msaa(MsaaSamples::X1);
+            viewport_regs.msaa_samples = MsaaSamples::X1;
+            self.stats.msaa_clears_on_1x += 1;
+            2
+        } else {
+            1
+        };
         let scale = self.resolution_scale;
         let viewport_args = ViewportArgs {
-            draw_resolution_scale_x: scale,
-            draw_resolution_scale_y: scale,
+            draw_resolution_scale_x: scale * msaa_factor,
+            draw_resolution_scale_y: scale * msaa_factor,
             ..ViewportArgs::webgpu(self.max_texture_dimension)
         };
-        // In host pixels (guest pixels times the resolution scale).
+        // In host pixels (target pixels times the resolution scale).
         let viewport = host_viewport_info(&viewport_regs, &viewport_args);
-        let guest_scissor = scissor(regs, true, false);
         // Rows the draw can touch, which is how tall its render targets are made and how much
         // EDRAM it claims. With clipping, primitives stay inside the host viewport, so below it
         // nothing is drawn even when the scissor is the whole surface (as it often is). Without
         // clipping and with an 8192x8192 scissor (Direct3D 9's screen-space draws), the vertices
         // themselves are run on the CPU to find out, like Xenia does. In guest rows.
         let mut min_height =
-            (guest_scissor.offset[1] + guest_scissor.extent[1]).min(self.max_texture_dimension / scale);
+            ((guest_scissor.offset[1] + guest_scissor.extent[1]) * msaa_factor).min(self.max_texture_dimension / scale);
         if !viewport_regs.clip_cntl.clip_disable {
             let viewport_bottom = i64::from(viewport.xy_offset[1]) + i64::from(viewport.xy_extent[1]);
             let viewport_bottom = (viewport_bottom.clamp(0, i64::from(u32::MAX)) as u32).div_ceil(scale);
@@ -1210,8 +1272,8 @@ impl Executor {
             if unclamped.offset[0] + unclamped.extent[0] >= xenos::TEXTURE_2D_MAX_WIDTH_HEIGHT
                 && unclamped.offset[1] + unclamped.extent[1] >= xenos::TEXTURE_2D_MAX_WIDTH_HEIGHT
             {
-                min_height =
-                    min_height.min(crate::extent::vertex_max_y(&desc, regs, &viewport_regs, &vs.shader, &*self.memory));
+                let max_y = crate::extent::vertex_max_y(&desc, regs, &viewport_regs, &vs.shader, &*self.memory);
+                min_height = min_height.min(max_y.saturating_mul(msaa_factor));
             }
         }
         let min_height = min_height.max(1);
@@ -1293,8 +1355,8 @@ impl Executor {
 
         let viewport = viewport.crop_to_render_target(target_width, target_height, true);
         let scissor = Scissor {
-            offset: guest_scissor.offset.map(|v| v.saturating_mul(scale)),
-            extent: guest_scissor.extent.map(|v| v.saturating_mul(scale)),
+            offset: guest_scissor.offset.map(|v| v.saturating_mul(scale * msaa_factor)),
+            extent: guest_scissor.extent.map(|v| v.saturating_mul(scale * msaa_factor)),
         }
         .clamp_to(target_width, target_height);
         if viewport.xy_extent[0] == 0 || viewport.xy_extent[1] == 0 || scissor.extent[0] == 0 || scissor.extent[1] == 0
