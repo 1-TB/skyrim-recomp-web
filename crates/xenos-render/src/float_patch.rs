@@ -14,8 +14,9 @@
 use gpu_webgpu::*;
 
 /// Bytes of the block buffer (blocks are sub-allocated like the constant ring; it rewinds after
-/// each submission).
-pub const BLOCK_BUFFER_BYTES: u64 = 16 << 20;
+/// each submission, and a submission is made first when it's full). Skyrim submits every ~20
+/// draws on average (at each resolve), so 1024 blocks are rarely all used.
+pub const BLOCK_BUFFER_BYTES: u64 = 4 << 20;
 /// Patch records per submission at most (more needs a submission first).
 const MAX_RECORDS: usize = 16384;
 /// Changed vec4s per submission at most.
@@ -131,12 +132,14 @@ impl FloatPatcher {
         }
     }
 
-    /// Whether a block of up to `window` bytes with all its vec4s changed still fits in this
-    /// submission (else submit first).
-    pub fn has_room(&self, window: u64) -> bool {
-        self.cursor.next_multiple_of(self.alignment) + window <= BLOCK_BUFFER_BYTES
-            && (self.records.len() - 1) / RECORD_WORDS < MAX_RECORDS
-            && self.values.len() / 16 + INDICES <= MAX_VALUES
+    /// Whether `blocks` blocks of up to `window` bytes with all their vec4s changed still fit in
+    /// this submission (else submit first).
+    pub fn has_room(&self, blocks: usize, window: u64) -> bool {
+        // Each block may start up to an alignment past the previous window's end.
+        let bytes = blocks as u64 * window.next_multiple_of(self.alignment);
+        self.cursor.next_multiple_of(self.alignment) + bytes <= BLOCK_BUFFER_BYTES
+            && (self.records.len() - 1) / RECORD_WORDS + blocks <= MAX_RECORDS
+            && self.values.len() / 16 + blocks * INDICES <= MAX_VALUES
     }
 
     /// Adds `data` (vec4s of stage `stage`, 0 vertex or 1 pixel) as a block bound with `window`
@@ -223,7 +226,7 @@ mod tests {
                 let word = if next() % 7 == 0 { 0x7FC0_0001 } else { next() };
                 data[v..v + 4].copy_from_slice(&word.to_le_bytes());
             }
-            assert!(patcher.has_room(4096));
+            assert!(patcher.has_room(1, 4096));
             let offset = patcher.push(stage as u32, previous[stage].as_deref(), &data, 4096);
             expected.push((offset, data.clone()));
             previous[stage] = Some(data);

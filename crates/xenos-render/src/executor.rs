@@ -48,7 +48,9 @@ use crate::{PhysicalMemory, TextureMemory};
 /// Pixel shader textures start at this `@group(2)` binding (vertex shader ones at 0); a shader
 /// uses at most 32 fetch constants with 3 bindings each.
 const PIXEL_TEXTURE_BINDING_BASE: u32 = 96;
-const CONSTANT_RING_SIZE: u64 = 16 << 20;
+/// Per-submission constants (a submission is made first when full; Skyrim submits every ~20
+/// draws on average, at each resolve).
+const CONSTANT_RING_SIZE: u64 = 4 << 20;
 const INDEX_RING_SIZE: u64 = 8 << 20;
 const FLOAT_CONSTANTS_SIZE: u64 = bindings::FLOAT_CONSTANTS_SIZE;
 const BOOL_LOOP_SIZE: u64 = 160;
@@ -1111,7 +1113,7 @@ impl Executor {
         if self.constants.remaining() < constant_space
             || self.indices.remaining() < index_len
             || self.gathered_indices.remaining() < gathered_len
-            || !self.floats.has_room(FLOAT_CONSTANTS_SIZE)
+            || !self.floats.has_room(2, FLOAT_CONSTANTS_SIZE)
         {
             self.flush();
         }
