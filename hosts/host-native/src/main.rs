@@ -126,6 +126,7 @@ fn on_kernel(
     if render.dump_dir.is_none() && !windowed {
         return;
     }
+    gpu::start_memory_report();
     let memory = Arc::new(gpu::GuestPhysical(kernel));
     match xenos_render::native::start(memory, render, gpu::render_targets()) {
         Ok(handle) => gpu::install(kernel, handle),

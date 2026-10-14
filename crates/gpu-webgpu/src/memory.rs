@@ -5,27 +5,40 @@
 //! (the old one was freed). Ones only dropped stay counted: in browsers, objects released in
 //! workers are freed only by garbage collection, so they do still hold memory.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use crate::TextureFormat;
 
 struct Live {
     /// Raw handle address -> (kind, label, bytes).
-    objects: HashMap<usize, (&'static str, String, u64)>,
+    objects: BTreeMap<usize, (&'static str, String, u64)>,
+    total: u64,
+    peak: u64,
 }
 
-static LIVE: Mutex<Option<Live>> = Mutex::new(None);
+static LIVE: Mutex<Live> = Mutex::new(Live { objects: BTreeMap::new(), total: 0, peak: 0 });
 
 pub(crate) fn track(raw: usize, kind: &'static str, label: &str, bytes: u64) {
     let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-    live.get_or_insert_with(|| Live { objects: HashMap::new() }).objects.insert(raw, (kind, label.to_string(), bytes));
+    if let Some((_, _, old)) = live.objects.insert(raw, (kind, label.to_string(), bytes)) {
+        live.total -= old;
+    }
+    live.total += bytes;
+    live.peak = live.peak.max(live.total);
 }
 
 pub(crate) fn untrack(raw: usize) {
-    if let Some(live) = LIVE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        live.objects.remove(&raw);
+    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, _, bytes)) = live.objects.remove(&raw) {
+        live.total -= bytes;
     }
+}
+
+/// Bytes live now and the most ever live at once.
+pub fn totals() -> (u64, u64) {
+    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    (live.total, live.peak)
 }
 
 /// One group of live objects with the same kind and label.
@@ -41,7 +54,7 @@ pub struct LiveGroup {
 pub fn live_by_label() -> Vec<LiveGroup> {
     let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     let mut groups: Vec<LiveGroup> = Vec::new();
-    for (kind, label, bytes) in live.iter().flat_map(|l| l.objects.values()) {
+    for (kind, label, bytes) in live.objects.values() {
         match groups.iter_mut().find(|g| g.kind == *kind && g.label == *label) {
             Some(g) => {
                 g.count += 1;
@@ -55,7 +68,14 @@ pub fn live_by_label() -> Vec<LiveGroup> {
 }
 
 /// Approximate size of a texture: all mips and samples, depth/stencil at their usual sizes.
-pub(crate) fn texture_bytes(format: TextureFormat, width: u32, height: u32, layers: u32, mips: u32, samples: u32) -> u64 {
+pub(crate) fn texture_bytes(
+    format: TextureFormat,
+    width: u32,
+    height: u32,
+    layers: u32,
+    mips: u32,
+    samples: u32,
+) -> u64 {
     use TextureFormat as F;
     let (block_bytes, block) = crate::format_block_info(format).unwrap_or(match format {
         F::Depth24Plus | F::Depth24PlusStencil8 => (4, 1),

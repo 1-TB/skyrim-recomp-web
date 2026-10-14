@@ -76,6 +76,7 @@ fn main() {
             return;
         }
         audio::install(kernel);
+        gpu::start_memory_report();
         let memory = std::sync::Arc::new(gpu::GuestPhysical(kernel));
         match xenos_render::web::start(memory, "#canvas", gpu::render_targets()) {
             Ok(handle) => gpu::install(kernel, handle),

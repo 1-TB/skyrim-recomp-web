@@ -12,6 +12,7 @@ name = "host-web"
 path = "src/main.rs"
 
 [target.'cfg(target_os = "emscripten")'.dependencies]
+gpu-webgpu.workspace = true
 guest-sys.workspace = true
 kernel-hle.workspace = true
 log.workspace = true

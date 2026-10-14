@@ -631,6 +631,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "gilrs",
+ "gpu-webgpu",
  "guest-sys",
  "kernel-hle",
  "libc",
@@ -646,6 +647,7 @@ dependencies = [
 name = "host-web"
 version = "0.1.0"
 dependencies = [
+ "gpu-webgpu",
  "guest-sys",
  "kernel-hle",
  "log",

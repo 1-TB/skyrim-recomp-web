@@ -62,7 +62,7 @@ It listens on 127.0.0.1 only and is exposed to the owner's devices with `tailsca
 8443 (HTTPS is required for WebGPU/threads off-localhost). Endpoints:
 
 - static files with COOP/COEP/CORP, ETag + 304, and the `.gz` copy when the client accepts gzip;
-- `POST /log?session=ID` → `target/web-logs/ID.log` (the page uploads its log every 3 s — read
+- `POST /log?session=ID` → `target/web-logs/ID.log` (the page uploads its log every second — read
   the user's sessions there; `gpu-bench-*.log` are results of `web-dist/gpu-bench.html`);
 - `POST/GET /saves/...` → `target/web-saves/` (page buttons Export/Import saves);
 - `GET /game/manifest` (`size<TAB>path` lines) and ranged `GET /game/files/PATH` for streaming.

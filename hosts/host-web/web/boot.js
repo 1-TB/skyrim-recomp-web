@@ -56,7 +56,8 @@ async function sendLog() {
     unsent = lines.concat(unsent);
   }
 }
-setInterval(sendLog, 3000);
+// Often: a phone closing the tab for using too much memory loses whatever wasn't sent.
+setInterval(sendLog, 1000);
 addEventListener('pagehide', sendLog);
 // Uncaught errors (e.g. host-web.js failing to create its memory) would otherwise leave no trace.
 addEventListener('error', (e) => {

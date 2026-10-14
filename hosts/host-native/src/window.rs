@@ -136,10 +136,9 @@ fn handles(window: &Window) -> Result<WindowHandles, String> {
         (RawWindowHandle::Wayland(w), RawDisplayHandle::Wayland(d)) => {
             Ok(WindowHandles::Wayland { display: d.display.as_ptr() as usize, surface: w.surface.as_ptr() as usize })
         }
-        (RawWindowHandle::Xlib(w), RawDisplayHandle::Xlib(d)) => Ok(WindowHandles::Xlib {
-            display: d.display.ok_or("no Xlib display")?.as_ptr() as usize,
-            window: w.window,
-        }),
+        (RawWindowHandle::Xlib(w), RawDisplayHandle::Xlib(d)) => {
+            Ok(WindowHandles::Xlib { display: d.display.ok_or("no Xlib display")?.as_ptr() as usize, window: w.window })
+        }
         (RawWindowHandle::Xcb(w), RawDisplayHandle::Xcb(d)) => Ok(WindowHandles::Xcb {
             connection: d.connection.ok_or("no XCB connection")?.as_ptr() as usize,
             window: w.window.get(),

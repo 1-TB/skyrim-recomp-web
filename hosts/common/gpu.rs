@@ -83,3 +83,43 @@ pub fn install(kernel: &'static Kernel, handle: RendererHandle) {
         log::warn!("GPU backend already installed");
     }
 }
+
+/// Logs the memory the runtime holds: right away whenever guest commits or GPU memory grew by
+/// [`REPORT_GROWTH`] since the last line, else every [`REPORT_PERIOD`]. Phones close tabs that
+/// use too much without an error, so the last line before a silent stop shows what grew.
+pub fn start_memory_report() {
+    const REPORT_GROWTH: u64 = 32 << 20;
+    const REPORT_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
+    let spawned = std::thread::Builder::new().name("memory-report".into()).spawn(|| {
+        let mib = |b: u64| b >> 20;
+        let mut last = (0u64, 0u64);
+        let mut last_at = std::time::Instant::now() - REPORT_PERIOD;
+        loop {
+            let committed = runtime_core::memory::committed_bytes();
+            let (gpu, gpu_peak) = gpu_webgpu::memory::totals();
+            let grew = committed >= last.0 + REPORT_GROWTH || gpu >= last.1 + REPORT_GROWTH;
+            if grew || last_at.elapsed() >= REPORT_PERIOD {
+                #[cfg(target_os = "emscripten")]
+                let wasm = format!(
+                    ", host heap {} MiB, wasm memory {} MiB",
+                    mib(runtime_core::memory::host_heap_top()),
+                    mib(core::arch::wasm32::memory_size(0) as u64 * 65536)
+                );
+                #[cfg(not(target_os = "emscripten"))]
+                let wasm = String::new();
+                log::info!(
+                    "memory: guest committed {} MiB, GPU {} MiB (peak {} MiB){wasm}",
+                    mib(committed),
+                    mib(gpu),
+                    mib(gpu_peak)
+                );
+                last = (committed, gpu);
+                last_at = std::time::Instant::now();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    });
+    if let Err(e) = spawned {
+        log::error!("memory report thread: {e}");
+    }
+}

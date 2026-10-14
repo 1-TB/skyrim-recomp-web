@@ -37,6 +37,17 @@ pub fn wanted_features(available: &[FeatureName]) -> Vec<FeatureName> {
     ];
     #[cfg(not(target_os = "emscripten"))]
     wanted.push(xenos_texture_cache::NATIVE_TEXTURE_FORMAT_16BIT_NORM);
+    if crate::debug::NO_BC.load(std::sync::atomic::Ordering::Relaxed) {
+        wanted.retain(|f| *f != FeatureName::TextureCompressionBC && *f != FeatureName::TextureCompressionBCSliced3D);
+    }
+    let has = |f| if available.contains(&f) { "yes" } else { "no" };
+    log::info!(
+        "renderer: texture compression BC {}, ETC2 {}, ASTC {}{}",
+        has(FeatureName::TextureCompressionBC),
+        has(FeatureName::TextureCompressionETC2),
+        has(FeatureName::TextureCompressionASTC),
+        crate::debug::describe()
+    );
     wanted.retain(|f| available.contains(f));
     wanted
 }

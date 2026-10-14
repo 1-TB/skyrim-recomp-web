@@ -34,6 +34,9 @@ pub(crate) fn tracing(frame: u64) -> bool {
 
 /// Frames the renderer may run ahead of the GPU (2 unless an experiment changes it).
 pub(crate) static MAX_FRAMES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(2);
+/// Don't use BC texture compression even when the device has it (as on phones, where BC
+/// textures are decompressed), to measure what that costs.
+pub(crate) static NO_BC: AtomicBool = AtomicBool::new(false);
 
 /// Turns on experiment `mode`: `scissor`, `nodraw` or `frames=N` (frames in flight).
 pub fn enable(mode: &str) -> Result<(), String> {
@@ -60,9 +63,10 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "nomemo" => &NO_TEXTURE_SET_MEMO,
         "cpu-resolve" => &CPU_RESOLVES,
         "cpu-texture" => &CPU_TEXTURES,
+        "no-bc" => &NO_BC,
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, frames=N, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, frames=N, trace-frame=N, trace-every=K)"
             ));
         }
     };
@@ -91,6 +95,9 @@ pub fn describe() -> String {
     }
     if CPU_TEXTURES.load(Ordering::Relaxed) {
         parts.push("cpu-texture".to_string());
+    }
+    if NO_BC.load(Ordering::Relaxed) {
+        parts.push("no-bc".to_string());
     }
     let frames = MAX_FRAMES_IN_FLIGHT.load(Ordering::Relaxed);
     if frames != 2 {

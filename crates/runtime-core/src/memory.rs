@@ -18,9 +18,21 @@
 //! either target, so both builds behave the same.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 pub const PAGE_SIZE: u32 = 0x1000;
+
+/// Bytes of guest memory committed and not decommitted or released (what the title holds; on
+/// the web, roughly how much of linear memory it can have touched).
+static COMMITTED: AtomicU64 = AtomicU64::new(0);
+
+pub fn committed_bytes() -> u64 {
+    COMMITTED.load(Ordering::Relaxed)
+}
+
+fn uncount(len: u32) {
+    let _ = COMMITTED.try_update(Ordering::Relaxed, Ordering::Relaxed, |c| Some(c.saturating_sub(u64::from(len))));
+}
 pub const GUEST_SPACE_SIZE: u64 = 1 << 32;
 
 /// Guest address-space layout shared by every allocator.
@@ -206,7 +218,9 @@ impl GuestMemory {
         }
         let start = addr & !(PAGE_SIZE - 1);
         let end = (addr as u64 + len as u64 + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
-        self.commit_pages(start, end)
+        self.commit_pages(start, end)?;
+        COMMITTED.fetch_add(end - u64::from(start), Ordering::Relaxed);
+        Ok(())
     }
 
     #[cfg(not(target_os = "emscripten"))]
@@ -255,6 +269,7 @@ impl GuestMemory {
         if len == 0 {
             return Ok(());
         }
+        uncount(len);
         #[cfg(not(target_os = "emscripten"))]
         {
             let start = addr & !(PAGE_SIZE - 1);
@@ -278,6 +293,7 @@ impl GuestMemory {
         if len == 0 {
             return Ok(());
         }
+        uncount(len);
         #[cfg(not(target_os = "emscripten"))]
         {
             let start = addr & !(PAGE_SIZE - 1);
@@ -528,6 +544,21 @@ impl BeRaw for u32 {
     fn from_be_raw(raw: u32) -> u32 {
         u32::from_be_bytes(raw.to_ne_bytes())
     }
+}
+
+/// Top of the host heap (the wasm sbrk break; 0 natively, where the host heap is not in the
+/// guest address space).
+pub fn host_heap_top() -> u64 {
+    #[cfg(target_os = "emscripten")]
+    {
+        unsafe extern "C" {
+            fn sbrk(increment: isize) -> *mut libc::c_void;
+        }
+        // SAFETY: sbrk(0) only queries the current break.
+        unsafe { sbrk(0) as usize as u64 }
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    0
 }
 
 /// On wasm the host heap shares linear memory with the guest. Emscripten's sbrk
