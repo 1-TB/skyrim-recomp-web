@@ -42,7 +42,8 @@
 //   fps>=N, draws>=N   the newest `perf:` report since the step became active (also <=, >, <)
 //   swaps>=N           frames presented since boot
 //   after:S            S seconds since the step became active
-// Actions: `tap BUTTON` (port 1, held for 200 ms and two presented frames), `tap BUTTON every S`
+// Actions: `tap BUTTON` (port 1, held for 200 ms and two presented frames), `hold CONTROL[=VALUE]
+// S` (a button, LS=X,Y / RS=X,Y or LT=V / RT=V held for S seconds), `tap BUTTON every S`
 // (repeats until the next step's condition holds), `shot NAME`, `measure S LABEL` (collects the
 // perf reports and memory use for S seconds into the summary), `wait S`, `gc` (collects garbage in
 // the page and every worker), `exit`. E.g.
@@ -95,6 +96,27 @@ function parseStep(text) {
         const mask = XINPUT_BUTTONS[w[1]?.toUpperCase()];
         if (mask === undefined) throw new Error(`--step ${text}: unknown button ${w[1]}`);
         return { kind: 'tap', name: w[1].toUpperCase(), mask, every: w[2] === 'every' ? Number(w[3]) : 0 };
+      }
+      case 'hold': {
+        // hold CONTROL[=VALUE] SECONDS: a button, LS=X,Y / RS=X,Y (-1..1, up positive) or
+        // LT=V / RT=V (0..1), like the native --hold.
+        const [name, value] = (w[1] ?? '').toUpperCase().split('=');
+        const seconds = Number(w[2]);
+        const num = (v, lo) => Math.max(lo, Math.min(1, Number(v)));
+        const pad = { buttons: 0, lt: 0, rt: 0, lx: 0, ly: 0, rx: 0, ry: 0 };
+        if ((name === 'LS' || name === 'RS') && value) {
+          const [x, y] = value.split(',').map((v) => Math.round(num(v, -1) * 32767));
+          if (name === 'LS') [pad.lx, pad.ly] = [x, y];
+          else [pad.rx, pad.ry] = [x, y];
+        } else if ((name === 'LT' || name === 'RT') && value) {
+          pad[name === 'LT' ? 'lt' : 'rt'] = Math.round(num(value, 0) * 255);
+        } else if (XINPUT_BUTTONS[name] !== undefined && !value) {
+          pad.buttons = XINPUT_BUTTONS[name];
+        } else {
+          throw new Error(`--step ${text}: hold expects CONTROL[=VALUE] SECONDS, got ${a}`);
+        }
+        if (!(seconds >= 0)) throw new Error(`--step ${text}: hold needs a duration in seconds`);
+        return { kind: 'hold', name: w[1], pad, seconds };
       }
       case 'shot': return { kind: 'shot', name: w[1] ?? 'shot' };
       case 'measure': return { kind: 'measure', seconds: Number(w[1]), label: w[2] ?? `measure${w[1]}` };
@@ -692,6 +714,12 @@ if (steps.length === 0) {
       if (a.kind === 'tap') {
         await tap(a.name, a.mask);
         if (a.every > 0) repeat = { ...a, next: elapsed() + a.every };
+      } else if (a.kind === 'hold') {
+        note(`[${elapsed().toFixed(1)} s] step: hold ${a.name} ${a.seconds} s`);
+        const p = a.pad;
+        await page.evaluate((p) => window.Module._skyrt_set_pad(0, p.buttons, p.lt, p.rt, p.lx, p.ly, p.rx, p.ry), p);
+        await pumpFor(a.seconds);
+        await setPad(0);
       } else if (a.kind === 'shot') {
         await screenshot(a.name);
       } else if (a.kind === 'measure') {

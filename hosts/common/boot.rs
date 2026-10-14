@@ -31,6 +31,10 @@ options:
   --tap BUTTON@SECONDS     press a port-1 button at that time after boot (held for 200 ms
                            and two frames), e.g. START@20
                            (A B X Y START BACK LB RB LS RS UP DOWN LEFT RIGHT; repeatable)
+  --hold CONTROL[=VALUE]@START+DURATION
+                           hold a port-1 control from START for DURATION seconds: a button,
+                           LS=X,Y or RS=X,Y (sticks, -1..1, up positive) or LT=V / RT=V
+                           (triggers, 0..1), e.g. LS=0,1@300+5 walks forward (repeatable)
   --gpu MODE               xenos (default: render the command stream), d3d (render from the
                            title's Direct3D calls: render targets are the D3D surfaces, no
                            EDRAM), d3d-probe (count the Direct3D calls), d3d-verify (also
@@ -69,6 +73,7 @@ pub struct Options {
     pub vblank_hz: Option<u32>,
     /// Scripted presses: (button mask, seconds after boot).
     pub taps: Vec<(u16, f64)>,
+    pub holds: Vec<(Held, f64, f64)>,
     /// Host-specific flags the shared parser doesn't know.
     pub extra: Vec<(String, String)>,
 }
@@ -113,6 +118,7 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
                 kernel_hle::dispatch::SLOW_CALL_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
             }
             "--tap" => o.taps.push(parse_tap(&value()?)?),
+            "--hold" => o.holds.push(parse_hold(&value()?)?),
             "--render-debug" => xenos_render::debug::enable(&value()?)?,
             "--gpu" => {
                 let mode = value()?;
@@ -137,10 +143,9 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
     Ok(o)
 }
 
-fn parse_tap(spec: &str) -> Result<(u16, f64), String> {
+fn button(name: &str) -> Option<u16> {
     use kernel_hle::input::buttons as b;
-    let (name, at) = spec.split_once('@').ok_or("--tap expects BUTTON@SECONDS")?;
-    let mask = match name.to_ascii_uppercase().as_str() {
+    Some(match name.to_ascii_uppercase().as_str() {
         "A" => b::A,
         "B" => b::B,
         "X" => b::X,
@@ -155,38 +160,122 @@ fn parse_tap(spec: &str) -> Result<(u16, f64), String> {
         "DOWN" => b::DPAD_DOWN,
         "LEFT" => b::DPAD_LEFT,
         "RIGHT" => b::DPAD_RIGHT,
-        other => return Err(format!("--tap: unknown button {other}")),
-    };
+        _ => return None,
+    })
+}
+
+fn parse_tap(spec: &str) -> Result<(u16, f64), String> {
+    let (name, at) = spec.split_once('@').ok_or("--tap expects BUTTON@SECONDS")?;
+    let mask = button(name).ok_or_else(|| format!("--tap: unknown button {name}"))?;
     let at: f64 = at.parse().map_err(|e| format!("--tap {spec}: {e}"))?;
     Ok((mask, at))
 }
 
-/// Plays `--tap` presses on port 1 from a host thread.
-fn spawn_taps(kernel: &'static Kernel, taps: &[(u16, f64)]) {
-    if taps.is_empty() {
+/// What a `--hold` holds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Held {
+    Buttons(u16),
+    LeftStick(f32, f32),
+    RightStick(f32, f32),
+    LeftTrigger(f32),
+    RightTrigger(f32),
+}
+
+/// `--hold CONTROL[=VALUE]@START+DURATION`: a button, LS=X,Y / RS=X,Y (-1..1, up positive) or
+/// LT=V / RT=V (0..1), held from START seconds after boot for DURATION seconds.
+fn parse_hold(spec: &str) -> Result<(Held, f64, f64), String> {
+    let usage = || format!("--hold {spec}: expected CONTROL[=VALUE]@START+DURATION");
+    let (control, time) = spec.split_once('@').ok_or_else(usage)?;
+    let (start, duration) = time.split_once('+').ok_or_else(usage)?;
+    let number = |v: &str| v.trim().parse::<f32>().map_err(|e| format!("--hold {spec}: {e}"));
+    let (name, value) = control.split_once('=').map_or((control, None), |(n, v)| (n, Some(v)));
+    let stick = |v: Option<&str>| -> Result<(f32, f32), String> {
+        let (x, y) = v.and_then(|v| v.split_once(',')).ok_or_else(usage)?;
+        Ok((number(x)?.clamp(-1.0, 1.0), number(y)?.clamp(-1.0, 1.0)))
+    };
+    let trigger = |v: Option<&str>| -> Result<f32, String> { Ok(number(v.ok_or_else(usage)?)?.clamp(0.0, 1.0)) };
+    let held = match (name.to_ascii_uppercase().as_str(), value) {
+        ("LS", Some(_)) => {
+            let (x, y) = stick(value)?;
+            Held::LeftStick(x, y)
+        }
+        ("RS", Some(_)) => {
+            let (x, y) = stick(value)?;
+            Held::RightStick(x, y)
+        }
+        ("LT", _) => Held::LeftTrigger(trigger(value)?),
+        ("RT", _) => Held::RightTrigger(trigger(value)?),
+        (_, None) => Held::Buttons(button(name).ok_or_else(|| format!("--hold: unknown control {name}"))?),
+        _ => return Err(usage()),
+    };
+    let start: f64 = start.parse().map_err(|e| format!("--hold {spec}: {e}"))?;
+    let duration: f64 = duration.parse().map_err(|e| format!("--hold {spec}: {e}"))?;
+    Ok((held, start, duration.max(0.0)))
+}
+
+/// Plays `--tap` presses and `--hold`s on port 1 from a host thread: each change of the
+/// script's state is sent as it comes due. A tap is a 200 ms hold that also lasts at least two
+/// presented frames, so the title sees it even when rendering is slow (titles poll input once
+/// a frame).
+fn spawn_input_script(kernel: &'static Kernel, taps: &[(u16, f64)], holds: &[(Held, f64, f64)]) {
+    if taps.is_empty() && holds.is_empty() {
         return;
     }
-    let mut taps = taps.to_vec();
-    taps.sort_by(|a, b| a.1.total_cmp(&b.1));
+    // (time, hold index or tap, starts): taps release once their frames have been shown.
+    #[derive(Clone, Copy)]
+    enum Edge {
+        Hold(usize, bool),
+        Tap(u16),
+    }
+    let mut edges: Vec<(f64, Edge)> = taps.iter().map(|&(mask, at)| (at, Edge::Tap(mask))).collect();
+    for (i, &(_, start, duration)) in holds.iter().enumerate() {
+        edges.push((start, Edge::Hold(i, true)));
+        edges.push((start + duration, Edge::Hold(i, false)));
+    }
+    edges.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let holds = holds.to_vec();
     let start = std::time::Instant::now();
     let spawned = std::thread::Builder::new().name("input-script".into()).spawn(move || {
         use kernel_hle::input::Gamepad;
-        for (mask, at) in taps {
+        let mut active = vec![false; holds.len()];
+        let state = |active: &[bool], extra: u16| {
+            let axis = |v: f32| (v * 32767.0).round() as i16;
+            let trigger = |v: f32| (v * 255.0).round() as u8;
+            let mut pad = Gamepad { buttons: extra, ..Default::default() };
+            for (h, _) in holds.iter().zip(active).filter(|(_, on)| **on) {
+                match h.0 {
+                    Held::Buttons(mask) => pad.buttons |= mask,
+                    Held::LeftStick(x, y) => (pad.thumb_lx, pad.thumb_ly) = (axis(x), axis(y)),
+                    Held::RightStick(x, y) => (pad.thumb_rx, pad.thumb_ry) = (axis(x), axis(y)),
+                    Held::LeftTrigger(v) => pad.left_trigger = trigger(v),
+                    Held::RightTrigger(v) => pad.right_trigger = trigger(v),
+                }
+            }
+            pad
+        };
+        for (at, edge) in edges {
             let due = start + Duration::from_secs_f64(at);
             std::thread::sleep(due.saturating_duration_since(std::time::Instant::now()));
-            log::info!("input script: press {mask:#06X}");
-            kernel.input.update(0, Gamepad { buttons: mask, ..Default::default() });
-            // Hold for 200 ms and at least two presented frames, so the title
-            // sees the press even when rendering is slow (titles poll input
-            // once a frame); give up waiting for frames after 5 s.
-            let pressed = std::time::Instant::now();
-            let frames = kernel.gpu.swap_count();
-            while pressed.elapsed() < Duration::from_millis(200)
-                || (kernel.gpu.swap_count() < frames + 2 && pressed.elapsed() < Duration::from_secs(5))
-            {
-                std::thread::sleep(Duration::from_millis(10));
+            match edge {
+                Edge::Hold(i, on) => {
+                    active[i] = on;
+                    log::info!("input script: {} {:?}", if on { "hold" } else { "release" }, holds[i].0);
+                    kernel.input.update(0, state(&active, 0));
+                }
+                Edge::Tap(mask) => {
+                    log::info!("input script: press {mask:#06X}");
+                    kernel.input.update(0, state(&active, mask));
+                    let pressed = std::time::Instant::now();
+                    let frames = kernel.gpu.swap_count();
+                    // Give up waiting for frames after 5 s.
+                    while pressed.elapsed() < Duration::from_millis(200)
+                        || (kernel.gpu.swap_count() < frames + 2 && pressed.elapsed() < Duration::from_secs(5))
+                    {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    kernel.input.update(0, state(&active, 0));
+                }
             }
-            kernel.input.update(0, Gamepad::default());
         }
     });
     if let Err(e) = spawned {
@@ -241,7 +330,7 @@ pub fn run(
         kernel.gpu.set_vblank_hz(hz);
     }
     on_kernel(kernel);
-    spawn_taps(kernel, &o.taps);
+    spawn_input_script(kernel, &o.taps, &o.holds);
     kernel.start_main_thread().map_err(|s| format!("starting main thread: {s:#010X}"))?;
 
     let Some(code) = wait_for_title(kernel, o.run_for) else {
