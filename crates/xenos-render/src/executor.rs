@@ -843,6 +843,13 @@ impl Executor {
         self.constant_cache = ConstantCache { scratch, values, ..Default::default() };
     }
 
+    /// The batch's encoder for commands recorded outside the executor (`--gpu d3d` clears),
+    /// after the draws recorded so far; the next draw starts a new render pass.
+    pub fn external_encoder(&mut self) -> &mut CommandEncoder {
+        self.encode_pass();
+        self.encoder()
+    }
+
     fn encoder(&mut self) -> &mut CommandEncoder {
         self.encoder.get_or_insert_with(|| self.device.create_command_encoder("xenos"))
     }

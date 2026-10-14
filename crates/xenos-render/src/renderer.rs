@@ -213,14 +213,18 @@ impl Renderer {
                 Command::D3d(cmd) => {
                     let present = matches!(cmd, d3d_hle::command::Command::Present { .. });
                     let d3d = self.d3d.clone().expect("checked above");
-                    // The draws recorded so far go first (and the next draw starts a new pass:
-                    // the call may change what the targets are).
-                    self.executor.flush();
+                    // The call is recorded into the batch after the draws so far (and the next
+                    // draw starts a new pass: the call may change what the targets are). The
+                    // surface mosaic is drawn on its own, after the batch.
+                    if present && crate::debug::D3D_SURFACES.load(std::sync::atomic::Ordering::Relaxed) {
+                        self.executor.flush();
+                    }
                     // The present itself is the swap that follows in the command stream: it
                     // shows the front buffer from the GPU copy of guest memory, where the copy
                     // draw stored it in the guest's format (gamma included), like the default
                     // renderer does.
-                    let mosaic = d3d.borrow_mut().execute(&self.device, cmd);
+                    let encoder = self.executor.external_encoder();
+                    let mosaic = d3d.borrow_mut().execute(&self.device, cmd, encoder);
                     if present {
                         self.mosaic = mosaic;
                     }

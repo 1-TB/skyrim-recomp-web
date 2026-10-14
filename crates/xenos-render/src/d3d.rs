@@ -97,8 +97,8 @@ pub(crate) struct D3dRenderer {
     /// binding one after another was written gets the other's contents (see
     /// [`D3dTargets::targets`]).
     edram_owners: HashMap<u32, SurfaceKey>,
-    /// Textures replaced while the executor's batch may still use them, destroyed at the next
-    /// D3D call (the batch is submitted before each).
+    /// Textures replaced while the executor's batch may still use them, destroyed at the end of
+    /// the frame (after the batch is submitted).
     retired: Vec<Texture>,
     /// Bound render targets 0-3 and depth/stencil surface.
     targets: [Option<SurfaceKey>; 4],
@@ -313,11 +313,9 @@ impl D3dRenderer {
         }
     }
 
-    /// Executes `cmd`; a present returns the front buffer to show.
-    pub fn execute(&mut self, device: &Device, cmd: Command) -> Option<FrontBuffer> {
-        for texture in self.retired.drain(..) {
-            texture.destroy();
-        }
+    /// Executes `cmd`, recording its GPU work into `encoder` (the executor's batch); a present
+    /// returns the surface mosaic to show (`--render-debug d3d-surfaces`).
+    pub fn execute(&mut self, device: &Device, cmd: Command, encoder: &mut CommandEncoder) -> Option<FrontBuffer> {
         match cmd {
             Command::SetRenderTarget { index, surface } => {
                 let key = surface.map(|s| self.surface(device, &s));
@@ -343,7 +341,7 @@ impl D3dRenderer {
                         args.flags, args.color, args.z, args.stencil
                     )
                 });
-                self.clear(device, &args);
+                self.clear(encoder, &args);
             }
             Command::Resolve { args, dest } => {
                 self.use_surface(args.source_target().and_then(|i| self.targets[i as usize]));
@@ -531,10 +529,9 @@ impl D3dRenderer {
 
     /// Clears the bound surfaces the flags name (the whole surface: the title's clear rectangles
     /// cover the viewport).
-    fn clear(&mut self, device: &Device, args: &ClearArgs) {
+    fn clear(&mut self, encoder: &mut CommandEncoder, args: &ClearArgs) {
         let rgba = args.rgba().map(f64::from);
         let color = Color { r: rgba[0], g: rgba[1], b: rgba[2], a: rgba[3] };
-        let mut encoder = device.create_command_encoder("d3d clear");
         for (i, target) in self.targets.iter().enumerate() {
             if args.flags & (1 << i) == 0 {
                 continue;
@@ -569,7 +566,6 @@ impl D3dRenderer {
             let pass = encoder.begin_render_pass("d3d clear", &[], Some(&depth));
             pass.end();
         }
-        device.queue().submit([encoder.finish("d3d clear")]);
     }
 }
 
@@ -718,7 +714,12 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         crate::targets::ResolveStatus::Done { written: None, in_gpu_memory: false }
     }
 
-    fn end_frame(&mut self) {}
+    /// The batch is submitted: the textures replaced during it can go.
+    fn end_frame(&mut self) {
+        for texture in self.0.borrow_mut().retired.drain(..) {
+            texture.destroy();
+        }
+    }
 
     fn flush_uploads(&mut self, device: &Device) {
         if let Some(edram) = &self.0.borrow().edram {
