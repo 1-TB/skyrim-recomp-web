@@ -29,6 +29,9 @@ pub struct ShaderCache {
     /// `None` records a shader that failed to translate or compile, so it isn't retried.
     shaders: FxHashMap<Key, Option<Rc<CachedShader>>>,
     next_id: u64,
+    /// Time spent translating microcode and creating shader modules (for the stats log).
+    pub translate_time: std::time::Duration,
+    pub module_time: std::time::Duration,
 }
 
 /// Identifies microcode in the cache.
@@ -71,13 +74,17 @@ impl ShaderCache {
                 return None;
             }
         };
+        let started = std::time::Instant::now();
         let translation = shader.translate(options);
+        let translated = std::time::Instant::now();
+        self.translate_time += translated - started;
         for w in &translation.warnings {
             log::debug!("shader {stage:?} {hash:016X}: {w}");
         }
         // The translator's output is validated with naga in its tests; anything the device
         // still rejects is reported through its uncaptured-error log.
         let module = device.create_shader_module_wgsl(&format!("{stage:?} {hash:016X}"), &translation.wgsl);
+        self.module_time += translated.elapsed();
         self.next_id += 1;
         Some(Rc::new(CachedShader { module, translation, shader, id: self.next_id }))
     }

@@ -358,6 +358,8 @@ pub struct Executor {
     /// Recorded work closed into command buffers (to put texture loads after it), submitted
     /// before `encoder` with the batch.
     queued: Vec<CommandBuffer>,
+    /// Time spent creating pipelines synchronously (native).
+    pipeline_time: std::time::Duration,
     pass: Option<Pass>,
     constant_cache: ConstantCache,
     resolving: bool,
@@ -616,6 +618,7 @@ impl Executor {
             targets,
             encoder: None,
             queued: Vec::new(),
+            pipeline_time: std::time::Duration::ZERO,
             pass: None,
             constant_cache: ConstantCache::default(),
             resolving: false,
@@ -674,6 +677,12 @@ impl Executor {
             height: fetch.height,
             swizzle,
         })
+    }
+
+    /// Time spent translating shaders, creating their modules and (natively, where it's
+    /// synchronous) creating pipelines so far.
+    pub fn shader_times(&self) -> [std::time::Duration; 3] {
+        [self.shaders.translate_time, self.shaders.module_time, self.pipeline_time]
     }
 
     pub fn mirror_stats(&self) -> crate::shared_memory::MirrorStats {
@@ -1840,13 +1849,16 @@ impl Executor {
         // async creation, and aborts a submit that uses an invalid pipeline).
         #[cfg(not(target_os = "emscripten"))]
         let result = {
+            let started = std::time::Instant::now();
             self.device.push_error_scope(ErrorFilter::Validation);
             let pipeline = self.device.create_render_pipeline(&desc);
-            match self.device.block_on(self.device.pop_error_scope()) {
+            let result = match self.device.block_on(self.device.pop_error_scope()) {
                 Ok(None) => Ok(pipeline),
                 Ok(Some(e)) => Err(gpu_webgpu::Error::Invalid(e.to_string())),
                 Err(e) => Err(e),
-            }
+            };
+            self.pipeline_time += started.elapsed();
+            result
         };
         // On the web: compiled in the background (a synchronous pipeline would be compiled on
         // first use, stalling the GPU process); validation errors come back as a failed result.
