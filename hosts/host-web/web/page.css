@@ -1,0 +1,359 @@
+/* The dev page's styles: tokens (light, dark, and the forced themes of the header's toggle), the
+   cards and form grid, the game's stage with its overlays (boot status, phase chip, menu), and the
+   controls and saves panels. Everything over the game's frame uses the fixed "stage" colors. */
+
+:root {
+  color-scheme: light;
+  --bg: #f4f4f1;
+  --fg: #1d1d1b;
+  --muted: #696964;
+  --panel: #ffffff;
+  --panel-2: #f8f8f6;
+  --line: #dcdcd5;
+  --line-strong: #c6c6be;
+  --accent: #2f5d8a;
+  --accent-fg: #ffffff;
+  --accent-soft: #e3ecf5;
+  --danger: #b00020;
+  --danger-soft: #fbe9ec;
+  --ok: #2e7d4f;
+  --focus: #4a86c5;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .05);
+  --radius: 10px;
+  --radius-sm: 6px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Over the game's frame: always dark. */
+  --stage-bg: #0b0b0c;
+  --stage-fg: #ecebe6;
+  --stage-muted: #a3a29b;
+  --stage-panel: rgba(22, 22, 24, .94);
+  --stage-line: rgba(255, 255, 255, .14);
+  --stage-accent: #8db4dc;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #131312;
+    --fg: #e9e8e3;
+    --muted: #9b9a93;
+    --panel: #1c1c1a;
+    --panel-2: #222220;
+    --line: #31312d;
+    --line-strong: #44443f;
+    --accent: #7fa8d1;
+    --accent-fg: #0f1720;
+    --accent-soft: #1f2b37;
+    --danger: #ff6b7f;
+    --danger-soft: #3a1c22;
+    --ok: #6cc28f;
+    --focus: #8db4dc;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #131312;
+  --fg: #e9e8e3;
+  --muted: #9b9a93;
+  --panel: #1c1c1a;
+  --panel-2: #222220;
+  --line: #31312d;
+  --line-strong: #44443f;
+  --accent: #7fa8d1;
+  --accent-fg: #0f1720;
+  --accent-soft: #1f2b37;
+  --danger: #ff6b7f;
+  --danger-soft: #3a1c22;
+  --ok: #6cc28f;
+  --focus: #8db4dc;
+  --shadow: none;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+main { max-width: 1000px; margin: 0 auto; padding: 20px 16px 40px; }
+h1, h2, h3 { margin: 0; line-height: 1.25; }
+h1 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
+h2 { font-size: 15px; font-weight: 650; }
+h3 { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+p { margin: 0; }
+a { color: var(--accent); }
+kbd {
+  display: inline-block; min-width: 1.6em; padding: 0 5px; border: 1px solid var(--line-strong);
+  border-bottom-width: 2px; border-radius: 4px; background: var(--panel-2); font: 12px/1.6 var(--mono);
+  text-align: center; white-space: nowrap;
+}
+.hint, .muted { color: var(--muted); font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* Header */
+.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.top p { color: var(--muted); margin-top: 4px; max-width: 62ch; }
+
+/* Cards */
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 16px; margin-bottom: 16px;
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.card-head .hint { text-align: right; }
+
+/* Controls */
+button, input, select, textarea { font: inherit; color: inherit; }
+button, .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px;
+  padding: 6px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--fg); cursor: pointer; white-space: nowrap; font-size: 14px;
+}
+button:hover:not(:disabled) { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); border-color: var(--accent); }
+button.danger { color: var(--danger); }
+button.ghost { background: transparent; border-color: transparent; }
+button.ghost:hover:not(:disabled) { background: var(--panel-2); border-color: var(--line); }
+button.small { min-height: 28px; padding: 3px 10px; font-size: 13px; }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+select, input[type="text"] {
+  min-height: 34px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--panel-2); min-width: 0;
+}
+select { cursor: pointer; padding-right: 28px; }
+input[type="range"] { accent-color: var(--accent); margin: 0; min-width: 0; }
+input[type="checkbox"] { accent-color: var(--accent); }
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row + .row { margin-top: 12px; }
+.spacer { flex: 1 1 auto; }
+
+/* Segmented control (the theme toggle, tabs) */
+.segmented { display: inline-flex; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.segmented button { min-height: 28px; padding: 3px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 13px; }
+.segmented button[aria-pressed="true"], .segmented button[aria-selected="true"] { background: var(--accent-soft); color: var(--fg); font-weight: 600; }
+
+/* Settings: label column and control column, aligned in every group. */
+.settings-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; font-weight: 650; }
+.settings-summary::-webkit-details-marker { display: none; }
+.settings-summary::after { content: ""; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); margin: -4px 4px 0 0; transition: transform .15s; }
+details[open] > .settings-summary::after { transform: rotate(-135deg); margin-top: 4px; }
+.groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 28px; margin-top: 16px; }
+.group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.group.wide { grid-column: 1 / -1; }
+.group h3 { padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.field {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 200px); align-items: center; gap: 4px 16px;
+  min-height: 44px; padding: 4px 0;
+}
+.field > .label { display: flex; flex-direction: column; min-width: 0; }
+.field > .label .hint { font-size: 12px; line-height: 1.35; }
+.field > select, .field > .range, .field > .switch, .field > input[type="text"] { justify-self: stretch; width: 100%; }
+.field > .switch { justify-self: end; width: auto; }
+.field.full { grid-template-columns: minmax(0, 1fr); }
+.range { display: grid; grid-template-columns: minmax(0, 1fr) 4.2em; align-items: center; gap: 10px; }
+.range output { text-align: right; font: 13px var(--mono); color: var(--muted); }
+.badge {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong);
+  color: var(--muted); font-size: 11px; font-weight: 500; line-height: 18px; vertical-align: 1px; white-space: nowrap;
+}
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px 16px; padding: 6px 0; }
+.check { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+
+/* Switch (a styled checkbox) */
+.switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch .track { width: 38px; height: 22px; border-radius: 999px; background: var(--line-strong); transition: background .15s; position: relative; }
+.switch .track::after { content: ""; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s; }
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(16px); }
+.switch input:focus-visible + .track { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Game files */
+.files-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+#status:empty { display: none; }
+.status-line { margin-top: 10px; font-size: 13px; color: var(--muted); }
+
+/* Boot bar */
+.bootbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.bootbar .phase { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 14px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); flex: none; }
+.dot.busy { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.dot.ok { background: var(--ok); }
+.dot.err { background: var(--danger); }
+@keyframes pulse { 50% { opacity: .35; } }
+
+/* The game's stage */
+.stage-card { padding: 0; overflow: hidden; }
+#stage { position: relative; background: var(--stage-bg); overflow: hidden; container-type: inline-size; color: var(--stage-fg); }
+#stage canvas { display: block; width: 100%; aspect-ratio: 16 / 9; }
+#stage:fullscreen { display: flex; align-items: center; justify-content: center; }
+#stage:fullscreen canvas { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+/* Browsers without the Fullscreen API for elements (iPhone Safari): fill the viewport instead. */
+#stage.filled { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; }
+#stage.filled canvas { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+.stage-btn {
+  position: absolute; z-index: 4; min-height: 0; padding: 4px 10px; border: 1px solid var(--stage-line);
+  border-radius: 8px; background: rgba(0, 0, 0, .45); color: var(--stage-fg); font-size: 12px; opacity: .75;
+}
+.stage-btn:hover:not(:disabled) { opacity: 1; border-color: rgba(255, 255, 255, .35); }
+#exit-fill { right: 8px; bottom: 8px; }
+#menu-button { top: 8px; right: 8px; width: 36px; height: 36px; padding: 0; }
+#menu-button svg { width: 20px; height: 20px; }
+/* The touch controller has RT/RB in the top right corner: the gear moves to the middle. */
+#stage.touch #menu-button { right: auto; left: 50%; transform: translateX(-50%); }
+#perf {
+  position: absolute; left: 8px; bottom: 8px; z-index: 3; padding: 3px 8px; border-radius: 6px;
+  background: rgba(0, 0, 0, .6); color: var(--stage-fg); font: 12px/1.3 var(--mono); pointer-events: none;
+}
+#perf:empty::before { content: "waiting for the first report…"; color: var(--stage-muted); }
+
+/* Phase chip: the game's state after the first frames. */
+#phase-chip {
+  position: absolute; left: 8px; top: 8px; z-index: 3; display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px; border-radius: 999px; background: rgba(0, 0, 0, .6); color: var(--stage-fg);
+  font-size: 12px; pointer-events: none; transition: opacity .4s;
+}
+#phase-chip.fade { opacity: 0; }
+
+/* Boot status over the frame until the game draws. */
+#boot-status {
+  position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: radial-gradient(ellipse at 50% 40%, #1d1f23 0%, var(--stage-bg) 70%);
+  transition: opacity .4s;
+}
+#boot-status.fade { opacity: 0; pointer-events: none; }
+.bs-box { width: min(440px, 100%); display: flex; flex-direction: column; gap: 10px; }
+.bs-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.bs-title strong { font-size: 18px; font-weight: 600; letter-spacing: .02em; }
+.bs-title .num { color: var(--stage-muted); font: 13px var(--mono); }
+.bs-detail { color: var(--stage-muted); font-size: 13px; min-height: 1.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bs-bar { position: relative; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .12); overflow: hidden; }
+.bs-bar::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 30%; border-radius: 2px; background: var(--stage-accent);
+  animation: slide 1.4s ease-in-out infinite;
+}
+#boot-status.error .bs-bar::after { animation: none; width: 100%; background: #ff6b7f; }
+@keyframes slide { from { left: -30%; } to { left: 100%; } }
+.bs-steps { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.bs-steps li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; color: var(--stage-muted); }
+.bs-steps li::before { content: ""; width: 10px; height: 10px; margin-left: 4px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .25); }
+.bs-steps li.active { color: var(--stage-fg); }
+.bs-steps li.active::before { border-color: var(--stage-accent); background: var(--stage-accent); animation: pulse 1.2s ease-in-out infinite; }
+.bs-steps li.done::before { border-color: #6cc28f; background: #6cc28f; }
+.bs-steps li .num { font: 12px var(--mono); }
+.bs-note { color: var(--stage-muted); font-size: 12px; }
+#boot-status.error .bs-title strong { color: #ff8a9a; }
+/* A phone's small frame: the step list doesn't fit. */
+@container (max-width: 520px) {
+  .bs-steps, .bs-note { display: none; }
+  .bs-title strong { font-size: 15px; }
+}
+
+/* In-game menu: over the whole viewport (also in fullscreen, where the stage is the top layer). */
+#menu {
+  position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, .55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+}
+.menu-panel {
+  width: min(520px, 100%); max-height: 100%; overflow: auto; overscroll-behavior: contain;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--fg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .45); padding: 16px 18px 18px;
+}
+.menu-panel.wide { width: min(760px, 100%); }
+.menu-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.menu-head h2 { font-size: 17px; flex: 1; }
+.menu-head .hint { font-size: 12px; }
+.menu-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.menu-actions .primary { grid-column: 1 / -1; }
+.menu-panel .field { min-height: 40px; }
+
+/* Tabs card (controls, saves, log) */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: -4px -16px 16px; padding: 0 12px; overflow-x: auto; }
+.tabs button {
+  min-height: 40px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  background: transparent; color: var(--muted); font-weight: 600;
+}
+.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+
+/* Tables (controls, saves) */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--panel-2); white-space: nowrap; }
+td.keys { white-space: nowrap; }
+td.keys kbd + kbd { margin-left: 4px; }
+td.act { text-align: right; white-space: nowrap; width: 1%; }
+tr.capturing td { background: var(--accent-soft); }
+.controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.controls-section + .controls-section { margin-top: 18px; }
+.controls-section > .row { margin-bottom: 8px; }
+.controls-section h3 { flex: 1; }
+.notes { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.notes li + li { margin-top: 2px; }
+
+/* Narrow screens: the "In Skyrim" column moves under the controller input. */
+.phone-only { display: none; }
+@media (max-width: 640px) {
+  .wide-only { display: none; }
+  .phone-only { display: block; }
+}
+
+/* Saves */
+.save-name { font-weight: 600; overflow-wrap: anywhere; }
+.save-sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.empty { padding: 20px; text-align: center; color: var(--muted); font-size: 14px; }
+@media (max-width: 640px) {
+  /* Saves as stacked rows on phones. */
+  .saves-table thead { display: none; }
+  .saves-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .saves-table tr:last-child { border-bottom: 0; }
+  .saves-table td { padding: 0; border: 0; }
+  .saves-table td.name { grid-column: 1 / -1; }
+  .saves-table td.act { grid-column: 1 / -1; text-align: left; padding-top: 6px; }
+}
+
+/* Log */
+pre#log {
+  margin: 0; max-height: 50vh; overflow: auto; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel-2); font: 12px/1.45 var(--mono);
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* Error banner (boot.js `fatal`) */
+.fatal-banner {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 1000; display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 16px; background: #b00020; color: #fff; font-size: 14px; box-shadow: 0 2px 12px rgba(0, 0, 0, .3);
+}
+.fatal-banner .msg { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fatal-banner button { background: rgba(255, 255, 255, .15); border-color: rgba(255, 255, 255, .45); color: #fff; }
+
+/* Toast for short confirmations (copied, exported) */
+#toast {
+  position: fixed; left: 50%; bottom: 16px; z-index: 30; transform: translateX(-50%); max-width: calc(100% - 32px);
+  padding: 8px 14px; border-radius: 8px; background: var(--fg); color: var(--bg); font-size: 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .25); transition: opacity .3s;
+}
+#toast.fade { opacity: 0; pointer-events: none; }
+
+@media (max-width: 720px) {
+  .groups { grid-template-columns: minmax(0, 1fr); }
+  .top { flex-direction: column; gap: 10px; }
+  .field { grid-template-columns: minmax(0, 1fr) minmax(0, 170px); }
+  .menu-actions { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 420px) {
+  .field { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .field:has(> .switch) { grid-template-columns: minmax(0, 1fr) auto; }
+  .files-grid { grid-template-columns: minmax(0, 1fr); }
+  .bootbar > button { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

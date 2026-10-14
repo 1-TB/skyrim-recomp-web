@@ -1,5 +1,7 @@
 // The page's controller: imports the user's game files into OPFS (game/) or streams them from the
 // server, keeps the settings, and boots host-web.js. The runtime reads OPFS through WasmFS.
+// The load status (status.js), the controls help (controls.js) and the save manager (saves.js)
+// are modules loaded beside it; the in-game menu lives here.
 'use strict';
 
 const $ = (id) => document.getElementById(id);
@@ -10,7 +12,7 @@ const statusEl = $('status');
 const SETTINGS_KEY = 'skyrt-settings';
 const DEFAULTS = {
   source: 'local', sync: true, fps: '30', log: 'info', touch: 'auto', sensitivity: 1, volume: 1, perf: false, upload: true,
-  debug: [], extra: '',
+  debug: [], extra: '', theme: 'auto', scale: '1', keys: null, tab: 'controls',
 };
 const settings = { ...DEFAULTS };
 try {
@@ -34,6 +36,30 @@ let logUpload = settings.upload;
 // "perf: 58.1 fps, 2260 draws/frame; renderer thread: 72% executing, ...".
 const PERF_LINE = /perf: ([\d.]+) fps, (\d+) draws\/frame; renderer thread: (\d+)% executing/;
 
+// Page modules, loaded at once (they only define things until used).
+const modules = Promise.all([import('./status.js'), import('./controls.js'), import('./saves.js')])
+  .then(([status, controls, saves]) => ({ status, controls, saves }));
+// The boot's load status (status.js), once booting.
+let bootStatus = null;
+// Whether the title has been started in this page (it can't be stopped short of a reload).
+let running = false;
+
+// A short confirmation at the bottom of the page.
+let toastTimer = 0;
+function toast(text) {
+  const t = $('toast');
+  t.textContent = text;
+  t.classList.remove('fade');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('fade'), 3000);
+}
+
+// The current phase beside the Boot button (state: 'busy', 'ok', 'err' or '' for idle).
+function showPhase(text, state) {
+  $('boot-phase').textContent = text;
+  $('boot-dot').className = `dot ${state}`;
+}
+
 // Lines meaning a thread died (a Rust panic, an abort, a worker's uncaught error): the game may
 // keep running without a renderer, which otherwise looks like a frozen picture.
 const FATAL_LINE = /panicked at |^Aborted\(|worker sent an error|RuntimeError: /;
@@ -44,10 +70,24 @@ function fatal(message) {
   if (!fatalShown) {
     fatalShown = true;
     const banner = document.createElement('div');
-    banner.textContent = `The game stopped with an error: ${message}. Reload the page to retry; the log has been sent.`;
-    banner.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:1000;padding:12px 16px;'
-      + 'background:#b00020;color:#fff;font:14px/1.4 system-ui,sans-serif;white-space:pre-wrap';
-    document.body.appendChild(banner);
+    banner.className = 'fatal-banner';
+    banner.setAttribute('role', 'alert');
+    const text = document.createElement('div');
+    text.className = 'msg';
+    text.textContent = `The game stopped with an error: ${message}. Reload the page to retry; the log has been sent.`;
+    const reload = document.createElement('button');
+    reload.className = 'small';
+    reload.textContent = 'Reload';
+    reload.onclick = () => location.reload();
+    const dismiss = document.createElement('button');
+    dismiss.className = 'small';
+    dismiss.textContent = 'Dismiss';
+    dismiss.onclick = () => banner.remove();
+    banner.append(text, reload, dismiss);
+    // Inside the stage while it is fullscreen (only the fullscreen element is shown).
+    (document.fullscreenElement ?? document.body).appendChild(banner);
+    bootStatus?.fail(message);
+    showPhase('Stopped with an error', 'err');
   }
   sendLog();
 }
@@ -56,6 +96,7 @@ function log(line) {
   if (FATAL_LINE.test(line)) queueMicrotask(() => fatal(line));
   const perf = PERF_LINE.exec(line);
   if (perf) $('perf').textContent = `${perf[1]} fps · ${perf[2]} draws · renderer ${perf[3]}% busy`;
+  bootStatus?.line(line);
   fullLog.push(line);
   unsent.push(line);
   logEl.textContent += line + '\n';
@@ -88,11 +129,11 @@ addEventListener('unhandledrejection', (e) => {
   sendLog();
 });
 
-$('copy-log').addEventListener('click', async () => {
+async function copyLog() {
   const text = fullLog.join('\n') + '\n';
   try {
     await navigator.clipboard.writeText(text);
-    $('copy-log').textContent = `Copied ${fullLog.length} lines`;
+    toast(`Copied ${fullLog.length} log lines`);
   } catch {
     // Clipboard denied: offer the log as a file instead.
     const a = document.createElement('a');
@@ -100,61 +141,9 @@ $('copy-log').addEventListener('click', async () => {
     a.download = `skyrim-web-${logSession}.log`;
     a.click();
   }
-  setTimeout(() => ($('copy-log').textContent = 'Copy log'), 2000);
-});
-
-// Saves live in OPFS under content/. The dev server (`cargo xtask serve`) can hold a copy in
-// target/web-saves/: "Export saves" uploads every file there, "Import saves" (before booting:
-// the running title keeps its files open) copies them back.
-async function contentDir(create) {
-  const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle('content', { create });
 }
-
-async function* walk(dir, prefix = '') {
-  for await (const [name, handle] of dir.entries()) {
-    const path = prefix ? `${prefix}/${name}` : name;
-    if (handle.kind === 'directory') yield* walk(handle, path);
-    else yield [path, handle];
-  }
-}
-
-const savesUrl = (path) => 'saves/' + path.split('/').map(encodeURIComponent).join('/');
-
-$('export-saves').addEventListener('click', async () => {
-  try {
-    let files = 0, bytes = 0;
-    for await (const [path, handle] of walk(await contentDir(false))) {
-      const file = await handle.getFile();
-      const r = await fetch(savesUrl(path), { method: 'POST', body: file });
-      if (!r.ok) throw new Error(`${path}: ${r.status}`);
-      files += 1;
-      bytes += file.size;
-    }
-    log(`Exported ${files} save files (${(bytes / 2 ** 20).toFixed(1)} MiB) to the server.`);
-  } catch (e) {
-    log(`Export failed: ${e.message}`);
-  }
-});
-
-$('import-saves').addEventListener('click', async () => {
-  try {
-    const list = (await (await fetch('saves/')).text()).split('\n').filter(Boolean);
-    const content = await contentDir(true);
-    for (const path of list) {
-      const parts = path.split('/');
-      let dir = content;
-      for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
-      const data = await (await fetch(savesUrl(path))).arrayBuffer();
-      const out = await (await dir.getFileHandle(parts.at(-1), { create: true })).createWritable();
-      await out.write(data);
-      await out.close();
-    }
-    log(`Imported ${list.length} save files from the server.`);
-  } catch (e) {
-    log(`Import failed (import before booting): ${e.message}`);
-  }
-});
+$('copy-log').addEventListener('click', copyLog);
+$('log-note').textContent = `Session ${logSession}`;
 
 async function gameDir(create) {
   const root = await navigator.storage.getDirectory();
@@ -210,6 +199,7 @@ $('zip-file').onchange = async () => {
 };
 
 $('clear').onclick = async () => {
+  if (!confirm('Delete the game files imported into this browser? Saves are kept.')) return;
   const root = await navigator.storage.getDirectory();
   await root.removeEntry('game', { recursive: true }).catch(() => {});
   statusEl.textContent = 'Cleared.';
@@ -290,32 +280,60 @@ async function showSource() {
     : ((await localGameReady()) ? '' : 'Nothing imported yet.');
 }
 
-// Settings panel: each control mirrors one setting.
-function bindSetting(id, key, parse = (v) => v, onChange = () => {}) {
-  const el = $(id);
-  const isBox = el.type === 'checkbox';
-  if (isBox) el.checked = settings[key]; else el.value = settings[key];
-  el.addEventListener(isBox || el.tagName === 'SELECT' ? 'change' : 'input', () => {
-    settings[key] = isBox ? el.checked : parse(el.value);
-    saveSettings();
-    onChange(settings[key]);
-  });
-}
-
+// Settings: every control with `data-setting="key"` mirrors that setting (the menu repeats some
+// of the panel's), `data-output="key"` shows a slider's value, and `onSetting[key]` applies a
+// change at once (the others apply at the next boot).
 let gain = null;
 let touch = null;
 const touchWanted = () => settings.touch === 'on' || (settings.touch === 'auto' && matchMedia('(pointer: coarse)').matches);
 
-bindSetting('source', 'source', String, showSource);
-bindSetting('s-sync', 'sync', Boolean);
-bindSetting('s-fps', 'fps');
-bindSetting('s-log', 'log');
-bindSetting('s-touch', 'touch', String, () => { if (touch) touch.visible = touchWanted(); });
-bindSetting('s-sens', 'sensitivity', Number);
-bindSetting('s-volume', 'volume', Number, (v) => { if (gain) gain.gain.value = v; });
-bindSetting('s-perf', 'perf', Boolean, (v) => { $('perf').hidden = !v; });
-bindSetting('s-upload', 'upload', Boolean);
-bindSetting('s-extra', 'extra', String);
+function setTouchVisible() {
+  const on = touchWanted();
+  if (touch) touch.visible = on;
+  $('stage').classList.toggle('touch', !!touch && on);
+}
+
+function applyTheme() {
+  const theme = settings.theme;
+  if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+  for (const b of document.querySelectorAll('[data-theme-choice]')) b.setAttribute('aria-pressed', String(b.dataset.themeChoice === theme));
+}
+
+const onSetting = {
+  source: showSource,
+  touch: setTouchVisible,
+  volume: (v) => { if (gain) gain.gain.value = v; },
+  perf: (v) => { $('perf').hidden = !v || !running; },
+};
+const FORMAT = {
+  volume: (v) => `${Math.round(v * 100)}%`,
+  sensitivity: (v) => `${Number(v).toFixed(2)}×`,
+};
+
+function showSetting(key) {
+  for (const el of document.querySelectorAll(`[data-setting="${key}"]`)) {
+    if (el.type === 'checkbox') el.checked = !!settings[key];
+    else el.value = String(settings[key]);
+  }
+  for (const out of document.querySelectorAll(`[data-output="${key}"]`)) out.textContent = FORMAT[key]?.(settings[key]) ?? settings[key];
+}
+
+function setSetting(key, value) {
+  settings[key] = value;
+  saveSettings();
+  showSetting(key);
+  onSetting[key]?.(value);
+}
+
+for (const el of document.querySelectorAll('[data-setting]')) {
+  const key = el.dataset.setting;
+  const parse = typeof DEFAULTS[key] === 'number' ? Number : (v) => v;
+  el.addEventListener(el.type === 'range' || el.type === 'text' ? 'input' : 'change', () => {
+    setSetting(key, el.type === 'checkbox' ? el.checked : parse(el.value));
+  });
+}
+for (const key of new Set([...document.querySelectorAll('[data-setting]')].map((el) => el.dataset.setting))) showSetting(key);
 for (const box of document.querySelectorAll('[data-debug]')) {
   box.checked = settings.debug.includes(box.dataset.debug);
   box.addEventListener('change', () => {
@@ -323,16 +341,58 @@ for (const box of document.querySelectorAll('[data-debug]')) {
     saveSettings();
   });
 }
-$('perf').hidden = !settings.perf;
+for (const b of document.querySelectorAll('[data-theme-choice]')) {
+  b.addEventListener('click', () => { settings.theme = b.dataset.themeChoice; saveSettings(); applyTheme(); });
+}
+applyTheme();
+
+// Tabs: controls, saves, log.
+let saveManager = null;
+function showTab(name) {
+  for (const b of document.querySelectorAll('[data-tab]')) {
+    const on = b.dataset.tab === name;
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+    $(b.getAttribute('aria-controls')).hidden = !on;
+  }
+  if (name === 'saves') saveManager?.refresh();
+  if (name === 'log') logEl.scrollTop = logEl.scrollHeight;
+}
+for (const b of document.querySelectorAll('[data-tab]')) {
+  b.addEventListener('click', () => { settings.tab = b.dataset.tab; saveSettings(); showTab(b.dataset.tab); });
+}
+showTab(['controls', 'saves', 'log'].includes(settings.tab) ? settings.tab : 'controls');
+
+modules.then(({ controls, saves }) => {
+  controls.createControls({
+    overrides: () => settings.keys,
+    save: (overrides) => { settings.keys = overrides; saveSettings(); },
+  });
+  saveManager = saves.createSaveManager({ log, toast, running: () => running });
+}).catch((e) => log(`Page modules failed to load: ${e.message}`));
+
 showSource();
 
 // Vblank interrupts per second for each cap: the title presents every second vblank.
 const VBLANK_HZ = { 30: 60, 60: 120, unlimited: 1000 };
 
+// The renderer's internal resolution, as a multiple of 1280×720: 1 to 3, or for "display" the
+// multiple that matches the canvas's size on screen in device pixels now.
+function resolutionScale() {
+  if (settings.scale === 'display') {
+    const height = $('canvas').getBoundingClientRect().height * devicePixelRatio;
+    return Math.min(3, Math.max(1, Math.round(height / 720)));
+  }
+  return Math.min(3, Math.max(1, Number(settings.scale) || 1));
+}
+
 function runtimeArguments() {
   const args = ['--log', settings.log];
   const hz = VBLANK_HZ[settings.fps];
   if (hz && hz !== 60) args.push('--vblank-hz', String(hz));
+  // Only when above the default: builds from before the flag reject it.
+  const scale = resolutionScale();
+  if (scale > 1) args.push('--resolution-scale', String(scale));
   for (const mode of settings.debug) args.push('--render-debug', mode);
   if (settings.source === 'stream') args.push('--stream-game', STREAM_BASE);
   return args.concat(settings.extra.split(/\s+/).filter(Boolean));
@@ -384,7 +444,7 @@ function setFilled(on) {
 }
 $('exit-fill').onclick = () => setFilled(false);
 
-$('fullscreen').onclick = async () => {
+async function toggleFullscreen() {
   const stage = $('stage');
   if (document.fullscreenElement || document.webkitFullscreenElement) {
     await (document.exitFullscreen?.() ?? document.webkitExitFullscreen?.());
@@ -402,7 +462,58 @@ $('fullscreen').onclick = async () => {
     log(`Fullscreen unavailable (${e.message}); filling the window instead.`);
     setFilled(true);
   }
+}
+$('fullscreen').onclick = toggleFullscreen;
+
+// The in-game menu: settings that matter while playing, fullscreen, saves and the controls help.
+// The game keeps running (there is no way to pause it from here) but gets no input meanwhile.
+let menuOpen = false;
+function setMenu(open) {
+  if (!running) open = false;
+  menuOpen = open;
+  $('menu').hidden = !open;
+  if (open) {
+    document.exitPointerLock?.();
+    showMenuView('main');
+    $('menu-resume').focus();
+  }
+}
+function showMenuView(view) {
+  $('menu-main').hidden = view !== 'main';
+  $('menu-controls-view').hidden = view !== 'controls';
+}
+$('menu-button').onclick = () => setMenu(true);
+$('open-menu').onclick = () => setMenu(true);
+$('menu-resume').onclick = () => setMenu(false);
+$('menu-controls').onclick = () => showMenuView('controls');
+$('menu-back').onclick = () => showMenuView('main');
+$('menu-fullscreen').onclick = toggleFullscreen;
+$('menu-log').onclick = copyLog;
+$('menu-export').onclick = async () => {
+  const { saves } = await modules;
+  try {
+    if (await saves.serverKeepsSaves()) {
+      const { files, bytes } = await saves.exportAllToServer();
+      toast(`Exported ${files} save files (${(bytes / 2 ** 20).toFixed(1)} MiB) to the server.`);
+    } else {
+      toast(`Downloading ${await saves.downloadAll()} save files as a zip.`);
+    }
+  } catch (e) {
+    toast(`Export failed: ${e.message}`);
+    log(`Export failed: ${e.message}`);
+  }
 };
+// Clicking the dimmed backdrop closes the menu.
+$('menu').addEventListener('click', (e) => { if (e.target === $('menu')) setMenu(false); });
+// F1 toggles the menu (Esc is the browser's: it releases the mouse and leaves fullscreen) and
+// Esc closes it. Registered before input.js's handler, which skips handled events.
+addEventListener('keydown', (e) => {
+  if (!running) return;
+  if (e.code === 'F1' || (menuOpen && e.code === 'Escape')) {
+    e.preventDefault();
+    setMenu(e.code === 'F1' ? !menuOpen : false);
+  }
+});
 
 $('boot').onclick = async () => {
   if (!crossOriginIsolated) {
@@ -428,6 +539,13 @@ $('boot').onclick = async () => {
     }
   }
   $('boot').disabled = true;
+  running = true;
+  bootStatus = (await modules).status.createStatus(showPhase);
+  bootStatus.start({ logLevel: settings.log, streaming: settings.source === 'stream' });
+  $('menu-button').hidden = false;
+  $('open-menu').disabled = false;
+  $('perf').hidden = !settings.perf;
+  saveManager?.refresh();
   // Audio needs a user gesture to start: set it up during this click.
   let audioNode = null;
   try {
@@ -481,9 +599,14 @@ $('boot').onclick = async () => {
     async onRuntimeInitialized() {
       const { createTouch } = await import('./touch.js');
       touch = createTouch($('stage'));
-      touch.visible = touchWanted();
+      setTouchVisible();
       const { startInput } = await import('./input.js');
-      startInput(window.Module, { sensitivity: () => settings.sensitivity, touch });
+      startInput(window.Module, {
+        sensitivity: () => settings.sensitivity,
+        keys: () => settings.keys,
+        suspended: () => menuOpen,
+        touch,
+      });
       audioNode?.port.postMessage({ memory: window.Module.HEAPU8.buffer, header: window.Module._skyrt_audio_ring() });
     },
   };
