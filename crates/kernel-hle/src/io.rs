@@ -30,11 +30,20 @@ pub struct FileObject {
     /// Opened with FILE_SYNCHRONOUS_IO_*: reads and writes report their
     /// result directly instead of STATUS_PENDING.
     pub synchronous: bool,
+    /// "content: loading save" was logged for this open (see NtReadFile).
+    pub save_load_logged: std::sync::atomic::AtomicBool,
 }
 
 impl FileObject {
     pub fn new(node: Node, guest_path: String, synchronous: bool) -> Self {
-        FileObject { node, guest_path, position: Mutex::new(0), scan: Mutex::new(None), synchronous }
+        FileObject {
+            node,
+            guest_path,
+            position: Mutex::new(0),
+            scan: Mutex::new(None),
+            synchronous,
+            save_load_logged: std::sync::atomic::AtomicBool::new(false),
+        }
     }
 
     pub fn metadata(&self) -> std::io::Result<Metadata> {

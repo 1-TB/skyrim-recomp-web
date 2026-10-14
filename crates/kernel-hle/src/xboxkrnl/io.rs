@@ -190,6 +190,15 @@ fn NtReadFile(c: &mut Call) -> u64 {
     if buffer as u64 + length as u64 > runtime_core::memory::GUEST_SPACE_SIZE {
         return status::ACCESS_VIOLATION as u64;
     }
+    // The save menu reads only the start of each save; loading one reads on from there.
+    if offset > 0
+        && let Node::File(f) = &file.node
+        && f.host_path.file_name().is_some_and(|n| n.eq_ignore_ascii_case("Savegame.dat"))
+        && !file.save_load_logged.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        let package = f.host_path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+        log::info!("content: loading save {}", package.unwrap_or_default());
+    }
     // The read writes guest memory directly: the renderer must see it as written.
     runtime_core::dirty::mark(buffer, length);
     // Straight into the guest buffer, one read per piece that is contiguous in host memory
