@@ -58,6 +58,15 @@ async function sendLog() {
 }
 setInterval(sendLog, 3000);
 addEventListener('pagehide', sendLog);
+// Uncaught errors (e.g. host-web.js failing to create its memory) would otherwise leave no trace.
+addEventListener('error', (e) => {
+  log(`Error: ${e.message} (${e.filename}:${e.lineno})`);
+  sendLog();
+});
+addEventListener('unhandledrejection', (e) => {
+  log(`Unhandled rejection: ${e.reason?.stack ?? e.reason}`);
+  sendLog();
+});
 
 $('copy-log').addEventListener('click', async () => {
   const text = fullLog.join('\n') + '\n';
@@ -263,6 +272,23 @@ function runtimeArguments() {
   return args.concat(settings.extra.split(/\s+/).filter(Boolean));
 }
 
+// Whether this browser lets a canvas hand control to an OffscreenCanvas (the renderer thread
+// needs it), tried on a throwaway canvas in the document.
+function probeCanvasTransfer() {
+  if (!HTMLCanvasElement.prototype.transferControlToOffscreen) return 'unsupported';
+  const probe = document.createElement('canvas');
+  probe.hidden = true;
+  document.body.append(probe);
+  try {
+    const offscreen = probe.transferControlToOffscreen();
+    return `ok (WebGPU context on OffscreenCanvas: ${typeof offscreen.getContext === 'function' && !!navigator.gpu})`;
+  } catch (e) {
+    return `failed: ${e}`;
+  } finally {
+    probe.remove();
+  }
+}
+
 // Logs the page's memory use every 20 s: phone browsers close tabs that use too much, without
 // an error, so the last line before a silent stop shows how close it was.
 function watchMemory() {
@@ -342,12 +368,40 @@ $('boot').onclick = async () => {
   log(`Booting with: ${args.join(' ')}`);
   log(`Browser: ${navigator.userAgent}; device memory ${navigator.deviceMemory ?? '?'} GiB; ${navigator.hardwareConcurrency} threads`);
   watchMemory();
+  log(`Canvas transfer probe: ${probeCanvasTransfer()}`);
+  // A fresh element: Safari on iOS refused to transfer the page's original canvas
+  // (InvalidStateError, i.e. it already had a context) while desktop WebKit accepts it.
+  const canvas = $('canvas').cloneNode(false);
+  $('canvas').replaceWith(canvas);
   window.Module = {
     // Handed to the renderer thread as an OffscreenCanvas.
-    canvas: $('canvas'),
+    canvas,
     arguments: args,
     print: log,
     printErr: log,
+    // Compiles the module with progress in the log, sent at once: phones may close the tab
+    // while compiling (the module is about 200 MB) before the periodic upload.
+    instantiateWasm(imports, receive) {
+      const started = performance.now();
+      const secs = () => ((performance.now() - started) / 1000).toFixed(1);
+      const memory = Object.values(imports).flatMap(Object.values).find((v) => v instanceof WebAssembly.Memory);
+      log(`Startup: memory ${memory ? memory.buffer.byteLength / 2 ** 20 : '?'} MiB; compiling host_web.wasm`);
+      sendLog();
+      WebAssembly.compileStreaming(fetch('host_web.wasm'))
+        .then(async (module) => {
+          log(`Startup: compiled in ${secs()} s; instantiating`);
+          sendLog();
+          const instance = await WebAssembly.instantiate(module, imports);
+          log(`Startup: instantiated after ${secs()} s`);
+          sendLog();
+          receive(instance, module);
+        })
+        .catch((e) => {
+          log(`Startup failed after ${secs()} s: ${e}`);
+          sendLog();
+        });
+      return {};
+    },
     async onRuntimeInitialized() {
       const { createTouch } = await import('./touch.js');
       touch = createTouch($('stage'));
