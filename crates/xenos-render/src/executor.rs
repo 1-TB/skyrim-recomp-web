@@ -136,7 +136,8 @@ struct DepthKey {
 struct PipelineKey {
     vertex: u64,
     pixel: Option<u64>,
-    texture_layout: Vec<(u32, SlotKind)>,
+    /// Which texture bind group layout (see `texture_layouts`).
+    texture_layout: u32,
     topology: PrimitiveTopology,
     strip_index_format: IndexFormat,
     cull: CullMode,
@@ -194,7 +195,8 @@ struct TextureSet {
     key: Vec<u32>,
     /// Raw handles of the texture views bound.
     views: Vec<usize>,
-    layout_key: Vec<(u32, SlotKind)>,
+    /// Its bind group layout's id (see `texture_layouts`).
+    layout_id: u32,
     pipeline_layout: PipelineLayout,
     group: BindGroup,
 }
@@ -342,7 +344,9 @@ pub struct Executor {
     shared_generation: u64,
     constants_layout: BindGroupLayout,
     shared_layout: BindGroupLayout,
-    texture_layouts: FxHashMap<Vec<(u32, SlotKind)>, (BindGroupLayout, PipelineLayout)>,
+    /// Texture bind group layouts by their slots, with the pipeline layouts using them and ids
+    /// (for pipeline keys).
+    texture_layouts: FxHashMap<Vec<(u32, SlotKind)>, (BindGroupLayout, PipelineLayout, u32)>,
     pipelines: FxHashMap<PipelineKey, PipelineEntry>,
     /// Texture bind groups by layout and bound handles, with the frame they were last used in.
     /// Texture bind groups by layout and resource handles, with the frame each was last used and
@@ -360,6 +364,8 @@ pub struct Executor {
     /// Recorded work closed into command buffers (to put texture loads after it), submitted
     /// before `encoder` with the batch.
     queued: Vec<CommandBuffer>,
+    /// Guest memory ranges a draw reads (kept to reuse the allocation).
+    vertex_ranges: Vec<(u32, u32)>,
     /// Time spent creating pipelines synchronously (native).
     pipeline_time: std::time::Duration,
     pass: Option<Pass>,
@@ -621,6 +627,7 @@ impl Executor {
             encoder: None,
             queued: Vec::new(),
             pipeline_time: std::time::Duration::ZERO,
+            vertex_ranges: Vec::new(),
             pass: None,
             constant_cache: ConstantCache::default(),
             resolving: false,
@@ -1175,15 +1182,12 @@ impl Executor {
         mark!(self, 3);
         // Guest memory the vertex shader reads.
         let regs = &self.regs;
-        let mut ranges: Vec<(u32, u32)> = vs
-            .translation
-            .vertex_bindings
-            .iter()
-            .map(|b| {
-                let f = VertexFetchConstant::read(regs, b.fetch_constant);
-                (f.address_bytes(), f.size.saturating_mul(4))
-            })
-            .collect();
+        let mut ranges = std::mem::take(&mut self.vertex_ranges);
+        ranges.clear();
+        ranges.extend(vs.translation.vertex_bindings.iter().map(|b| {
+            let f = VertexFetchConstant::read(regs, b.fetch_constant);
+            (f.address_bytes(), f.size.saturating_mul(4))
+        }));
         let index_load = if expansion != VertexExpansion::None && desc.source_select == SourceSelect::Dma {
             desc.index_buffer.inspect(|ib| ranges.push((ib.guest_base, ib.size_bytes())))
         } else {
@@ -1192,9 +1196,10 @@ impl Executor {
         if let Some((ib, ..)) = direct {
             ranges.push((ib.guest_base, ib.size_bytes()));
         }
-        for (addr, len) in ranges {
+        for &(addr, len) in &ranges {
             self.sync_shared(addr, len);
         }
+        self.vertex_ranges = ranges;
 
         mark!(self, 4);
         // Textures.
@@ -1213,10 +1218,13 @@ impl Executor {
             let targets = self.targets.targets(&self.device, encoder, &setup, min_height).ok_or(Skip::NoTargets)?;
             self.pass = Some(Pass { setup: setup.clone(), targets, draws: Vec::new() });
         }
-        let targets = self.pass.as_ref().unwrap().targets.clone();
+        let (target_width, target_height) = {
+            let targets = &self.pass.as_ref().expect("set above").targets;
+            (targets.width, targets.height)
+        };
 
-        let viewport = viewport.crop_to_render_target(targets.width, targets.height, true);
-        let scissor = guest_scissor.clamp_to(targets.width, targets.height);
+        let viewport = viewport.crop_to_render_target(target_width, target_height, true);
+        let scissor = guest_scissor.clamp_to(target_width, target_height);
         if viewport.xy_extent[0] == 0 || viewport.xy_extent[1] == 0 || scissor.extent[0] == 0 || scissor.extent[1] == 0
         {
             return Err(Skip::EmptyViewport);
@@ -1316,13 +1324,13 @@ impl Executor {
         let key = self.pipeline_key(
             &vs,
             ps.as_deref(),
-            textures.layout_key.clone(),
+            textures.layout_id,
             &host,
             strip_index_format,
             &rasterizer,
             &output,
             &depth_stencil,
-            &targets,
+            &self.pass.as_ref().expect("set above").targets,
         );
         if ps.is_none() && key.color_slots != 0 {
             return Err(Skip::Warn("color targets bound without a pixel shader".into()));
@@ -1623,7 +1631,7 @@ impl Executor {
                 push_texture(&mut layout_key, &mut views, binding, bound);
             }
         }
-        let (layout, pipeline_layout) = self.texture_layout(&layout_key);
+        let (layout, pipeline_layout, layout_id) = self.texture_layout(&layout_key);
         let group = self.texture_group(&layout, &views);
         let bound_views = views
             .iter()
@@ -1635,7 +1643,7 @@ impl Executor {
         let set = Rc::new(TextureSet {
             key: self.texture_set_key.clone(),
             views: bound_views,
-            layout_key,
+            layout_id,
             pipeline_layout,
             group,
         });
@@ -1651,7 +1659,7 @@ impl Executor {
         self.texture_sets.clear();
     }
 
-    fn texture_layout(&mut self, key: &[(u32, SlotKind)]) -> (BindGroupLayout, PipelineLayout) {
+    fn texture_layout(&mut self, key: &[(u32, SlotKind)]) -> (BindGroupLayout, PipelineLayout, u32) {
         if let Some(l) = self.texture_layouts.get(key) {
             return l.clone();
         }
@@ -1682,8 +1690,9 @@ impl Executor {
         let group = self.device.create_bind_group_layout("xenos textures", &entries);
         let pipeline =
             self.device.create_pipeline_layout("xenos", &[&self.constants_layout, &self.shared_layout, &group]);
-        self.texture_layouts.insert(key.to_vec(), (group.clone(), pipeline.clone()));
-        (group, pipeline)
+        let id = self.texture_layouts.len() as u32;
+        self.texture_layouts.insert(key.to_vec(), (group.clone(), pipeline.clone(), id));
+        (group, pipeline, id)
     }
 
     fn texture_group(&mut self, layout: &BindGroupLayout, views: &[(u32, BindingKind)]) -> BindGroup {
@@ -1724,7 +1733,7 @@ impl Executor {
         &self,
         vs: &CachedShader,
         ps: Option<&CachedShader>,
-        texture_layout: Vec<(u32, SlotKind)>,
+        texture_layout: u32,
         host: &HostDraw,
         strip_index_format: IndexFormat,
         rasterizer: &RasterizerState,
