@@ -409,6 +409,9 @@ impl Kernel {
     }
 }
 
+/// Draws in a frame that mark a game world being shown (menus and loading screens draw ~100).
+const FULL_FRAME_DRAWS: u32 = 1000;
+
 /// The hardware's refresh rate.
 pub const DEFAULT_VBLANK_HZ: u32 = 60;
 
@@ -447,6 +450,8 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         pending: Vec::new(),
         syncs: [0; 128],
         sync_wait: Duration::ZERO,
+        frame_draws: 0,
+        full_frame_seen: false,
     };
     let mut read_index = 0u32;
     let mut generation = 0u32;
@@ -533,6 +538,10 @@ struct CommandProcessor<'a> {
     /// Waits for the renderer since the last report (see `report_syncs`).
     syncs: [u32; 128],
     sync_wait: Duration,
+    /// Draws since the last swap, and whether a frame with many draws was reported (the end of
+    /// a world load, for load-time measurements).
+    frame_draws: u32,
+    full_frame_seen: bool,
 }
 
 /// Register-file base of each SET_CONSTANT / LOAD_ALU_CONSTANT type.
@@ -736,6 +745,11 @@ impl CommandProcessor<'_> {
                 }
                 let swaps = self.k.gpu_swap(fb, w, h);
                 self.report_syncs(swaps);
+                if !self.full_frame_seen && self.frame_draws >= FULL_FRAME_DRAWS {
+                    self.full_frame_seen = true;
+                    log::info!("GPU: first frame with {} draws (swap #{swaps})", self.frame_draws);
+                }
+                self.frame_draws = 0;
             }
             pm4::INDIRECT_BUFFER | pm4::INDIRECT_BUFFER_PFD => {
                 let ptr = r.read(mem) & 0x1FFF_FFFF;
@@ -876,8 +890,14 @@ impl CommandProcessor<'_> {
                 let code: Vec<u32> = (0..size).map(|_| r.read(mem)).collect();
                 self.load_shader(shader_type & 3 == 1, code);
             }
-            pm4::DRAW_INDX => self.draw(r, count, true),
-            pm4::DRAW_INDX_2 => self.draw(r, count, false),
+            pm4::DRAW_INDX => {
+                self.frame_draws += 1;
+                self.draw(r, count, true)
+            }
+            pm4::DRAW_INDX_2 => {
+                self.frame_draws += 1;
+                self.draw(r, count, false)
+            }
             pm4::SET_CONSTANT2 | pm4::SET_SHADER_CONSTANTS => {
                 let offset_type = r.read(mem);
                 let index = offset_type & 0xFFFF;
