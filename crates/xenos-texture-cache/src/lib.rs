@@ -112,12 +112,17 @@ impl Default for CacheConfig {
     }
 }
 
-/// Counters for diagnostics and tests. `textures`, `host_bytes` and `samplers` are current
-/// values, the rest are totals since creation.
+/// Counters for diagnostics and tests. `textures`, `host_bytes`, `pooled`, `pooled_bytes`,
+/// `retired` and `samplers` are current values, the rest are totals since creation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CacheStats {
     pub textures: usize,
     pub host_bytes: u64,
+    /// Dropped textures kept for reuse.
+    pub pooled: usize,
+    pub pooled_bytes: u64,
+    /// Dropped textures waiting for their frame to finish (then pooled or destroyed).
+    pub retired: usize,
     pub samplers: usize,
     /// Textures created from guest memory (including reloads).
     pub loads: u64,
@@ -317,6 +322,10 @@ struct Pooled {
 /// Textures kept for reuse at most per key, and in all.
 const POOL_PER_KEY: usize = 4;
 const POOL_MAX_BYTES: u64 = 256 << 20;
+/// Frames a pooled texture waits for reuse before it's destroyed. Reloads of resolved render
+/// targets take theirs back within a frame or two; without a limit the pool keeps the textures
+/// of every shape seen once (~130 MiB of GPU memory in Skyrim's Helgen) until it's full.
+const POOL_MAX_FRAMES: u64 = 60;
 
 /// Dropped textures kept for new loads of the same shape and format: titles resolve render
 /// targets to the same addresses every frame, so the textures reading them are reloaded every
@@ -324,26 +333,43 @@ const POOL_MAX_BYTES: u64 = 256 << 20;
 /// browsers. A reused texture keeps its views, so bind groups cached with them stay valid.
 #[derive(Default)]
 struct TexturePool {
-    free: FxHashMap<PoolKey, Vec<Pooled>>,
+    /// Pooled textures with the frame they were given back in, oldest first.
+    free: FxHashMap<PoolKey, Vec<(Pooled, u64)>>,
     bytes: u64,
 }
 
 impl TexturePool {
-    /// Keeps `p` if there's room; otherwise destroys it.
-    fn give(&mut self, p: Pooled) {
+    /// Keeps `p` (dropped in `frame`) if there's room; otherwise destroys it.
+    fn give(&mut self, p: Pooled, frame: u64) {
         let list = self.free.entry(p.key).or_default();
         if list.len() >= POOL_PER_KEY || self.bytes + p.bytes > POOL_MAX_BYTES {
             p.texture.destroy();
             return;
         }
         self.bytes += p.bytes;
-        list.push(p);
+        list.push((p, frame));
     }
 
     fn take(&mut self, key: &PoolKey) -> Option<Pooled> {
-        let p = self.free.get_mut(key)?.pop()?;
+        let (p, _) = self.free.get_mut(key)?.pop()?;
         self.bytes -= p.bytes;
         Some(p)
+    }
+
+    /// Destroys the textures pooled before `oldest`.
+    fn expire(&mut self, oldest: u64) {
+        let bytes = &mut self.bytes;
+        self.free.retain(|_, list| {
+            list.retain(|(p, frame)| {
+                let keep = *frame >= oldest;
+                if !keep {
+                    p.texture.destroy();
+                    *bytes -= p.bytes;
+                }
+                keep
+            });
+            !list.is_empty()
+        });
     }
 }
 
@@ -502,6 +528,9 @@ impl TextureCache {
         CacheStats {
             textures: self.textures.len(),
             host_bytes: self.textures.values().map(|e| e.bytes).sum(),
+            pooled: self.pool.free.values().map(Vec::len).sum(),
+            pooled_bytes: self.pool.bytes,
+            retired: self.retired.len() + self.retiring.len(),
             samplers: self.samplers.len(),
             ..self.stats
         }
@@ -645,9 +674,14 @@ impl TextureCache {
     /// out of GPU memory.
     pub fn destroy_retired(&mut self) {
         for p in self.retiring.drain(..) {
-            self.pool.give(p);
+            if self.config.reuse_textures {
+                self.pool.give(p, self.frame);
+            } else {
+                p.texture.destroy();
+            }
         }
         std::mem::swap(&mut self.retiring, &mut self.retired);
+        self.pool.expire(self.frame.saturating_sub(POOL_MAX_FRAMES));
     }
 
     /// Drops every texture and sampler (e.g. after the device was lost and recreated, together
