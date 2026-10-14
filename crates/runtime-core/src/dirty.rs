@@ -13,7 +13,7 @@
 
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
-use crate::memory::fold_view;
+use crate::memory::{FRAMES, FRAME_SHIFT, fold_view};
 use crate::memory::map::{PHYSICAL_BASE, PHYSICAL_SIZE, XEX_BASE};
 
 const PAGE_SHIFT: u32 = 12;
@@ -23,6 +23,26 @@ pub const PAGES: usize = (PHYSICAL_SIZE >> PAGE_SHIFT) as usize;
 /// The dirty bytes, indexed by physical page. All start dirty: nothing was seen yet.
 #[unsafe(no_mangle)]
 pub static skyrt_dirty_pages: [AtomicU8; PAGES] = [const { AtomicU8::new(1) }; PAGES];
+
+/// Physical address of the first byte of each 1 MiB guest frame ([`physical`] of the frame's
+/// start), or `u32::MAX` for frames that aren't physical memory: recompiled stores find the
+/// pages they mark through this (`skyrt_mark_written` in cpp/ppc_context.h), since their own
+/// address translation yields a linear address, not a physical one.
+#[unsafe(no_mangle)]
+pub static skyrt_dirty_frame: [u32; FRAMES] = {
+    let mut t = [u32::MAX; FRAMES];
+    let mut i = 0;
+    while i < FRAMES {
+        let folded = fold_view((i as u32) << FRAME_SHIFT);
+        if folded >= PHYSICAL_BASE && folded - PHYSICAL_BASE < PHYSICAL_SIZE {
+            t[i] = folded - PHYSICAL_BASE;
+        } else if folded >= XEX_BASE && folded - XEX_BASE < PHYSICAL_SIZE {
+            t[i] = folded - XEX_BASE;
+        }
+        i += 1;
+    }
+    t
+};
 
 /// The physical address `addr` (a guest address, as written to) aliases, if any.
 #[inline]
@@ -117,5 +137,25 @@ mod tests {
         assert_ne!(w, v);
         assert_eq!(range_version(0x20_0000, 0x2000), w);
         assert_eq!(range_version(0x20_0000, 0x1000), u64::from(version(0x200)));
+    }
+}
+
+#[cfg(test)]
+mod frame_table_tests {
+    use super::*;
+
+    #[test]
+    fn frame_table_matches_physical() {
+        for ea in (0..=u32::MAX).step_by(0x1000) {
+            let from_table = match skyrt_dirty_frame[(ea >> FRAME_SHIFT) as usize] {
+                u32::MAX => None,
+                p => Some(p + (ea & ((1 << FRAME_SHIFT) - 1))),
+            };
+            // The top page of the 4 KiB view folds past physical memory.
+            if ea >= 0xFFF0_0000 {
+                continue;
+            }
+            assert_eq!(from_table, physical(ea), "{ea:#010X}");
+        }
     }
 }

@@ -18,7 +18,7 @@
 //! either target, so both builds behave the same.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 pub const PAGE_SIZE: u32 = 0x1000;
 
@@ -136,8 +136,8 @@ unsafe impl Sync for GuestMemory {}
 /// (0xC0000000) and the 4 KiB view (0xE0000000, one page ahead of its physical
 /// address) are folded onto the single copy of physical memory at
 /// [`map::PHYSICAL_BASE`]; everything else is stored at its own address.
-/// Recompiled code applies the same function to every access (`skyrt_ea` in
-/// cpp/ppc_context.h); the two must stay identical.
+/// [`skyrt_ea_offset`] starts out as this mapping; recompiled code and
+/// [`GuestMemory`] translate through the table.
 #[inline]
 pub const fn fold_view(addr: u32) -> u32 {
     if addr < map::PHYS_VIEW_16M {
@@ -194,11 +194,23 @@ impl GuestMemory {
         Ok(())
     }
 
-    /// Host pointer for a guest address (after [`fold_view`]). Callers must
-    /// ensure the range is committed.
+    /// Host pointer for a guest address (see [`linear`]). Callers must ensure the range is
+    /// committed, and that it doesn't leave the address's frame unless they know the layout
+    /// keeps it contiguous: use [`GuestMemory::runs`] for ranges.
     #[inline]
     pub fn ptr(&self, addr: u32) -> *mut u8 {
-        std::ptr::with_exposed_provenance_mut(self.base + fold_view(addr) as usize)
+        self.linear_ptr(linear(addr))
+    }
+
+    #[inline]
+    fn linear_ptr(&self, lin: u32) -> *mut u8 {
+        std::ptr::with_exposed_provenance_mut(self.base + lin as usize)
+    }
+
+    /// Calls `f(offset, host pointer, len)` for each piece of `[addr, addr + len)` that is
+    /// contiguous in host memory (usually one), in order.
+    pub fn runs(&self, addr: u32, len: u32, mut f: impl FnMut(usize, *mut u8, usize)) {
+        linear_runs(addr, u64::from(len), |off, lin, n| f(off as usize, self.linear_ptr(lin), n as usize));
     }
 
     /// Makes `[addr, addr+len)` readable and writable. Newly committed pages are
@@ -229,20 +241,24 @@ impl GuestMemory {
         // only being committed now, so nothing live is in it. MADV_DONTNEED makes it read
         // back as zero even if the guest wrote to it while uncommitted or after releasing
         // it (see `release`).
-        let rc = unsafe {
-            crate::dirty::mark(start, (end - start as u64) as u32);
-            libc::madvise(self.ptr(start) as *mut libc::c_void, (end - start as u64) as usize, libc::MADV_DONTNEED)
-        };
-        if rc != 0 {
-            return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
-        }
-        Ok(())
+        crate::dirty::mark(start, (end - start as u64) as u32);
+        let mut result = Ok(());
+        linear_runs(start, end - u64::from(start), |_, lin, n| {
+            let rc = unsafe { libc::madvise(self.linear_ptr(lin) as *mut libc::c_void, n as usize, libc::MADV_DONTNEED) };
+            if rc != 0 && result.is_ok() {
+                result = Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
+            }
+        });
+        result
     }
 
     #[cfg(target_os = "emscripten")]
-    fn commit_pages(&self, _start: u32, end: u64) -> Result<(), MemoryError> {
+    fn commit_pages(&self, start: u32, end: u64) -> Result<(), MemoryError> {
         host_heap_guard()?;
         const WASM_PAGE: u64 = 0x10000;
+        let mut end_linear = 0u64;
+        linear_runs(start, end - u64::from(start), |_, lin, n| end_linear = end_linear.max(u64::from(lin) + n));
+        let end = end_linear;
         let needed_pages = end.div_ceil(WASM_PAGE) as usize;
         loop {
             let current = core::arch::wasm32::memory_size(0);
@@ -276,9 +292,9 @@ impl GuestMemory {
             let end = (addr as u64 + len as u64 + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
             // SAFETY: inside our reservation; MADV_DONTNEED returns the memory to
             // the host and leaves the mapping (and its protection) in place.
-            unsafe {
-                libc::madvise(self.ptr(start) as *mut libc::c_void, (end - start as u64) as usize, libc::MADV_DONTNEED);
-            }
+            linear_runs(start, end - u64::from(start), |_, lin, n| unsafe {
+                libc::madvise(self.linear_ptr(lin) as *mut libc::c_void, n as usize, libc::MADV_DONTNEED);
+            });
             crate::dirty::mark(start, (end - start as u64) as u32);
         }
         #[cfg(target_os = "emscripten")]
@@ -301,9 +317,9 @@ impl GuestMemory {
             let size = (end - start as u64) as usize;
             // SAFETY: inside our reservation; MADV_DONTNEED drops the pages, which then
             // read back as zero.
-            unsafe {
-                libc::madvise(self.ptr(start) as *mut libc::c_void, size, libc::MADV_DONTNEED);
-            }
+            linear_runs(start, end - u64::from(start), |_, lin, n| unsafe {
+                libc::madvise(self.linear_ptr(lin) as *mut libc::c_void, n as usize, libc::MADV_DONTNEED);
+            });
             crate::dirty::mark(start, size as u32);
         }
         #[cfg(target_os = "emscripten")]
@@ -329,37 +345,70 @@ impl GuestMemory {
     #[inline]
     pub fn read_u16(&self, addr: u32) -> u16 {
         let mut b = [0u8; 2];
-        self.read_bytes(addr, &mut b);
+        if within_frame(addr, 2) {
+            // SAFETY: committed guest memory inside one frame.
+            b = unsafe { self.ptr(addr).cast::<[u8; 2]>().read_unaligned() };
+        } else {
+            self.read_bytes(addr, &mut b);
+        }
         u16::from_be_bytes(b)
     }
 
     #[inline]
     pub fn write_u16(&self, addr: u32, v: u16) {
-        self.write_bytes(addr, &v.to_be_bytes());
+        if within_frame(addr, 2) {
+            // SAFETY: as above.
+            unsafe { self.ptr(addr).cast::<[u8; 2]>().write_unaligned(v.to_be_bytes()) };
+            crate::dirty::mark(addr, 2);
+        } else {
+            self.write_bytes(addr, &v.to_be_bytes());
+        }
     }
 
     #[inline]
     pub fn read_u32(&self, addr: u32) -> u32 {
         let mut b = [0u8; 4];
-        self.read_bytes(addr, &mut b);
+        if within_frame(addr, 4) {
+            // SAFETY: committed guest memory inside one frame.
+            b = unsafe { self.ptr(addr).cast::<[u8; 4]>().read_unaligned() };
+        } else {
+            self.read_bytes(addr, &mut b);
+        }
         u32::from_be_bytes(b)
     }
 
     #[inline]
     pub fn write_u32(&self, addr: u32, v: u32) {
-        self.write_bytes(addr, &v.to_be_bytes());
+        if within_frame(addr, 4) {
+            // SAFETY: as above.
+            unsafe { self.ptr(addr).cast::<[u8; 4]>().write_unaligned(v.to_be_bytes()) };
+            crate::dirty::mark(addr, 4);
+        } else {
+            self.write_bytes(addr, &v.to_be_bytes());
+        }
     }
 
     #[inline]
     pub fn read_u64(&self, addr: u32) -> u64 {
         let mut b = [0u8; 8];
-        self.read_bytes(addr, &mut b);
+        if within_frame(addr, 8) {
+            // SAFETY: committed guest memory inside one frame.
+            b = unsafe { self.ptr(addr).cast::<[u8; 8]>().read_unaligned() };
+        } else {
+            self.read_bytes(addr, &mut b);
+        }
         u64::from_be_bytes(b)
     }
 
     #[inline]
     pub fn write_u64(&self, addr: u32, v: u64) {
-        self.write_bytes(addr, &v.to_be_bytes());
+        if within_frame(addr, 8) {
+            // SAFETY: as above.
+            unsafe { self.ptr(addr).cast::<[u8; 8]>().write_unaligned(v.to_be_bytes()) };
+            crate::dirty::mark(addr, 8);
+        } else {
+            self.write_bytes(addr, &v.to_be_bytes());
+        }
     }
 
     #[inline]
@@ -406,29 +455,50 @@ impl GuestMemory {
 
     pub fn read_bytes(&self, addr: u32, out: &mut [u8]) {
         assert!(addr as u64 + out.len() as u64 <= GUEST_SPACE_SIZE, "guest read out of range");
-        // SAFETY: bounds checked against the 4 GiB space; the range must be committed.
-        unsafe { std::ptr::copy_nonoverlapping(self.ptr(addr), out.as_mut_ptr(), out.len()) }
+        let len = out.len() as u32;
+        if within_frame(addr, len) {
+            // SAFETY: bounds checked against the 4 GiB space; the range must be committed.
+            unsafe { std::ptr::copy_nonoverlapping(self.ptr(addr), out.as_mut_ptr(), out.len()) };
+            return;
+        }
+        // SAFETY: as above.
+        self.runs(addr, len, |off, p, n| unsafe { std::ptr::copy_nonoverlapping(p, out.as_mut_ptr().add(off), n) });
     }
 
     pub fn write_bytes(&self, addr: u32, data: &[u8]) {
         assert!(addr as u64 + data.len() as u64 <= GUEST_SPACE_SIZE, "guest write out of range");
-        // SAFETY: as above.
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr(addr), data.len()) }
+        if within_frame(addr, data.len() as u32) {
+            // SAFETY: as above.
+            unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr(addr), data.len()) };
+        } else {
+            // SAFETY: as above.
+            self.runs(addr, data.len() as u32, |off, p, n| unsafe { std::ptr::copy_nonoverlapping(data.as_ptr().add(off), p, n) });
+        }
         crate::dirty::mark(addr, data.len() as u32);
     }
 
     pub fn fill(&self, addr: u32, len: u32, byte: u8) {
         assert!(addr as u64 + len as u64 <= GUEST_SPACE_SIZE, "guest fill out of range");
         // SAFETY: as above.
-        unsafe { std::ptr::write_bytes(self.ptr(addr), byte, len as usize) }
+        self.runs(addr, len, |_, p, n| unsafe { std::ptr::write_bytes(p, byte, n) });
         crate::dirty::mark(addr, len);
     }
 
     /// memmove within guest memory.
     pub fn copy_within(&self, dst: u32, src: u32, len: u32) {
         assert!(dst as u64 + len as u64 <= GUEST_SPACE_SIZE && src as u64 + len as u64 <= GUEST_SPACE_SIZE);
-        // SAFETY: as above; `copy` handles overlap.
-        unsafe { std::ptr::copy(self.ptr(src), self.ptr(dst), len as usize) }
+        let contiguous = |a: u32| {
+            let mut pieces = 0;
+            linear_runs(a, u64::from(len), |_, _, _| pieces += 1);
+            pieces <= 1
+        };
+        if contiguous(src) && contiguous(dst) {
+            // SAFETY: as above; `copy` handles overlap.
+            unsafe { std::ptr::copy(self.ptr(src), self.ptr(dst), len as usize) }
+        } else {
+            let tmp = self.read_vec(src, len);
+            self.write_bytes(dst, &tmp);
+        }
         crate::dirty::mark(dst, len);
     }
 
@@ -582,31 +652,86 @@ pub fn host_heap_guard() -> Result<(), MemoryError> {
     Ok(())
 }
 
-/// [`fold_view`] as a table for recompiled code: `skyrt_ea(ea)` in cpp/ppc_context.h is
-/// `ea + skyrt_ea_offset[ea >> 24]`. A load and an add per access measured ~25% fewer cycles in
-/// guest worker threads than the compare-and-select form (natively, at the main menu), and the
-/// views are 16 MiB-aligned, so one entry per 16 MiB covers them.
+// --- Guest-to-linear translation ----------------------------------------------------------
+//
+// Every guest address is stored at `linear(addr) = addr + skyrt_ea_offset[addr >> FRAME_SHIFT]`
+// (relative to `base`): recompiled code does the same lookup on every access (`skyrt_ea` in
+// cpp/ppc_context.h), and so does everything here. One entry per 1 MiB frame. The table holds
+// the physical-view folding ([`fold_view`]) and is the hook for laying guest memory out
+// compactly in linear memory: frames that are adjacent in the guest needn't be adjacent in
+// linear memory, so ranges are processed in runs of linearly contiguous frames
+// ([`GuestMemory::runs`]).
+
+pub const FRAME_SHIFT: u32 = 20;
+pub const FRAME_SIZE: u32 = 1 << FRAME_SHIFT;
+pub const FRAMES: usize = 1 << (32 - FRAME_SHIFT);
+
+/// Linear offset of each guest frame. A load and an add per access measured ~25% fewer cycles
+/// in guest worker threads than the old compare-and-select fold (natively, at the main menu);
+/// 1 MiB entries cost the same as 16 MiB ones there.
 #[unsafe(no_mangle)]
-pub static skyrt_ea_offset: [i32; 256] = {
-    let mut t = [0i32; 256];
+pub static skyrt_ea_offset: [AtomicI32; FRAMES] = {
+    let mut t = [const { AtomicI32::new(0) }; FRAMES];
     let mut i = 0;
-    while i < 256 {
-        let ea = (i as u32) << 24;
-        t[i] = fold_view(ea).wrapping_sub(ea) as i32;
+    while i < FRAMES {
+        let ea = (i as u32) << FRAME_SHIFT;
+        t[i] = AtomicI32::new(fold_view(ea).wrapping_sub(ea) as i32);
         i += 1;
     }
     t
 };
 
+/// Whether `[addr, addr + len)` lies in one frame (and so is contiguous in linear memory).
+#[inline]
+fn within_frame(addr: u32, len: u32) -> bool {
+    (addr & (FRAME_SIZE - 1)) as u64 + u64::from(len) <= u64::from(FRAME_SIZE)
+}
+
+/// Where guest address `addr` is stored, relative to `base`.
+#[inline]
+pub fn linear(addr: u32) -> u32 {
+    addr.wrapping_add(skyrt_ea_offset[(addr >> FRAME_SHIFT) as usize].load(Ordering::Relaxed) as u32)
+}
+
+/// Calls `f(offset, linear_start, len)` for each maximal piece of the guest range
+/// `[addr, addr + len)` whose frames are contiguous in linear memory, in order.
+pub fn linear_runs(addr: u32, len: u64, mut f: impl FnMut(u64, u32, u64)) {
+    let mut done = 0u64;
+    while done < len {
+        let start = addr.wrapping_add(done as u32);
+        let lin = linear(start);
+        let mut n = (u64::from(FRAME_SIZE - (start & (FRAME_SIZE - 1)))).min(len - done);
+        while done + n < len {
+            let next = addr.wrapping_add((done + n) as u32);
+            if next == 0 || linear(next) != lin.wrapping_add(n as u32) {
+                break;
+            }
+            n = (n + u64::from(FRAME_SIZE)).min(len - done);
+        }
+        f(done, lin, n);
+        done += n;
+    }
+}
+
 #[cfg(test)]
-mod ea_table_tests {
+mod translation_tests {
     use super::*;
 
     #[test]
-    fn table_matches_fold_view() {
+    fn identity_layout_matches_fold_view() {
         for ea in (0..=u32::MAX).step_by(0x1000).chain([0xBFFF_FFFF, 0xC000_0000, 0xDFFF_FFFF, 0xE000_0000, 0xFFFF_FFFF]) {
-            let folded = ea.wrapping_add(skyrt_ea_offset[(ea >> 24) as usize] as u32);
-            assert_eq!(folded, fold_view(ea), "{ea:#010X}");
+            assert_eq!(linear(ea), fold_view(ea), "{ea:#010X}");
         }
+    }
+
+    #[test]
+    fn runs_split_where_linear_memory_is_not_contiguous() {
+        let mut runs = Vec::new();
+        // 0xBFF00000 (identity) is followed by 0xC0000000, which folds onto 0xA0000000.
+        linear_runs(0xBFE0_0000, 0x40_0000, |off, lin, n| runs.push((off, lin, n)));
+        assert_eq!(runs, [(0, 0xBFE0_0000, 0x20_0000), (0x20_0000, 0xA000_0000, 0x20_0000)]);
+        runs.clear();
+        linear_runs(0x4000_0800, 0x30_0000, |off, lin, n| runs.push((off, lin, n)));
+        assert_eq!(runs, [(0, 0x4000_0800, 0x30_0000)]);
     }
 }

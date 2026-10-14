@@ -190,12 +190,22 @@ fn NtReadFile(c: &mut Call) -> u64 {
     if buffer as u64 + length as u64 > runtime_core::memory::GUEST_SPACE_SIZE {
         return status::ACCESS_VIOLATION as u64;
     }
-    // SAFETY: the destination is the guest buffer the title passed for this
-    // read, bounds-checked against the 4 GiB space above.
-    let dest = unsafe { std::slice::from_raw_parts_mut(c.mem().ptr(buffer), length as usize) };
     // The read writes guest memory directly: the renderer must see it as written.
     runtime_core::dirty::mark(buffer, length);
-    let (s, n) = match f.read_at(dest, offset) {
+    // Straight into the guest buffer, one read per piece that is contiguous in host memory
+    // (normally the whole buffer).
+    let mut result: std::io::Result<u64> = Ok(0);
+    c.mem().runs(buffer, length, |off, ptr, len| {
+        let Ok(done) = result else { return };
+        if done < off as u64 {
+            return; // an earlier piece came up short: end of file
+        }
+        // SAFETY: the destination is the guest buffer the title passed for this read,
+        // bounds-checked against the 4 GiB space above; `runs` yields host-contiguous pieces.
+        let dest = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
+        result = f.read_at(dest, offset + off as u64).map(|n| done + n as u64);
+    });
+    let (s, n) = match result {
         Ok(0) if length > 0 => (status::END_OF_FILE, 0),
         Ok(n) => (status::SUCCESS, n as u32),
         Err(e) => {

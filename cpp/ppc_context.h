@@ -83,39 +83,45 @@
 // pages), 0xC0000000 (16 MiB pages) and 0xE0000000 (4 KiB pages, one page
 // ahead: 0xE0000000 + x is physical x + 0x1000). Wasm can't map one memory at
 // several addresses, so physical memory lives once, at 0xA0000000 + physical
-// address, and the other two views are folded onto it here. Must match
-// runtime-core's memory::fold_view, which also builds the table: the views are
-// 16 MiB-aligned, so the fold is one offset per 16 MiB (a load and an add, cheaper
-// than comparing and selecting on every access).
-extern "C" const int32_t skyrt_ea_offset[256];
+// address, and the other two views are folded onto it. Every access goes through
+// runtime-core's per-1 MiB offset table (memory::skyrt_ea_offset, which starts out
+// as memory::fold_view and is what the runtime's own accesses use): a load and an
+// add, cheaper than comparing and selecting, and it lets the runtime place guest
+// memory anywhere in linear memory, 1 MiB at a time.
+extern "C" const int32_t skyrt_ea_offset[4096];
 
 static inline __attribute__((always_inline)) uint32_t skyrt_ea(uint32_t ea)
 {
-    return ea + (uint32_t)skyrt_ea_offset[ea >> 24];
+    return ea + (uint32_t)skyrt_ea_offset[ea >> 20];
 }
 
 #define PPC_EA(x) (base + skyrt_ea((uint32_t)(x)))
 
 // One byte per 4 KiB page of the 512 MiB physical space, set when a store may
 // have changed the page (runtime-core's dirty module; the renderer clears
-// them). Physical memory is stored at 0xA0000000 and, where the guest hasn't
-// allocated it, also reached through the identity-mapped XEX region at
-// 0x80000000, so both mark physical (offset & 0x1FFFFFFF). The mark follows
-// the data: the renderer clears a mark before reading the page, so a store it
-// misses leaves the page marked for next time. Plain byte stores suffice: the
-// renderer only reads memory after the guest published it through the ring
-// buffer, which orders everything before.
+// them). Physical memory is reached through its three views and, where the guest
+// hasn't allocated it, also through the identity-mapped XEX region at 0x80000000;
+// skyrt_dirty_frame gives the physical address of each 1 MiB guest frame's start
+// (~0 for frames that aren't physical memory). The mark follows the data: the
+// renderer clears a mark before reading the page, so a store it misses leaves the
+// page marked for next time. Plain byte stores suffice: the renderer only reads
+// memory after the guest published it through the ring buffer, which orders
+// everything before.
 extern "C" uint8_t skyrt_dirty_pages[];
+extern "C" const uint32_t skyrt_dirty_frame[4096];
 
 static inline __attribute__((always_inline)) void skyrt_mark_written(uint32_t ea, uint32_t size)
 {
-    uint32_t first = skyrt_ea(ea) - 0x80000000u;
-    if (first < 0x40000000u)
+    // Only 0x80000000 and up can be physical memory: stack and heap stores skip the lookup.
+    if ((int32_t)ea >= 0)
+        return;
+    uint32_t frame = skyrt_dirty_frame[ea >> 20];
+    if (frame != 0xFFFFFFFFu)
     {
-        uint32_t last = (first + size - 1) & 0x1FFFFFFFu;
-        first &= 0x1FFFFFFFu;
-        ((volatile uint8_t*)skyrt_dirty_pages)[first >> 12] = 1;
-        ((volatile uint8_t*)skyrt_dirty_pages)[last >> 12] = 1;
+        uint32_t first = frame + (ea & 0xFFFFFu);
+        uint32_t last = first + size - 1;
+        ((volatile uint8_t*)skyrt_dirty_pages)[(first >> 12) & 0x1FFFFu] = 1;
+        ((volatile uint8_t*)skyrt_dirty_pages)[(last >> 12) & 0x1FFFFu] = 1;
     }
 }
 
