@@ -22,7 +22,7 @@ use crate::format::{
     ColorTargetInfo, DEPTH_FORMAT_CODE_BASE, DepthTargetInfo, EdramOptions, host_color_format, host_depth_format,
 };
 use crate::ownership::{OwnedRange, OwnershipMap};
-use crate::shaders::{self, SrcKind};
+use crate::shaders::{self, STORE_DST_BUFFERS, SrcKind};
 use crate::{EdramError, GuestMemoryAccess};
 
 const TILE_DWORDS: u32 = EDRAM_TILE_WIDTH_SAMPLES * EDRAM_TILE_HEIGHT_SAMPLES;
@@ -118,12 +118,16 @@ struct PendingCopy {
     words_per_pixel: usize,
 }
 
-/// A GPU copy of guest physical memory split into equal buffers (`buffers[i]` holds physical
-/// bytes `i * buffer_bytes ..`), bound as storage. Resolves into it complete without a readback;
-/// guest memory itself is not updated.
+/// A GPU copy of guest physical memory: blocks of `block_bytes` in slots, `chunk_bytes` of slots
+/// per buffer of `chunks` (at most four; both sizes powers of two), located through `table` (per
+/// block of physical memory, a u32 slot + 1, or 0 when the block isn't mirrored). Resolves into
+/// it complete without a readback; guest memory itself is not updated. The destination's blocks
+/// must be mirrored (writes elsewhere are dropped).
 pub struct SharedMemoryTarget<'a> {
-    pub buffers: &'a [Buffer],
-    pub buffer_bytes: u64,
+    pub chunks: &'a [Buffer],
+    pub table: &'a Buffer,
+    pub block_bytes: u32,
+    pub chunk_bytes: u32,
 }
 
 enum CopyOutput {
@@ -347,7 +351,11 @@ impl Pipelines {
                 &[
                     uniform_entry(ShaderStage::Compute),
                     storage(1, BufferBindingType::ReadOnlyStorage),
-                    storage(2, BufferBindingType::Storage),
+                    storage(2, BufferBindingType::ReadOnlyStorage),
+                    storage(3, BufferBindingType::Storage),
+                    storage(4, BufferBindingType::Storage),
+                    storage(5, BufferBindingType::Storage),
+                    storage(6, BufferBindingType::Storage),
                 ],
             );
             let pl = device.create_pipeline_layout("edram store", &[&bgl]);
@@ -676,18 +684,7 @@ impl EdramCache {
         } else {
             (attachment.clone(), None)
         };
-        let rt = HostRt {
-            key,
-            texture,
-            attachment,
-            read,
-            stencil,
-            format,
-            samples,
-            width,
-            height,
-            idle_frames: 0,
-        };
+        let rt = HostRt { key, texture, attachment, read, stencil, format, samples, width, height, idle_frames: 0 };
         match self.rts.insert(key, rt) {
             None => log::debug!("edram: new {width}x{height}x{samples} {format:?} render target for {key:?}"),
             Some(old) => {
@@ -1362,16 +1359,8 @@ impl EdramCache {
             extent_len: info.copy_dest_extent_length,
             block_1111: is_1111,
         };
-        // The destination's buffer, if it fits in one.
-        let store_target = shared.and_then(|t| {
-            let start = u64::from(layout.extent_start & 0x1FFF_FFFF);
-            let end = start + u64::from(layout.extent_len);
-            let index = start / t.buffer_bytes;
-            (layout.extent_len != 0 && (end - 1) / t.buffer_bytes == index)
-                .then(|| t.buffers.get(index as usize).map(|b| (b.clone(), (index * t.buffer_bytes) as u32)))
-                .flatten()
-        });
-        let store = store_target.map(|(buffer, buffer_base)| {
+        let store_target = shared.filter(|t| layout.extent_len != 0 && t.chunks.len() == STORE_DST_BUFFERS as usize);
+        let store = store_target.map(|target| {
             let params = uniform(
                 &self.params,
                 device,
@@ -1389,7 +1378,7 @@ impl EdramCache {
                     info.rect.height,
                     plan.words_per_pixel,
                     is_1111 as u32,
-                    buffer_base,
+                    (target.block_bytes / 4).ilog2() | ((target.chunk_bytes / 4).ilog2() << 8),
                     layout.extent_start & 0x1FFF_FFFF,
                     layout.extent_len,
                 ],
@@ -1403,7 +1392,11 @@ impl EdramCache {
                 &[
                     BindGroupEntry { binding: 0, resource: params.binding() },
                     BindGroupEntry { binding: 1, resource: whole(&out) },
-                    BindGroupEntry { binding: 2, resource: whole(&buffer) },
+                    BindGroupEntry { binding: 2, resource: whole(target.table) },
+                    BindGroupEntry { binding: 3, resource: whole(&target.chunks[0]) },
+                    BindGroupEntry { binding: 4, resource: whole(&target.chunks[1]) },
+                    BindGroupEntry { binding: 5, resource: whole(&target.chunks[2]) },
+                    BindGroupEntry { binding: 6, resource: whole(&target.chunks[3]) },
                 ],
             );
             let (gx, gy) =

@@ -833,8 +833,9 @@ impl GpuSource for WholeMemory {
     fn sync(&mut self, _ranges: &[xenos_texture::GuestRange]) -> bool {
         true
     }
-    fn buffers(&self) -> (&[Buffer], u64) {
-        (&self.buffers, MEMORY_SIZE as u64)
+    fn gather(&self, encoder: &mut CommandEncoder, address: u32, len: u32, dst: &Buffer, dst_offset: u64) -> bool {
+        encoder.copy_buffer_to_buffer(&self.buffers[0], u64::from(address), dst, dst_offset, u64::from(len));
+        true
     }
 }
 
@@ -924,7 +925,11 @@ fn gpu_loads_match_cpu_loads() {
         volume.depth = 4;
         write_level(&mut mem, &volume, 0, |x, y, s| block_bytes(GuestFormat::k_8_8_8_8, 4, x, y, s));
 
-        let shared = device.create_buffer_init("guest memory", BufferUsage::Storage | BufferUsage::CopyDst, &mem);
+        let shared = device.create_buffer_init(
+            "guest memory",
+            BufferUsage::Storage | BufferUsage::CopyDst | BufferUsage::CopySrc,
+            &mem,
+        );
         let mut source = WholeMemory { buffers: vec![shared] };
         let cpu_only = CacheConfig { gpu_conversion: false, ..CacheConfig::default() };
         let mut cpu_cache = TextureCache::with_config(device, host_caps(device), cpu_only);

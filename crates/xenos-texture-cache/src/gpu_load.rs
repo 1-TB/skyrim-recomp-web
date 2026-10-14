@@ -11,7 +11,7 @@ use xenos_texture::host::{Conversion, HostMapping};
 use xenos_texture::layout::packed_mip_offset;
 use xenos_texture::{DataDimension, Endian, GuestMemory, GuestRange, TextureFetchConstant, TextureGuestInfo};
 
-/// Guest physical memory mirrored on the GPU, as split buffers.
+/// Guest physical memory mirrored on the GPU.
 pub trait GpuSource {
     /// Whether the GPU copy is the up-to-date version of all of `ranges` (and guest memory may
     /// be stale there), so the texture must be loaded from it.
@@ -20,8 +20,10 @@ pub trait GpuSource {
     /// loaded from it (only what changed since it was last brought up to date is uploaded,
     /// rather than the whole texture). `false` if that isn't possible right now.
     fn sync(&mut self, ranges: &[GuestRange]) -> bool;
-    /// The buffers (`buffers[i]` holds physical bytes `i * buffer_bytes ..`) and their size.
-    fn buffers(&self) -> (&[Buffer], u64);
+    /// Encodes copies of physical bytes `[address, address + len)` (both multiples of 4) of the
+    /// GPU copy into `dst` at `dst_offset`. `false` (with nothing encoded) if part of the range
+    /// isn't mirrored.
+    fn gather(&self, encoder: &mut CommandEncoder, address: u32, len: u32, dst: &Buffer, dst_offset: u64) -> bool;
 }
 
 /// Row alignment of `copy_buffer_to_texture`.
@@ -171,6 +173,18 @@ pub(crate) fn plan(
     (!levels.is_empty()).then_some(Plan { levels, out_bytes, host_bytes })
 }
 
+/// Where each level's raw bytes go in the upload buffer (256-byte aligned offsets, with room for
+/// the level rounded out to whole dwords at both ends), and the bytes needed in all.
+fn upload_offsets(plan: &Plan) -> (Vec<u64>, u64) {
+    let mut offsets = Vec::with_capacity(plan.levels.len());
+    let mut total = 0u64;
+    for level in &plan.levels {
+        offsets.push(total);
+        total = (total + u64::from(level.source.1).next_multiple_of(4).max(4) + 4).next_multiple_of(256);
+    }
+    (offsets, total)
+}
+
 /// Parameter slots (one per level, `PARAMS_STRIDE` bytes apart) in the loader's uniform buffer.
 const PARAM_SLOTS: usize = 32;
 /// Uniform binding offsets must be multiples of 256.
@@ -240,20 +254,29 @@ impl GpuLoader {
         })
     }
 
-    /// Fills `texture` from the GPU copy of guest memory and submits the work. Returns `false`
-    /// (nothing done) if a level's data spans two of the source's buffers.
+    /// Fills `texture` from the GPU copy of guest memory and submits the work: each level's raw
+    /// bytes are gathered (copied on the GPU) into the upload buffer and converted there. Returns
+    /// `false` (nothing done) if part of the data isn't mirrored.
     pub(crate) fn encode(&mut self, device: &Device, source: &dyn GpuSource, plan: &Plan, texture: &Texture) -> bool {
-        let (buffers, buffer_bytes) = source.buffers();
-        let mut sources = Vec::new();
-        for level in &plan.levels {
-            let (start, len) = (u64::from(level.source.0), u64::from(level.source.1.max(1)));
-            let index = start / buffer_bytes;
-            if (start + len - 1) / buffer_bytes != index || index as usize >= buffers.len() {
+        let (offsets, total) = upload_offsets(plan);
+        if ensure(&mut self.upload, device, "texture upload", BufferUsage::Storage | BufferUsage::CopyDst, total) {
+            self.groups.clear();
+        }
+        let upload = self.upload.clone().expect("ensured above");
+        let mut encoder = device.create_command_encoder("texture gpu load");
+        let mut sources = Vec::with_capacity(plan.levels.len());
+        for (level, &offset) in plan.levels.iter().zip(&offsets) {
+            let (address, len) = level.source;
+            // Rounded out to whole dwords; the extra bytes are never read as texels.
+            let start = address & !3;
+            let end = (u64::from(address) + u64::from(len.max(1))).next_multiple_of(4);
+            if !source.gather(&mut encoder, start, (end - u64::from(start)) as u32, &upload, offset) {
                 return false;
             }
-            sources.push((buffers[index as usize].clone(), (index * buffer_bytes) as u32));
+            sources.push((upload.clone(), start.wrapping_sub(offset as u32)));
         }
-        self.dispatch(device, &sources, plan, texture);
+        // The conversion follows the copies in the same command buffer.
+        self.dispatch(device, encoder, &sources, plan, texture);
         true
     }
 
@@ -266,13 +289,7 @@ impl GpuLoader {
         plan: &Plan,
         texture: &Texture,
     ) -> u64 {
-        // Levels at 256-byte aligned offsets of the upload buffer.
-        let mut offsets = Vec::with_capacity(plan.levels.len());
-        let mut total = 0u64;
-        for level in &plan.levels {
-            offsets.push(total);
-            total = (total + u64::from(level.source.1).next_multiple_of(4).max(4)).next_multiple_of(256);
-        }
+        let (offsets, total) = upload_offsets(plan);
         if ensure(&mut self.upload, device, "texture upload", BufferUsage::Storage | BufferUsage::CopyDst, total) {
             self.groups.clear();
         }
@@ -295,13 +312,20 @@ impl GpuLoader {
                 (upload.clone(), address.wrapping_sub(offset as u32))
             })
             .collect();
-        self.dispatch(device, &sources, plan, texture);
+        self.dispatch(device, device.create_command_encoder("texture gpu load"), &sources, plan, texture);
         uploaded
     }
 
     /// Converts each level from its source buffer (holding guest bytes from address `base` on)
-    /// into `texture`, and submits.
-    fn dispatch(&mut self, device: &Device, sources: &[(Buffer, u32)], plan: &Plan, texture: &Texture) {
+    /// into `texture`, recording into `encoder` (after anything already in it), and submits.
+    fn dispatch(
+        &mut self,
+        device: &Device,
+        mut encoder: CommandEncoder,
+        sources: &[(Buffer, u32)],
+        plan: &Plan,
+        texture: &Texture,
+    ) {
         assert!(plan.levels.len() <= PARAM_SLOTS, "more levels than parameter slots");
         let mut replaced = ensure(
             &mut self.out,
@@ -324,7 +348,6 @@ impl GpuLoader {
         // Host texels narrower than a dword share dwords between invocations.
         let atomic = plan.levels.first().is_some_and(|l| l.params[19] < 4);
         let (bgl, pipeline) = self.pipeline(device, atomic).clone();
-        let mut encoder = device.create_command_encoder("texture gpu load");
         let mut groups = Vec::with_capacity(plan.levels.len());
         for (slot, (level, (buffer, base))) in plan.levels.iter().zip(sources).enumerate() {
             let mut words = level.params;

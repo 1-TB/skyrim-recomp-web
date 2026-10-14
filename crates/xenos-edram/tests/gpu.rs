@@ -1175,22 +1175,38 @@ fn shared_memory_store_matches_readback() {
     let gpu = gpu();
     let device = &gpu.device;
     let mut cache = EdramCache::new(device);
-    // Two 16 MiB buffers standing in for guest memory; DEST is in the second.
-    const PART: u64 = (MEM_SIZE / 2) as u64;
+    // Guest memory mirrored in 64 KiB blocks, block n in slot n except that the two halves are
+    // swapped, so the table is really consulted.
+    const BLOCK: u32 = 64 << 10;
+    let blocks = MEM_SIZE as u32 / BLOCK;
+    let slot_of = |b: u32| (b + blocks / 2) % blocks;
     let initial = Mem::new().snapshot();
-    let buffers: Vec<Buffer> = (0..2)
-        .map(|i| {
-            device.create_buffer_init(
-                "shared",
-                BufferUsage::Storage | BufferUsage::CopySrc | BufferUsage::CopyDst,
-                &initial[i * PART as usize..(i + 1) * PART as usize],
-            )
+    let mut mirrored = vec![0u8; MEM_SIZE];
+    for b in 0..blocks {
+        let (from, to) = ((b * BLOCK) as usize, (slot_of(b) * BLOCK) as usize);
+        mirrored[to..to + BLOCK as usize].copy_from_slice(&initial[from..from + BLOCK as usize]);
+    }
+    // The slots in four buffers.
+    const CHUNK: usize = MEM_SIZE / 4;
+    let chunks: Vec<Buffer> = mirrored
+        .chunks(CHUNK)
+        .map(|c| {
+            device.create_buffer_init("shared", BufferUsage::Storage | BufferUsage::CopySrc | BufferUsage::CopyDst, c)
         })
         .collect();
-    let target = SharedMemoryTarget { buffers: &buffers, buffer_bytes: PART };
+    let table: Vec<u8> = (0..blocks).flat_map(|b| (slot_of(b) + 1).to_le_bytes()).collect();
+    let table = device.create_buffer_init("shared table", BufferUsage::Storage, &table);
+    let target = SharedMemoryTarget { chunks: &chunks, table: &table, block_bytes: BLOCK, chunk_bytes: CHUNK as u32 };
+    // Reads guest bytes [start, start + len) back from the mirror.
+    let read_guest = |start: u32, len: u32| -> Vec<u8> {
+        let all: Vec<u8> = chunks.iter().flat_map(|c| read_buffer(&gpu, c, 0, CHUNK as u64)).collect();
+        (start..start + len).map(|a| all[(slot_of(a / BLOCK) * BLOCK + a % BLOCK) as usize]).collect()
+    };
 
     let check = |cache: &mut EdramCache, info: ResolveInfo, what: &str| {
-        device.queue().write_buffer(&buffers[1], 0, &initial[PART as usize..]);
+        for (c, data) in chunks.iter().zip(mirrored.chunks(CHUNK)) {
+            device.queue().write_buffer(c, 0, data);
+        }
         let mem = Mem::new();
         run(&gpu, cache, &info, &mem);
         let pending = cache.begin_resolve_to(device, &info, Some(&target)).expect("begin");
@@ -1199,7 +1215,7 @@ fn shared_memory_store_matches_readback() {
         let result = cache.poll_resolve(device, &mut pending, &mem).expect("done").expect("ok");
         let (start, len) = result.written.expect("written range");
         assert_eq!((start, len), (info.copy_dest_extent_start, info.copy_dest_extent_length), "{what}");
-        let got = read_buffer(&gpu, &buffers[1], u64::from(start) - PART, u64::from(len));
+        let got = read_guest(start, len);
         let want = &mem.snapshot()[start as usize..(start + len) as usize];
         let diffs: Vec<String> = (0..len as usize)
             .filter(|&i| got[i] != want[i])

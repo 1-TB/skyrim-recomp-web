@@ -34,6 +34,7 @@ pub use xenos_shader::ShaderStage;
 
 pub use queue::RendererHandle;
 pub use renderer::{TargetsFactory, wanted_features};
+pub use shared_memory::MirrorStats;
 
 /// Guest physical memory, shared with the emulated CPU.
 pub trait PhysicalMemory: Send + Sync {

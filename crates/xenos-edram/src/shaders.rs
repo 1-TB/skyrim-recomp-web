@@ -787,9 +787,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 /// Writes resolve output (linear words from the resolve shader) to the tiled destination in a
 /// GPU copy of guest memory, with the destination endian swap — the GPU counterpart of
-/// `DestLayout::write`. Parameters (16 u32): base, pitch_aligned, height_aligned, is_3d, slice,
-/// offset_x, offset_y, bytes_per_element, endian (Endian128), width, height, words_per_pixel,
-/// block_1111, buffer_base (guest address of `dst[0]`), extent_start, extent_len.
+/// `DestLayout::write`. The copy is a set of blocks in slots of the `dst_N` buffers, located
+/// through `table` (per block, its slot + 1; 0 for blocks that aren't mirrored, whose writes are
+/// dropped). Parameters (16 u32): base, pitch_aligned, height_aligned, is_3d, slice, offset_x,
+/// offset_y, bytes_per_element, endian (Endian128), width, height, words_per_pixel, block_1111,
+/// log2 of the dwords per block | log2 of the dwords per `dst_N` buffer << 8, extent_start,
+/// extent_len.
 pub(crate) fn store_module(atomic: bool) -> String {
     shader_variant(STORE, atomic)
 }
@@ -798,13 +801,30 @@ const STORE: &str = r#"
 struct Params { v: array<vec4<u32>, 4> }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> src: array<u32>;
-@group(0) @binding(2) var<storage, read_write> dst: DST_TYPE;
+@group(0) @binding(2) var<storage, read> table: array<u32>;
+DST_DECLS
+fn prm(i: u32) -> u32 { return params.v[i >> 2u][i & 3u]; }
 
-fn store_word(i: u32, v: u32) {
-    STORE_WORD
+// Where physical dword `i` is in the `dst_N` buffers as a whole, or 0xFFFFFFFF if its block
+// isn't mirrored.
+fn slot_word(i: u32) -> u32 {
+    let shift = prm(13u) & 0xFFu;
+    let block = i >> shift;
+    if (block >= arrayLength(&table)) { return 0xFFFFFFFFu; }
+    let slot = table[block];
+    if (slot == 0u) { return 0xFFFFFFFFu; }
+    return ((slot - 1u) << shift) | (i & ((1u << shift) - 1u));
 }
 
-fn prm(i: u32) -> u32 { return params.v[i >> 2u][i & 3u]; }
+fn store_word(i: u32, v: u32) {
+    let j = slot_word(i);
+    if (j == 0xFFFFFFFFu) { return; }
+    let chunk_shift = prm(13u) >> 8u;
+    let k = j & ((1u << chunk_shift) - 1u);
+    switch (j >> chunk_shift) {
+STORE_CASES        default: {}
+    }
+}
 
 fn tiled_combine(oib: i32, bank: u32, pipe: u32, y_lsb: u32) -> i32 {
     return i32((y_lsb << 4u) | (pipe << 6u) | (bank << 11u)) | (oib & 15) | (((oib >> 4u) & 1) << 5u)
@@ -844,9 +864,14 @@ fn swap32(w: u32, endian: u32) -> u32 {
 }
 
 fn put_bits(byte_addr: u32, value: u32, mask: u32) {
-    let i = byte_addr >> 2u;
+    let j = slot_word(byte_addr >> 2u);
+    if (j == 0xFFFFFFFFu) { return; }
     let shift = (byte_addr & 3u) * 8u;
-    PUT_BITS
+    let chunk_shift = prm(13u) >> 8u;
+    let k = j & ((1u << chunk_shift) - 1u);
+    switch (j >> chunk_shift) {
+PUT_CASES        default: {}
+    }
 }
 
 @compute @workgroup_size(8, 8)
@@ -893,7 +918,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let address = i32(prm(0u)) + rel;
     let offset = address - i32(prm(14u));
     if (offset < 0 || u32(offset) + bpe > prm(15u)) { return; }
-    let a = u32(address) - prm(13u);
+    let a = u32(address);
     switch bpe {
         case 1u: { put_bits(a, w[0], 0xFFu); }
         case 2u: {
@@ -922,17 +947,31 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
+/// Destination buffers of the store shader (bindings 3.., after the table).
+pub(crate) const STORE_DST_BUFFERS: u32 = 4;
+
 /// The shader with plain stores (`atomic == false`: every write is a whole aligned dword) or
 /// with atomics (8/16-bit elements share dwords with neighbours written by other invocations).
 fn shader_variant(source: &str, atomic: bool) -> String {
-    let (ty, store, put) = if atomic {
-        (
-            "array<atomic<u32>>",
-            "atomicStore(&dst[i], v);",
-            "atomicAnd(&dst[i], ~(mask << shift));\n    atomicOr(&dst[i], (value & mask) << shift);",
-        )
-    } else {
-        ("array<u32>", "dst[i] = v;", "dst[i] = (dst[i] & ~(mask << shift)) | ((value & mask) << shift);")
-    };
-    source.replace("DST_TYPE", ty).replace("STORE_WORD", store).replace("PUT_BITS", put)
+    let ty = if atomic { "array<atomic<u32>>" } else { "array<u32>" };
+    let mut decls = String::new();
+    let mut stores = String::new();
+    let mut puts = String::new();
+    for n in 0..STORE_DST_BUFFERS {
+        decls += &format!("@group(0) @binding({}) var<storage, read_write> dst_{n}: {ty};\n", 3 + n);
+        let (store, put) = if atomic {
+            (
+                format!("atomicStore(&dst_{n}[k], v);"),
+                format!("atomicAnd(&dst_{n}[k], ~(mask << shift)); atomicOr(&dst_{n}[k], (value & mask) << shift);"),
+            )
+        } else {
+            (
+                format!("dst_{n}[k] = v;"),
+                format!("dst_{n}[k] = (dst_{n}[k] & ~(mask << shift)) | ((value & mask) << shift);"),
+            )
+        };
+        stores += &format!("        case {n}u: {{ {store} }}\n");
+        puts += &format!("        case {n}u: {{ {put} }}\n");
+    }
+    source.replace("DST_DECLS", &decls).replace("STORE_CASES", &stores).replace("PUT_CASES", &puts)
 }

@@ -43,6 +43,20 @@ impl Ring {
         Some(offset)
     }
 
+    /// Room for `len` bytes that commands of the submission write, in a ring nothing is pushed
+    /// to (pushed data would be uploaded over it); returns its offset, or `None` if the ring is
+    /// full.
+    pub fn reserve(&mut self, len: u64) -> Option<u64> {
+        debug_assert!(self.staged.is_empty(), "reserve in a ring with pushed data");
+        let offset = self.cursor.next_multiple_of(self.alignment);
+        let end = offset + len.next_multiple_of(4);
+        if end > self.size {
+            return None;
+        }
+        self.cursor = end;
+        Some(offset)
+    }
+
     /// Like [`Ring::push`], for data bound with a fixed `window` size (≥ the data): the window
     /// must fit in the buffer too. What follows the data in the window is whatever later pushes
     /// store there.

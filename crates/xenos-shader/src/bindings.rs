@@ -7,7 +7,8 @@
 //! | 0 | 2 | `var<uniform> xe_fetch: XeFetchConstants` — 192 raw fetch constant dwords (registers 0x4800..0x48BF) |
 //! | 0 | 3 | `var<uniform> xe_system: XeSystemConstants` — [`SystemConstants`] |
 //! | 0 | 4 | pixel shaders: `var<storage, read> xe_float_constants: array<vec4<f32>, 256>` — c0..c255 |
-//! | 1 | 0..3 | `var<storage, read> xe_shared_memory_N: array<u32>` — guest physical memory in [`SHARED_MEMORY_BUFFERS`] buffers of [`SHARED_MEMORY_BUFFER_BYTES`] (WebGPU's default storage binding limit); dword `i` (bytes `4i..4i+3` as stored) is read with `xe_shared_load(i)` |
+//! | 1 | 0..3 | `var<storage, read> xe_shared_memory_N: array<u32>` — the mirrored blocks of guest physical memory: slots of [`SHARED_MEMORY_BLOCK_BYTES`], [`SHARED_MEMORY_CHUNK_BYTES`] of them per buffer ([`SHARED_MEMORY_CHUNKS`] buffers) |
+//! | 1 | 4 | `var<storage, read> xe_shared_table: array<u32>` — per block of physical memory, its slot + 1 (0: not mirrored, reads as zero); dword `i` (bytes `4i..4i+3` as stored) is read with `xe_shared_load(i)` |
 //! | 2 | n | textures and samplers of the texture fetches, see [`crate::TextureBinding`] |
 
 pub const FLOAT_CONSTANTS_GROUP: u32 = 0;
@@ -22,12 +23,18 @@ pub const FETCH_CONSTANTS_BINDING: u32 = 2;
 pub const SYSTEM_CONSTANTS_GROUP: u32 = 0;
 pub const SYSTEM_CONSTANTS_BINDING: u32 = 3;
 pub const SHARED_MEMORY_GROUP: u32 = 1;
-/// Binding of the first shared memory buffer; the others follow.
+/// Binding of the first buffer of mirrored blocks of guest physical memory; the others follow.
 pub const SHARED_MEMORY_BINDING: u32 = 0;
-/// Number of buffers guest physical memory (512 MiB) is split into.
-pub const SHARED_MEMORY_BUFFERS: u32 = 4;
-/// Bytes of guest physical memory per shared memory buffer.
-pub const SHARED_MEMORY_BUFFER_BYTES: u64 = 128 << 20;
+/// Buffers of mirrored blocks.
+pub const SHARED_MEMORY_CHUNKS: u32 = 4;
+/// Bytes (slots) per buffer of mirrored blocks.
+pub const SHARED_MEMORY_CHUNK_BYTES: u32 = 32 << 20;
+/// Binding of the block -> slot table.
+pub const SHARED_MEMORY_TABLE_BINDING: u32 = SHARED_MEMORY_BINDING + SHARED_MEMORY_CHUNKS;
+/// Guest physical memory is mirrored in blocks of this size, each in any slot.
+pub const SHARED_MEMORY_BLOCK_BYTES: u32 = 64 << 10;
+/// Blocks of guest physical memory (512 MiB): entries of the slot table.
+pub const SHARED_MEMORY_BLOCKS: u32 = (512 << 20) / SHARED_MEMORY_BLOCK_BYTES;
 pub const TEXTURE_GROUP: u32 = 2;
 
 /// Number of vec4 float constants of a shader stage.
@@ -222,24 +229,34 @@ struct XeFetchConstants {{
 @group({FETCH_CONSTANTS_GROUP}) @binding({FETCH_CONSTANTS_BINDING}) var<uniform> xe_fetch: XeFetchConstants;
 @group({SYSTEM_CONSTANTS_GROUP}) @binding({SYSTEM_CONSTANTS_BINDING}) var<uniform> xe_system: XeSystemConstants;
 {shared}
-// Dword `i` of guest physical memory (zero past what is mirrored).
+// Dword `i` of guest physical memory (zero where it isn't mirrored).
 fn xe_shared_load(i: u32) -> u32 {{
-    let o = i & {mask:#X}u;
-    switch (i >> {shift}u) {{
+    let block = i >> {shift}u;
+    if (block >= {blocks}u) {{ return 0u; }}
+    let slot = xe_shared_table[block];
+    if (slot == 0u) {{ return 0u; }}
+    let o = (((slot - 1u) << {shift}u) & {chunk_mask:#X}u) | (i & {mask:#X}u);
+    switch ((slot - 1u) >> {chunk_shift}u) {{
 {cases}        default: {{}}
     }}
     return 0u;
 }}
 ",
-        shared = (0..SHARED_MEMORY_BUFFERS)
+        shared = (0..SHARED_MEMORY_CHUNKS)
             .map(|n| format!(
                 "@group({SHARED_MEMORY_GROUP}) @binding({}) var<storage, read> xe_shared_memory_{n}: array<u32>;\n",
                 SHARED_MEMORY_BINDING + n
             ))
+            .chain(std::iter::once(format!(
+                "@group({SHARED_MEMORY_GROUP}) @binding({SHARED_MEMORY_TABLE_BINDING}) var<storage, read> xe_shared_table: array<u32>;\n"
+            )))
             .collect::<String>(),
-        mask = (SHARED_MEMORY_BUFFER_BYTES / 4) - 1,
-        shift = (SHARED_MEMORY_BUFFER_BYTES / 4).ilog2(),
-        cases = (0..SHARED_MEMORY_BUFFERS)
+        shift = (SHARED_MEMORY_BLOCK_BYTES / 4).ilog2(),
+        mask = SHARED_MEMORY_BLOCK_BYTES / 4 - 1,
+        chunk_mask = SHARED_MEMORY_CHUNK_BYTES / 4 - 1,
+        chunk_shift = (SHARED_MEMORY_CHUNK_BYTES / SHARED_MEMORY_BLOCK_BYTES).ilog2(),
+        blocks = SHARED_MEMORY_BLOCKS,
+        cases = (0..SHARED_MEMORY_CHUNKS)
             .map(|n| format!(
                 "        case {n}u: {{ if (o < arrayLength(&xe_shared_memory_{n})) {{ return xe_shared_memory_{n}[o]; }} }}\n"
             ))

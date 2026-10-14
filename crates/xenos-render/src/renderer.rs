@@ -152,10 +152,11 @@ impl Renderer {
                     let size = self.presenter.swap(&self.device, front);
                     if self.presenter.frames == 1 || self.presenter.frames.is_multiple_of(300) {
                         log::info!(
-                            "renderer: frame {}: {:?}; textures {:?}",
+                            "renderer: frame {}: {:?}; textures {:?}; shared memory {:?}",
                             self.presenter.frames,
                             self.executor.stats,
-                            self.executor.texture_stats()
+                            self.executor.texture_stats(),
+                            self.executor.mirror_stats()
                         );
                         let calls = gpu_webgpu::counters::snapshot();
                         let frames = self.presenter.frames - self.calls_at.0;

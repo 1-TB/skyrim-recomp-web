@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use gpu_webgpu::*;
 use rustc_hash::FxHashMap;
-use xenos_shader::bindings::SHARED_MEMORY_BUFFER_BYTES;
 use xenos_shader::bindings::{self, SystemConstants, compare_function, flags};
+use xenos_shader::bindings::{SHARED_MEMORY_BLOCK_BYTES, SHARED_MEMORY_CHUNK_BYTES};
 use xenos_shader::{
     ShaderStage as Stage, TextureBinding, TextureBindingDimension, TranslationOptions, VertexExpansion,
 };
@@ -36,9 +36,9 @@ use xenos_state::viewport::{
 use xenos_state::xenos::{self, EdramMode, SourceSelect};
 use xenos_texture_cache::{GpuSource, TextureCache};
 
+use crate::float_patch::FloatPatcher;
 use crate::present::FrontBuffer;
 use crate::registers::{ActiveShaders, RegisterFile, dirty};
-use crate::float_patch::FloatPatcher;
 use crate::ring::Ring;
 use crate::shaders::{CachedShader, ShaderCache};
 use crate::shared_memory::SharedMemory;
@@ -69,14 +69,13 @@ impl GpuSource for SharedSource<'_> {
     }
 
     fn sync(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
-        // Pages the device can't bind wouldn't be mirrored; a page that changed after a recorded
-        // draw read it can't be updated before that draw is submitted.
-        self.shared.part() == SHARED_MEMORY_BUFFER_BYTES
-            && ranges.iter().all(|r| self.shared.sync(self.device, self.memory, r.address, r.length).is_ok())
+        // A page that changed after a recorded draw read it can't be updated before that draw
+        // is submitted.
+        ranges.iter().all(|r| self.shared.sync(self.device, self.memory, r.address, r.length).is_ok())
     }
 
-    fn buffers(&self) -> (&[Buffer], u64) {
-        (&self.shared.buffers, SHARED_MEMORY_BUFFER_BYTES)
+    fn gather(&self, encoder: &mut CommandEncoder, address: u32, len: u32, dst: &Buffer, dst_offset: u64) -> bool {
+        self.shared.gather(encoder, address, len, dst, dst_offset)
     }
 }
 
@@ -196,17 +195,26 @@ const MAX_TEXTURE_SETS: usize = 4096;
 enum DrawIndices {
     /// Converted on the CPU and stored in the index ring.
     Ring { format: IndexFormat, offset: u64 },
+    /// The guest index buffer, copied on the GPU from shared memory to the gathered index ring.
+    Gathered { format: IndexFormat, offset: u64 },
     /// The guest index buffer itself, in shared memory buffer `buffer`.
     Shared { buffer: usize, format: IndexFormat, offset: u64 },
 }
 
+/// The dword-aligned physical range holding `ib`'s indices (start, length): what is copied to
+/// the index ring when they can't be bound where they're mirrored.
+fn gathered_index_range(ib: &IndexBufferInfo) -> (u32, u64) {
+    let start = ib.guest_base & !3;
+    (start, (u64::from(ib.guest_base) + u64::from(ib.size_bytes())).next_multiple_of(4) - u64::from(start))
+}
+
 /// Whether the draw can read its guest index buffer straight from shared memory (like Xenia's
 /// renderers do), with the vertex shader applying the endian swap to each index: lists and strips
-/// whose index buffer lies in one shared memory buffer. Strips restart at the host's 0xFFFF /
-/// 0xFFFFFFFF, which are the same before and after the swap, so their guest reset index must be
-/// that (or reset be off: a guest index of all ones is then taken as a restart, which titles don't
-/// rely on). Returns the buffer and the offset in it.
-fn direct_index_buffer(desc: &DrawDescription, part: u64) -> Option<(IndexBufferInfo, usize, u64)> {
+/// (whose index buffer must then also be mirrored in consecutive slots). Strips restart at the
+/// host's 0xFFFF / 0xFFFFFFFF, which are the same before and after the swap, so their guest reset
+/// index must be that (or reset be off: a guest index of all ones is then taken as a restart,
+/// which titles don't rely on).
+fn direct_index_buffer(desc: &DrawDescription) -> Option<IndexBufferInfo> {
     use xenos::PrimitiveType as P;
     let ib = desc.index_buffer?;
     if desc.tessellation.is_some() || ib.count == 0 {
@@ -226,15 +234,7 @@ fn direct_index_buffer(desc: &DrawDescription, part: u64) -> Option<(IndexBuffer
             return None;
         }
     }
-    let start = u64::from(ib.guest_base);
-    let end = start + u64::from(ib.size_bytes());
-    let buffer = start / SHARED_MEMORY_BUFFER_BYTES;
-    let offset = start % SHARED_MEMORY_BUFFER_BYTES;
-    ((end - 1) / SHARED_MEMORY_BUFFER_BYTES == buffer && offset + u64::from(ib.size_bytes()) <= part).then_some((
-        ib,
-        buffer as usize,
-        offset,
-    ))
+    Some(ib)
 }
 
 struct Pass {
@@ -314,6 +314,9 @@ pub struct Executor {
     shared: SharedMemory,
     constants: Ring,
     indices: Ring,
+    /// Guest index buffers copied out of shared memory where they aren't in consecutive slots
+    /// (written by commands only).
+    gathered_indices: Ring,
     constants_group: BindGroup,
     /// Float constant blocks, built on the GPU from per-draw patches.
     floats: FloatPatcher,
@@ -375,15 +378,17 @@ pub struct ExecutorStats {
     pub memory_upload_bytes: u64,
 }
 
-/// The bind group of the shared memory buffers (recreated when one is created lazily).
+/// The bind group of the shared memory slot buffers and table (recreated when a slot buffer is
+/// created).
 fn shared_memory_group(device: &Device, layout: &BindGroupLayout, shared: &SharedMemory) -> BindGroup {
     device.create_bind_group(
         "xenos shared memory",
         layout,
         &shared
-            .buffers
+            .chunks
             .iter()
             .zip(bindings::SHARED_MEMORY_BINDING..)
+            .chain(std::iter::once((&shared.table, bindings::SHARED_MEMORY_TABLE_BINDING)))
             .map(|(buffer, binding)| BindGroupEntry {
                 binding,
                 resource: BindingResource::Buffer { buffer, offset: 0, size: None },
@@ -497,6 +502,7 @@ impl Executor {
             alignment,
         );
         let indices = Ring::new(device, "xenos indices", INDEX_RING_SIZE, BufferUsage::Index, 4);
+        let gathered_indices = Ring::new(device, "xenos gathered indices", INDEX_RING_SIZE, BufferUsage::Index, 4);
         let shared = SharedMemory::new(device);
         let both = ShaderStage::Vertex | ShaderStage::Fragment;
         let constants_layout = device.create_bind_group_layout(
@@ -537,7 +543,7 @@ impl Executor {
         );
         let shared_layout = device.create_bind_group_layout(
             "xenos shared memory",
-            &(0..bindings::SHARED_MEMORY_BUFFERS)
+            &(0..=bindings::SHARED_MEMORY_CHUNKS)
                 .map(|n| BindGroupLayoutEntry {
                     binding: bindings::SHARED_MEMORY_BINDING + n,
                     visibility: both,
@@ -563,6 +569,7 @@ impl Executor {
             shared,
             constants,
             indices,
+            gathered_indices,
             constants_group,
             floats,
             shared_generation: 0,
@@ -637,6 +644,10 @@ impl Executor {
         })
     }
 
+    pub fn mirror_stats(&self) -> crate::shared_memory::MirrorStats {
+        self.shared.stats()
+    }
+
     pub fn texture_stats(&self) -> xenos_texture_cache::CacheStats {
         self.textures.stats()
     }
@@ -689,6 +700,7 @@ impl Executor {
         self.forget_texture_sets();
         self.textures.destroy_retired();
         self.targets.end_frame();
+        self.shared.end_frame();
         self.frames_in_flight.push_back(self.device.queue().on_submitted_work_done());
         self.textures.end_frame();
         let frame = self.frame;
@@ -722,6 +734,7 @@ impl Executor {
         }
         self.constants.rewind();
         self.indices.rewind();
+        self.gathered_indices.rewind();
         self.shared.end_batch();
         // The ring rewound: nothing pushed before can be reused.
         let scratch = std::mem::take(&mut self.constant_cache.scratch);
@@ -745,7 +758,8 @@ impl Executor {
         }
         let shared_group = self.shared_group.clone();
         let index_buffer = self.indices.buffer.clone();
-        let shared_buffers = self.shared.buffers.clone();
+        let gathered_buffer = self.gathered_indices.buffer.clone();
+        let shared_buffers = self.shared.chunks.clone();
         let encoder = self.encoder();
         let colors: Vec<_> = pass.targets.colors[..color_slots(&pass.targets)]
             .iter()
@@ -777,7 +791,8 @@ impl Executor {
         let mut last_scissor = None;
         let mut last_blend = None;
         let mut last_stencil = None;
-        // (shared memory buffer, or usize::MAX for the ring; format)
+        // (shared memory buffer, usize::MAX for the ring or usize::MAX - 1 for the gathered ring;
+        // format)
         let mut last_index_buffer: Option<(usize, IndexFormat)> = None;
         let one_pixel = crate::debug::SCISSOR_ONE_PIXEL.load(std::sync::atomic::Ordering::Relaxed);
         let skip_draws = crate::debug::SKIP_DRAW_CALLS.load(std::sync::atomic::Ordering::Relaxed);
@@ -827,10 +842,15 @@ impl Executor {
                     continue;
                 }
                 Some(DrawIndices::Ring { format, offset, .. }) => (usize::MAX, format, offset),
+                Some(DrawIndices::Gathered { format, offset, .. }) => (usize::MAX - 1, format, offset),
                 Some(DrawIndices::Shared { buffer, format, offset, .. }) => (buffer, format, offset),
             };
             if last_index_buffer != Some((source, format)) {
-                let buffer = if source == usize::MAX { &index_buffer } else { &shared_buffers[source] };
+                let buffer = match source {
+                    usize::MAX => &index_buffer,
+                    s if s == usize::MAX - 1 => &gathered_buffer,
+                    s => &shared_buffers[s],
+                };
                 rp.set_index_buffer(buffer, format, 0, None);
                 last_index_buffer = Some((source, format));
             }
@@ -895,10 +915,15 @@ impl Executor {
             log::info!("trace frame {} resolve after draw {}: {info:?}", self.frame, self.stats.draws);
         }
         let gpu_store = !crate::debug::CPU_RESOLVES.load(std::sync::atomic::Ordering::Relaxed);
-        let shared = (gpu_store && self.shared.part() == SHARED_MEMORY_BUFFER_BYTES).then(|| {
+        let shared = gpu_store.then(|| {
             self.sync_shared(info.copy_dest_extent_start, info.copy_dest_extent_length);
         });
-        let target = SharedMemoryTarget { buffers: &self.shared.buffers, buffer_bytes: SHARED_MEMORY_BUFFER_BYTES };
+        let target = SharedMemoryTarget {
+            chunks: &self.shared.chunks,
+            table: &self.shared.table,
+            block_bytes: SHARED_MEMORY_BLOCK_BYTES,
+            chunk_bytes: SHARED_MEMORY_CHUNK_BYTES,
+        };
         match self.targets.resolve(&self.device, &info, &*memory, shared.map(|()| &target)) {
             ResolveStatus::Pending => self.resolving = true,
             ResolveStatus::Done { written, in_gpu_memory } => self.finish_resolve(written, in_gpu_memory),
@@ -962,7 +987,15 @@ impl Executor {
         }
         let options =
             ConversionOptions { bake_index_params: false, allow_16bit_indices: true, expand_point_sprites: true };
-        let direct = direct_index_buffer(&desc, self.shared.part());
+        // Mirrored first, to see whether it can be bound where it is: in consecutive slots of
+        // one buffer, or else copied (on the GPU) to the index ring.
+        let direct = match direct_index_buffer(&desc) {
+            Some(ib) => {
+                self.sync_shared(ib.guest_base, ib.size_bytes());
+                Some((ib, self.shared.contiguous(ib.guest_base, ib.size_bytes())))
+            }
+            None => None,
+        };
         let host = match direct {
             // Drawn with the guest indices as they are: only the topology is needed.
             Some((ib, ..)) => convert_primitive(
@@ -978,7 +1011,7 @@ impl Executor {
         if host.vertex_count == 0 {
             return Err(Skip::Silent);
         }
-        let rasterizer = RasterizerState::from_registers(regs, desc.primitive_type, false);
+        let rasterizer = RasterizerState::from_registers(&self.regs, desc.primitive_type, false);
         if rasterizer.cull_all {
             return Err(Skip::Culled);
         }
@@ -1052,13 +1085,8 @@ impl Executor {
             if unclamped.offset[0] + unclamped.extent[0] >= xenos::TEXTURE_2D_MAX_WIDTH_HEIGHT
                 && unclamped.offset[1] + unclamped.extent[1] >= xenos::TEXTURE_2D_MAX_WIDTH_HEIGHT
             {
-                min_height = min_height.min(crate::extent::vertex_max_y(
-                    &desc,
-                    regs,
-                    &viewport_regs,
-                    &vs.shader,
-                    &*self.memory,
-                ));
+                min_height =
+                    min_height.min(crate::extent::vertex_max_y(&desc, regs, &viewport_regs, &vs.shader, &*self.memory));
             }
         }
         let min_height = min_height.max(1);
@@ -1071,13 +1099,18 @@ impl Executor {
             HostIndices::U32(v) => Some((IndexFormat::Uint32, as_bytes(v).to_vec())),
         };
         let index_len = index_bytes.as_ref().map_or(0, |(_, b)| b.len() as u64 + 4);
-        if index_len > INDEX_RING_SIZE {
-            return Err(Skip::Warn(format!("draw with {index_len} bytes of indices skipped")));
+        let gathered_len = match direct {
+            Some((ib, None)) => gathered_index_range(&ib).1 + 4,
+            _ => 0,
+        };
+        if index_len.max(gathered_len) > INDEX_RING_SIZE {
+            return Err(Skip::Warn(format!("draw with {} bytes of indices skipped", index_len.max(gathered_len))));
         }
         // Each float constant binding spans a full stage's constants past its offset.
         let constant_space = BOOL_LOOP_SIZE + FETCH_SIZE + SYSTEM_SIZE + 3 * 256;
         if self.constants.remaining() < constant_space
             || self.indices.remaining() < index_len
+            || self.gathered_indices.remaining() < gathered_len
             || !self.floats.has_room(FLOAT_CONSTANTS_SIZE)
         {
             self.flush();
@@ -1243,7 +1276,22 @@ impl Executor {
         mark!(self, 8);
         // Indices.
         let indices = match (direct, index_bytes) {
-            (Some((_, buffer, offset)), _) => {
+            (Some((ib, None)), _) => {
+                let (start, len) = gathered_index_range(&ib);
+                let offset = self.gathered_indices.reserve(len).expect("index ring space was checked");
+                let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder("xenos"));
+                if !self.shared.gather(encoder, start, len as u32, &self.gathered_indices.buffer, offset) {
+                    return Err(Skip::Warn("index buffer not in shared memory while recording a draw".into()));
+                }
+                let format = direct_format.expect("set with direct");
+                Some(DrawIndices::Gathered { format, offset: offset + u64::from(ib.guest_base - start) })
+            }
+            (Some((ib, Some((buffer, offset)))), _) => {
+                // Its blocks keep their slots while the batch reads them, unless syncing this
+                // draw's other data had to submit the batch and then needed the slots.
+                if self.shared.contiguous(ib.guest_base, ib.size_bytes()) != Some((buffer, offset)) {
+                    return Err(Skip::Warn("index buffer moved in shared memory while recording a draw".into()));
+                }
                 Some(DrawIndices::Shared { buffer, format: direct_format.expect("set with direct"), offset })
             }
             (None, Some((format, bytes))) => {
