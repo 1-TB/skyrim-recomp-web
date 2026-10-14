@@ -479,6 +479,9 @@ pub struct EdramCache {
     /// Textures of render targets replaced by taller ones, destroyed at the end of the frame
     /// (recorded work may still use them until it is submitted).
     outgrown: Vec<Texture>,
+    /// Buffers replaced or done with, destroyed at the end of the frame (recorded work may still
+    /// use them until it's submitted).
+    retired_buffers: Vec<Buffer>,
     ownership: OwnershipMap,
     /// EDRAM-layout copy of the tiles dumped for resolves.
     shadow: Buffer,
@@ -553,6 +556,7 @@ impl EdramCache {
                 .min(MAX_RESOLVE_OUTPUT_BYTES),
             rts: HashMap::new(),
             outgrown: Vec::new(),
+            retired_buffers: Vec::new(),
             ownership: OwnershipMap::default(),
             shadow,
             resolve_out: None,
@@ -601,6 +605,9 @@ impl EdramCache {
     fn trim_unowned(&mut self, max_idle_frames: u32) {
         for texture in self.outgrown.drain(..) {
             texture.destroy();
+        }
+        for buffer in self.retired_buffers.drain(..) {
+            buffer.destroy();
         }
         let ranges = self.ownership.ranges();
         self.rts.retain(|key, rt| {
@@ -940,48 +947,80 @@ impl EdramCache {
         if let Some(reason) = device.lost_reason() {
             return Err(EdramError::DeviceLost(reason));
         }
-        let mut pending = PendingResolve { copy: None, cleared_depth: false, cleared_color: false, result: None };
+        let mut encoder = device.create_command_encoder("edram resolve");
+        let (copy, result) = self.encode_resolve(device, &mut encoder, info, shared)?;
+        device.queue().submit([encoder.finish("edram resolve")]);
+        let mut pending = PendingResolve {
+            copy,
+            cleared_depth: result.cleared_depth,
+            cleared_color: result.cleared_color,
+            result: None,
+        };
+        match &mut pending.copy {
+            Some(copy) => copy.map = Some(copy.readback.map_async(MapMode::Read, 0, Some(copy.size))),
+            None => pending.result = Some(Ok(result)),
+        }
+        Ok(pending)
+    }
+
+    /// Records a resolve into `encoder`, after the rendering already recorded there, storing its
+    /// copy into `shared`: nothing is submitted, and it's complete when `encoder` is (the
+    /// renderer keeps resolves in its batch instead of submitting around each).
+    pub fn resolve_into(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        info: &ResolveInfo,
+        shared: &SharedMemoryTarget<'_>,
+    ) -> Result<ResolveResult, EdramError> {
+        if let Some(reason) = device.lost_reason() {
+            return Err(EdramError::DeviceLost(reason));
+        }
+        let (copy, result) = self.encode_resolve(device, encoder, info, Some(shared))?;
+        // A copy goes to `shared` unless its destination is empty: then there's nothing to read.
+        if let Some(copy) = copy {
+            self.retired_buffers.push(copy.readback);
+        }
+        Ok(result)
+    }
+
+    /// The commands of a resolve: the copy (stored into `shared` or staged for a readback,
+    /// returned) and the clears.
+    fn encode_resolve(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        info: &ResolveInfo,
+        shared: Option<&SharedMemoryTarget<'_>>,
+    ) -> Result<(Option<PendingCopy>, ResolveResult), EdramError> {
+        let mut result = ResolveResult { written: None, cleared_depth: false, cleared_color: false };
         if info.rect.is_empty() {
-            pending.result = Some(Ok(ResolveResult { written: None, cleared_depth: false, cleared_color: false }));
-            return Ok(pending);
+            return Ok((None, result));
         }
         let copy = self.plan_copy(info)?;
         let clears = self.plan_clears(info)?;
-        let mut encoder = device.create_command_encoder("edram resolve");
         for clear in &clears {
             let tile_h = EDRAM_TILE_HEIGHT_SAMPLES >> clear.key.msaa_samples.samples_y_log2();
-            self.ensure_rt(device, &mut encoder, clear.key, clear.rect[3].next_multiple_of(tile_h))?;
+            self.ensure_rt(device, encoder, clear.key, clear.rect[3].next_multiple_of(tile_h))?;
         }
-
-        let mut stored = None;
+        let mut readback = None;
         if let Some(plan) = copy {
-            match self.encode_copy(device, &mut encoder, info, plan, shared) {
-                CopyOutput::Readback(copy) => pending.copy = Some(copy),
-                CopyOutput::Stored { written } => stored = Some(written),
+            match self.encode_copy(device, encoder, info, plan, shared) {
+                CopyOutput::Readback(copy) => readback = Some(copy),
+                CopyOutput::Stored { written } => result.written = Some(written),
             }
         }
         for clear in &clears {
             let previous = self.ownership.claim(clear.start, clear.length, clear.key);
-            self.encode_transfers(device, &mut encoder, clear.key, &previous, Some(clear.rect), None);
-            self.encode_clear(device, &mut encoder, clear);
+            self.encode_transfers(device, encoder, clear.key, &previous, Some(clear.rect), None);
+            self.encode_clear(device, encoder, clear);
             if clear.key.is_depth {
-                pending.cleared_depth = true;
+                result.cleared_depth = true;
             } else {
-                pending.cleared_color = true;
+                result.cleared_color = true;
             }
         }
-        device.queue().submit([encoder.finish("edram resolve")]);
-        match &mut pending.copy {
-            Some(copy) => copy.map = Some(copy.readback.map_async(MapMode::Read, 0, Some(copy.size))),
-            None => {
-                pending.result = Some(Ok(ResolveResult {
-                    written: stored,
-                    cleared_depth: pending.cleared_depth,
-                    cleared_color: pending.cleared_color,
-                }))
-            }
-        }
-        Ok(pending)
+        Ok((readback, result))
     }
 
     /// Finishes a resolve once its readback is mapped: converts to the destination layout, writes
@@ -1291,10 +1330,10 @@ impl EdramCache {
 
         let out_size = plan.out_bytes.max(4);
         if self.resolve_out.as_ref().is_none_or(|b| b.size() < out_size) {
-            // The old one is destroyed (after the work using it, all submitted): only dropped,
-            // a browser keeps it until garbage collection.
+            // The old one is destroyed at the end of the frame (only dropped, a browser keeps it
+            // until garbage collection).
             if let Some(old) = self.resolve_out.take() {
-                old.destroy();
+                self.retired_buffers.push(old);
             }
             self.resolve_out = Some(device.create_buffer(&BufferDescriptor {
                 label: "edram resolve output",

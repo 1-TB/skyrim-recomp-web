@@ -107,6 +107,7 @@ impl RenderTargetCache for OneTarget {
         _info: &ResolveInfo,
         _memory: &dyn PhysicalMemory,
         _shared: Option<&SharedMemoryTarget<'_>>,
+        _encoder: Option<&mut CommandEncoder>,
     ) -> ResolveStatus {
         ResolveStatus::Done { written: None, in_gpu_memory: false }
     }

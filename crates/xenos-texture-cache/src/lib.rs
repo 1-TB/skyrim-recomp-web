@@ -458,10 +458,11 @@ pub struct TextureCache {
     retired: Vec<Pooled>,
     /// Textures retired before the last `destroy_retired`, released by the next one.
     retiring: Vec<Pooled>,
-    /// Textures dropped by [`TextureCache::invalidate`], by key: a reload of the same key fills
-    /// the same texture again (nothing recorded since uses it, see `invalidate`), so textures
-    /// read from resolve output every frame don't each keep a pooled and a retired copy alive.
-    /// The rest are retired at the end of the frame.
+    /// Textures dropped by [`TextureCache::invalidate`], by key: a reload of the same key from
+    /// the GPU copy fills the same texture again (it runs after the recorded work, which last
+    /// used the old contents before the invalidation, see [`GpuSource::submit`]), so textures read
+    /// from resolve output every frame don't each keep a pooled and a retired copy alive. The
+    /// rest are retired at the end of the frame.
     stale: FxHashMap<TextureKey, Pooled>,
     /// The stale texture offered to the load in progress (taken by `new_texture`).
     reload_into: Option<Pooled>,
@@ -615,8 +616,9 @@ impl TextureCache {
 
     /// Guest physical memory `[addr, addr + len)` changed (e.g. a resolve wrote it): drops every
     /// texture reading from it. Returns the raw handles of the dropped textures' views (for
-    /// callers remembering bindings). Work using those textures must have been submitted: a
-    /// reload of the same texture this frame may be written into the same texture and views.
+    /// callers remembering bindings). Work using those textures must already be recorded: a
+    /// reload of the same texture this frame may be written into the same texture and views
+    /// (after that work, see [`GpuSource::submit`]).
     pub fn invalidate(&mut self, addr: u32, len: u32) -> Vec<usize> {
         let mut dropped_views = Vec::new();
         if len == 0 {
@@ -679,6 +681,12 @@ impl TextureCache {
             }
         }
         self.stats.evicted += (before - self.textures.len()) as u64;
+    }
+
+    /// Everything recorded so far (including loads queued with [`GpuSource::submit`]) was
+    /// submitted.
+    pub fn end_batch(&mut self) {
+        self.gpu_loader.end_batch();
     }
 
     /// Frees the GPU memory of the textures dropped before the previous call (call once per
@@ -828,7 +836,7 @@ impl TextureCache {
         if let Some(gpu) = gpu
             && (gpu.covers(&ranges) || (self.config.gpu_conversion && gpu.sync(&ranges)))
         {
-            match self.load_on_gpu(device, &*gpu, fetch, &info, caps, ranges.clone(), hash) {
+            match self.load_on_gpu(device, &mut *gpu, fetch, &info, caps, ranges.clone(), hash) {
                 Some(entry) => return Ok(entry),
                 None => log::debug!("{}: not loadable from GPU memory; using guest memory", info.format.name()),
             }
@@ -865,7 +873,7 @@ impl TextureCache {
         let pool_key =
             PoolKey { width, height, layers, mip_level_count, is_3d, format: format::webgpu_format(host_format) };
         let fills_all = (0..mip_level_count).all(|m| loaded.levels.iter().any(|l| l.level == m));
-        let (texture, views) = self.new_texture(device, pool_key, fills_all);
+        let (texture, views) = self.new_texture(device, pool_key, fills_all, false);
         let mut bytes = 0u64;
         for level in loaded.levels.iter().filter(|l| l.level < mip_level_count) {
             device.queue().write_texture(
@@ -914,7 +922,7 @@ impl TextureCache {
     fn load_on_gpu(
         &mut self,
         device: &Device,
-        gpu: &dyn GpuSource,
+        gpu: &mut dyn GpuSource,
         fetch: &TextureFetchConstant,
         info: &TextureGuestInfo,
         caps: HostCaps,
@@ -963,7 +971,9 @@ impl TextureCache {
         let plan = gpu_load::plan(fetch, info, &mapping, mip_level_count)?;
         let pool_key =
             PoolKey { width, height, layers, mip_level_count, is_3d, format: format::webgpu_format(host_format) };
-        let (texture, views) = self.new_texture(device, pool_key, plan.covers_levels(mip_level_count));
+        // Only loads run in order with the recorded work may refill a texture it still uses.
+        let in_place = matches!(data, GpuData::Shared(_));
+        let (texture, views) = self.new_texture(device, pool_key, plan.covers_levels(mip_level_count), in_place);
         match data {
             GpuData::Shared(gpu) => {
                 if !self.gpu_loader.encode(device, gpu, &plan, &texture) {
@@ -993,11 +1003,21 @@ impl TextureCache {
         })
     }
 
-    /// A texture for `key`: a pooled one (with its views) or a new one. Pooled textures hold
-    /// their previous contents, so they're only used when the load writes every level
-    /// (`fills_all`); a new texture starts out zeroed.
-    fn new_texture(&mut self, device: &Device, key: PoolKey, fills_all: bool) -> (Texture, [Option<TextureView>; 4]) {
-        if fills_all && let Some(p) = self.reload_into.take_if(|p| p.key == key) {
+    /// A texture for `key`: the stale one being reloaded (`in_place`, see `stale`), a pooled
+    /// one (with its views) or a new one. Reused textures hold their previous contents, so
+    /// they're only used when the load writes every level (`fills_all`); a new texture starts
+    /// out zeroed.
+    fn new_texture(
+        &mut self,
+        device: &Device,
+        key: PoolKey,
+        fills_all: bool,
+        in_place: bool,
+    ) -> (Texture, [Option<TextureView>; 4]) {
+        if fills_all
+            && in_place
+            && let Some(p) = self.reload_into.take_if(|p| p.key == key)
+        {
             self.stats.reloaded_in_place += 1;
             return (p.texture, p.views);
         }
@@ -1089,8 +1109,8 @@ impl TextureCache {
 
 /// Where a GPU-converted texture's guest bytes come from.
 enum GpuData<'a> {
-    /// A GPU copy of guest memory holding the only current data.
-    Shared(&'a dyn GpuSource),
+    /// The GPU copy of guest memory.
+    Shared(&'a mut dyn GpuSource),
     /// Guest memory (copied raw to the GPU).
     Memory(&'a dyn GuestMemory),
 }

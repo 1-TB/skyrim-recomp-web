@@ -64,6 +64,9 @@ struct SharedSource<'a> {
     device: &'a Device,
     shared: &'a mut SharedMemory,
     memory: &'a dyn PhysicalMemory,
+    /// The batch being recorded: texture loads are queued after what it has so far.
+    encoder: &'a mut Option<CommandEncoder>,
+    queued: &'a mut Vec<CommandBuffer>,
 }
 
 impl GpuSource for SharedSource<'_> {
@@ -80,6 +83,14 @@ impl GpuSource for SharedSource<'_> {
 
     fn gather(&self, encoder: &mut CommandEncoder, address: u32, len: u32, dst: &Buffer, dst_offset: u64) -> bool {
         self.shared.gather(encoder, address, len, dst, dst_offset)
+    }
+
+    fn submit(&mut self, _device: &Device, commands: CommandBuffer) {
+        // After everything encoded so far (the pass being recorded is encoded later, after it).
+        if let Some(encoder) = self.encoder.take() {
+            self.queued.push(encoder.finish("xenos"));
+        }
+        self.queued.push(commands);
     }
 }
 
@@ -344,6 +355,9 @@ pub struct Executor {
     textures: TextureCache,
     targets: Box<dyn RenderTargetCache>,
     encoder: Option<CommandEncoder>,
+    /// Recorded work closed into command buffers (to put texture loads after it), submitted
+    /// before `encoder` with the batch.
+    queued: Vec<CommandBuffer>,
     pass: Option<Pass>,
     constant_cache: ConstantCache,
     resolving: bool,
@@ -601,6 +615,7 @@ impl Executor {
             },
             targets,
             encoder: None,
+            queued: Vec::new(),
             pass: None,
             constant_cache: ConstantCache::default(),
             resolving: false,
@@ -638,9 +653,17 @@ impl Executor {
         };
         let texture_memory = TextureMemory(self.memory.clone());
         let uploaded = self.shared.uploaded;
-        let mut source = SharedSource { device: &self.device, shared: &mut self.shared, memory: &*self.memory };
+        let mut source = SharedSource {
+            device: &self.device,
+            shared: &mut self.shared,
+            memory: &*self.memory,
+            encoder: &mut self.encoder,
+            queued: &mut self.queued,
+        };
         let bound = self.textures.bind_with(&self.device, &texture_memory, &constants, &binding, Some(&mut source));
         self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
+        // The presenter shows it right away: submit its load.
+        self.flush();
         if bound.fallback {
             return None;
         }
@@ -729,10 +752,11 @@ impl Executor {
             commands
         });
         let main = self.encoder.take().map(|encoder| encoder.finish("xenos"));
-        if patches.is_some() || main.is_some() {
-            self.device.queue().submit(patches.into_iter().chain(main));
+        if patches.is_some() || main.is_some() || !self.queued.is_empty() {
+            self.device.queue().submit(patches.into_iter().chain(self.queued.drain(..)).chain(main));
             self.stats.submissions += 1;
         }
+        self.textures.end_batch();
         self.floats.rewind();
         #[cfg(not(target_os = "emscripten"))]
         for (view, width, height, name) in std::mem::take(&mut self.trace_dumps) {
@@ -909,7 +933,14 @@ impl Executor {
     }
 
     fn resolve(&mut self) {
-        self.flush();
+        // Stored into the GPU copy of guest memory, a resolve is recorded into the batch after
+        // the rendering before it; read back, it needs that rendering submitted.
+        let gpu_store = !crate::debug::CPU_RESOLVES.load(std::sync::atomic::Ordering::Relaxed);
+        if gpu_store {
+            self.encode_pass();
+        } else {
+            self.flush();
+        }
         let memory = self.memory.clone();
         let info = match resolve_info(&self.regs, &StateMemory(&*memory), &ResolveOptions::default()) {
             Ok(i) => i,
@@ -923,7 +954,8 @@ impl Executor {
         if crate::debug::tracing(self.frame) {
             log::info!("trace frame {} resolve after draw {}: {info:?}", self.frame, self.stats.draws);
         }
-        let gpu_store = !crate::debug::CPU_RESOLVES.load(std::sync::atomic::Ordering::Relaxed);
+        // The destination's pages are synced (and so in the batch's pages: a later CPU write to
+        // them can't be uploaded under the resolve output before the batch is submitted).
         let shared = gpu_store.then(|| {
             self.sync_shared(info.copy_dest_extent_start, info.copy_dest_extent_length);
         });
@@ -933,7 +965,9 @@ impl Executor {
             block_bytes: SHARED_MEMORY_BLOCK_BYTES,
             chunk_bytes: SHARED_MEMORY_CHUNK_BYTES,
         };
-        match self.targets.resolve(&self.device, &info, &*memory, shared.map(|()| &target)) {
+        let encoder =
+            gpu_store.then(|| self.encoder.get_or_insert_with(|| self.device.create_command_encoder("xenos")));
+        match self.targets.resolve(&self.device, &info, &*memory, shared.map(|()| &target), encoder) {
             ResolveStatus::Pending => self.resolving = true,
             ResolveStatus::Done { written, in_gpu_memory } => self.finish_resolve(written, in_gpu_memory),
         }
@@ -1542,7 +1576,13 @@ impl Executor {
         for shader in [Some(vs), ps].into_iter().flatten() {
             for binding in &shader.translation.texture_bindings {
                 let uploaded = self.shared.uploaded;
-                let mut source = SharedSource { device: &self.device, shared: &mut self.shared, memory: &*self.memory };
+                let mut source = SharedSource {
+                    device: &self.device,
+                    shared: &mut self.shared,
+                    memory: &*self.memory,
+                    encoder: &mut self.encoder,
+                    queued: &mut self.queued,
+                };
                 let bound = self.textures.bind_with(&self.device, &texture_memory, &fetch, binding, Some(&mut source));
                 self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
                 push_texture(&mut layout_key, &mut views, binding, bound);

@@ -50,14 +50,17 @@ pub trait RenderTargetCache {
         min_height: u32,
     ) -> Option<DrawTargets>;
 
-    /// Starts a resolve. All earlier rendering has been submitted. With `shared` (the GPU copy of
-    /// guest memory) the copy may be stored there instead of guest memory.
+    /// Starts a resolve. With `shared` (the GPU copy of guest memory) the copy is stored there
+    /// instead of guest memory, and with `encoder` too the resolve is recorded into it after
+    /// the rendering recorded there (done once it's submitted); otherwise all earlier rendering
+    /// has been submitted and the resolve submits its own work.
     fn resolve(
         &mut self,
         device: &Device,
         info: &ResolveInfo,
         memory: &dyn PhysicalMemory,
         shared: Option<&SharedMemoryTarget<'_>>,
+        encoder: Option<&mut CommandEncoder>,
     ) -> ResolveStatus;
 
     /// Continues the resolve [`RenderTargetCache::resolve`] left pending.

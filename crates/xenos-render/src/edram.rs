@@ -63,7 +63,17 @@ impl RenderTargetCache for EdramTargets {
         info: &ResolveInfo,
         memory: &dyn PhysicalMemory,
         shared: Option<&SharedMemoryTarget<'_>>,
+        encoder: Option<&mut CommandEncoder>,
     ) -> ResolveStatus {
+        if let (Some(shared), Some(encoder)) = (shared, encoder) {
+            return match self.cache.resolve_into(device, encoder, info, shared) {
+                Ok(r) => ResolveStatus::Done { written: r.written, in_gpu_memory: true },
+                Err(e) => {
+                    log::warn!("edram: resolve: {e}");
+                    ResolveStatus::Done { written: None, in_gpu_memory: false }
+                }
+            };
+        }
         match self.cache.begin_resolve_to(device, info, shared) {
             Ok(pending) => {
                 self.pending = Some(pending);

@@ -24,6 +24,9 @@ pub trait GpuSource {
     /// GPU copy into `dst` at `dst_offset`. `false` (with nothing encoded) if part of the range
     /// isn't mirrored.
     fn gather(&self, encoder: &mut CommandEncoder, address: u32, len: u32, dst: &Buffer, dst_offset: u64) -> bool;
+    /// Runs a load's commands after the work recorded so far: queued with it (one submission
+    /// for many loads, and in order with the draws around them) or submitted right away.
+    fn submit(&mut self, device: &Device, commands: CommandBuffer);
 }
 
 /// Row alignment of `copy_buffer_to_texture`.
@@ -185,8 +188,10 @@ fn upload_offsets(plan: &Plan) -> (Vec<u64>, u64) {
     (offsets, total)
 }
 
-/// Parameter slots (one per level, `PARAMS_STRIDE` bytes apart) in the loader's uniform buffer.
-const PARAM_SLOTS: usize = 32;
+/// Parameter slots (one per level, `PARAMS_STRIDE` bytes apart) the loader's uniform buffer
+/// starts with. Each load takes slots of its own until [`GpuLoader::end_batch`] (loads queued in
+/// one submission all read their parameters as written before it), growing the buffer if need be.
+const PARAM_SLOTS: usize = 64;
 /// Uniform binding offsets must be multiples of 256.
 const PARAMS_STRIDE: u64 = 256;
 
@@ -198,25 +203,38 @@ const PARAMS_STRIDE: u64 = 256;
 pub(crate) struct GpuLoader {
     /// Plain-store and atomic variants.
     pipelines: [Option<(BindGroupLayout, ComputePipeline)>; 2],
-    /// Per-level parameters, `PARAM_SLOTS` slots.
+    /// Per-level parameters, in slots.
     params: Option<Buffer>,
+    /// Next free parameter slot.
+    param_cursor: usize,
+    /// Buffers replaced by bigger ones, destroyed at [`GpuLoader::end_batch`] (queued loads may
+    /// still use them).
+    retired: Vec<Buffer>,
     /// Converted texels, before the copy into the texture (grows as needed).
     out: Option<Buffer>,
     /// Raw guest bytes for loads from guest memory (grows as needed).
     upload: Option<Buffer>,
-    /// Bind groups by (atomic, parameter slot, source buffer, output buffer).
-    groups: rustc_hash::FxHashMap<(bool, usize, usize, usize), BindGroup>,
+    /// Bind groups by (atomic, source buffer, output buffer); the parameter slot is a dynamic
+    /// offset.
+    groups: rustc_hash::FxHashMap<(bool, usize, usize), BindGroup>,
 }
 
 /// A buffer of at least `size` bytes in `slot`: the existing one if big enough, else a new one
-/// (rounded up to a power of two; the old one is destroyed, which waits for work submitted with
-/// it). Returns whether it was replaced.
-fn ensure(slot: &mut Option<Buffer>, device: &Device, label: &str, usage: BufferUsage, size: u64) -> bool {
+/// (rounded up to a power of two; the old one goes to `retired`). Returns whether it was
+/// replaced.
+fn ensure(
+    slot: &mut Option<Buffer>,
+    retired: &mut Vec<Buffer>,
+    device: &Device,
+    label: &str,
+    usage: BufferUsage,
+    size: u64,
+) -> bool {
     if slot.as_ref().is_some_and(|b| b.size() >= size) {
         return false;
     }
     if let Some(old) = slot.take() {
-        old.destroy();
+        retired.push(old);
     }
     *slot = Some(device.create_buffer(&BufferDescriptor {
         label,
@@ -233,7 +251,11 @@ impl GpuLoader {
             let entry = |binding, ty| BindGroupLayoutEntry {
                 binding,
                 visibility: ShaderStage::Compute,
-                ty: BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: 0 },
+                ty: BindingType::Buffer {
+                    ty,
+                    has_dynamic_offset: ty == BufferBindingType::Uniform,
+                    min_binding_size: 0,
+                },
             };
             let bgl = device.create_bind_group_layout(
                 "texture gpu load",
@@ -257,9 +279,16 @@ impl GpuLoader {
     /// Fills `texture` from the GPU copy of guest memory and submits the work: each level's raw
     /// bytes are gathered (copied on the GPU) into the upload buffer and converted there. Returns
     /// `false` (nothing done) if part of the data isn't mirrored.
-    pub(crate) fn encode(&mut self, device: &Device, source: &dyn GpuSource, plan: &Plan, texture: &Texture) -> bool {
+    pub(crate) fn encode(
+        &mut self,
+        device: &Device,
+        source: &mut dyn GpuSource,
+        plan: &Plan,
+        texture: &Texture,
+    ) -> bool {
         let (offsets, total) = upload_offsets(plan);
-        if ensure(&mut self.upload, device, "texture upload", BufferUsage::Storage | BufferUsage::CopyDst, total) {
+        let usage = BufferUsage::Storage | BufferUsage::CopyDst;
+        if ensure(&mut self.upload, &mut self.retired, device, "texture upload", usage, total) {
             self.groups.clear();
         }
         let upload = self.upload.clone().expect("ensured above");
@@ -276,7 +305,8 @@ impl GpuLoader {
             sources.push((upload.clone(), start.wrapping_sub(offset as u32)));
         }
         // The conversion follows the copies in the same command buffer.
-        self.dispatch(device, encoder, &sources, plan, texture);
+        let commands = self.dispatch(device, encoder, &sources, plan, texture);
+        source.submit(device, commands);
         true
     }
 
@@ -290,7 +320,8 @@ impl GpuLoader {
         texture: &Texture,
     ) -> u64 {
         let (offsets, total) = upload_offsets(plan);
-        if ensure(&mut self.upload, device, "texture upload", BufferUsage::Storage | BufferUsage::CopyDst, total) {
+        let usage = BufferUsage::Storage | BufferUsage::CopyDst;
+        if ensure(&mut self.upload, &mut self.retired, device, "texture upload", usage, total) {
             self.groups.clear();
         }
         let upload = self.upload.clone().expect("ensured above");
@@ -312,12 +343,17 @@ impl GpuLoader {
                 (upload.clone(), address.wrapping_sub(offset as u32))
             })
             .collect();
-        self.dispatch(device, device.create_command_encoder("texture gpu load"), &sources, plan, texture);
+        // Submitted at once: the upload is written for the next submission, and loads queued
+        // into one would all see the last load's bytes.
+        let commands =
+            self.dispatch(device, device.create_command_encoder("texture gpu load"), &sources, plan, texture);
+        device.queue().submit([commands]);
         uploaded
     }
 
     /// Converts each level from its source buffer (holding guest bytes from address `base` on)
-    /// into `texture`, recording into `encoder` (after anything already in it), and submits.
+    /// into `texture`, recording into `encoder` (after anything already in it); returns the
+    /// commands.
     fn dispatch(
         &mut self,
         device: &Device,
@@ -325,22 +361,29 @@ impl GpuLoader {
         sources: &[(Buffer, u32)],
         plan: &Plan,
         texture: &Texture,
-    ) {
-        assert!(plan.levels.len() <= PARAM_SLOTS, "more levels than parameter slots");
+    ) -> CommandBuffer {
         let mut replaced = ensure(
             &mut self.out,
+            &mut self.retired,
             device,
             "texture gpu load",
             BufferUsage::Storage | BufferUsage::CopySrc,
             plan.out_bytes.max(4),
         );
-        replaced |= ensure(
+        let slots = (self.param_cursor + plan.levels.len()).max(PARAM_SLOTS);
+        let params_usage = BufferUsage::Uniform | BufferUsage::CopyDst;
+        if ensure(
             &mut self.params,
+            &mut self.retired,
             device,
             "texture gpu load params",
-            BufferUsage::Uniform | BufferUsage::CopyDst,
-            PARAM_SLOTS as u64 * PARAMS_STRIDE,
-        );
+            params_usage,
+            slots as u64 * PARAMS_STRIDE,
+        ) {
+            // Slots of the old buffer stay as written; a new one starts over.
+            self.param_cursor = 0;
+            replaced = true;
+        }
         if replaced {
             self.groups.clear();
         }
@@ -349,13 +392,20 @@ impl GpuLoader {
         let atomic = plan.levels.first().is_some_and(|l| l.params[19] < 4);
         let (bgl, pipeline) = self.pipeline(device, atomic).clone();
         let mut groups = Vec::with_capacity(plan.levels.len());
-        for (slot, (level, (buffer, base))) in plan.levels.iter().zip(sources).enumerate() {
+        // The levels' parameters, in consecutive slots.
+        let first_slot = self.param_cursor;
+        let mut bytes = Vec::with_capacity(plan.levels.len() * PARAMS_STRIDE as usize);
+        for (level, (_, base)) in plan.levels.iter().zip(sources) {
             let mut words = level.params;
             words[21] = *base;
             words[25] = (level.out_offset / 4) as u32;
-            let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-            device.queue().write_buffer(&params, slot as u64 * PARAMS_STRIDE, &bytes);
-            let key = (atomic, slot, buffer.raw() as usize, out.raw() as usize);
+            bytes.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+            bytes.resize(bytes.len().next_multiple_of(PARAMS_STRIDE as usize), 0);
+        }
+        device.queue().write_buffer(&params, first_slot as u64 * PARAMS_STRIDE, &bytes);
+        self.param_cursor += plan.levels.len();
+        for (_, (buffer, _)) in plan.levels.iter().zip(sources) {
+            let key = (atomic, buffer.raw() as usize, out.raw() as usize);
             let group = self.groups.entry(key).or_insert_with(|| {
                 device.create_bind_group(
                     "texture gpu load",
@@ -363,11 +413,7 @@ impl GpuLoader {
                     &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: BindingResource::Buffer {
-                                buffer: &params,
-                                offset: slot as u64 * PARAMS_STRIDE,
-                                size: Some(bytes.len() as u64),
-                            },
+                            resource: BindingResource::Buffer { buffer: &params, offset: 0, size: Some(32 * 4) },
                         },
                         BindGroupEntry {
                             binding: 1,
@@ -385,9 +431,9 @@ impl GpuLoader {
         {
             let mut pass = encoder.begin_compute_pass("texture gpu load");
             pass.set_pipeline(&pipeline);
-            for (level, group) in plan.levels.iter().zip(&groups) {
+            for (n, (level, group)) in plan.levels.iter().zip(&groups).enumerate() {
                 let (x, y, z) = level.blocks;
-                pass.set_bind_group(0, group, &[]);
+                pass.set_bind_group(0, group, &[((first_slot + n) as u64 * PARAMS_STRIDE) as u32]);
                 pass.dispatch_workgroups(x.div_ceil(8), y.div_ceil(8), z);
             }
             pass.end();
@@ -409,7 +455,16 @@ impl GpuLoader {
                 extent(level.copy.0, level.copy.1, level.copy.2),
             );
         }
-        device.queue().submit([encoder.finish("texture gpu load")]);
+        encoder.finish("texture gpu load")
+    }
+
+    /// Everything recorded with the loader so far was submitted: its parameter slots can be
+    /// reused and the buffers it replaced freed.
+    pub(crate) fn end_batch(&mut self) {
+        self.param_cursor = 0;
+        for buffer in self.retired.drain(..) {
+            buffer.destroy();
+        }
     }
 }
 
