@@ -3,8 +3,9 @@
 //! storage (a phone) needn't hold a copy.
 //!
 //! The server lists the files in a manifest (one `size<TAB>path` line per file, `/`-separated);
-//! file contents are read with range requests through a [`RangeReader`], in [`CHUNK_BYTES`]
-//! chunks kept in a bounded LRU cache. Remote trees are read-only.
+//! file contents are read with range requests through a [`RangeReader`]: small reads in
+//! [`CHUNK_BYTES`] chunks kept in a bounded LRU cache, large ones straight into the caller's
+//! buffer. Remote trees are read-only.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -19,8 +20,9 @@ pub trait RangeReader: Send + Sync {
 
 /// Bytes per cached chunk (and per request, unless a read spans several).
 pub const CHUNK_BYTES: u64 = 2 << 20;
-/// Default cache size in chunks.
-pub const DEFAULT_CACHE_CHUNKS: usize = 96;
+/// Default cache size in chunks. The cache serves the many small reads titles make from
+/// archives; it lives in the host heap, which on the web is wasm memory that never shrinks.
+pub const DEFAULT_CACHE_CHUNKS: usize = 32;
 
 #[derive(Debug, Clone)]
 enum Entry {
@@ -116,6 +118,21 @@ impl RemoteTree {
             return Ok(0);
         }
         let end = (offset + buf.len() as u64).min(size);
+        if end - offset >= CHUNK_BYTES {
+            // Large reads (whole files, streamed sections) are seldom read again soon: they go
+            // straight into the caller's buffer (on the guest's reads, guest memory) instead of
+            // through the cache, which would hold up to three copies at once.
+            let want = (end - offset) as usize;
+            let mut got = 0;
+            while got < want {
+                let n = self.reader.read(path, offset + got as u64, &mut buf[got..want])?;
+                if n == 0 {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, format!("{path}: short read")));
+                }
+                got += n;
+            }
+            return Ok(got);
+        }
         let first = offset / CHUNK_BYTES;
         let last = (end - 1) / CHUNK_BYTES;
         // The range's chunks: cached ones, then the missing ones fetched (one request per
@@ -277,9 +294,25 @@ mod tests {
         assert_eq!(t.read_at(path, size, size - 4, &mut buf).unwrap(), 4);
         assert_eq!(t.read_at(path, size, size, &mut buf).unwrap(), 0);
         // Many chunks through a 4-chunk cache stay correct.
-        let mut whole = vec![0u8; size as usize];
-        assert_eq!(t.read_at(path, size, 0, &mut whole[..CHUNK_BYTES as usize * 3]).unwrap(), 3 * CHUNK_BYTES as usize);
+        for k in 0..4 {
+            let offset = k * CHUNK_BYTES + 5;
+            assert_eq!(t.read_at(path, size, offset, &mut buf).unwrap(), if k < 3 { 100 } else { 5 });
+            assert!(buf[..5].iter().enumerate().all(|(i, b)| *b == ((offset + i as u64) * 7 + seed) as u8));
+        }
         assert_eq!(t.read_file("default.xex").unwrap().len(), 12);
         assert!(t.cache.lock().unwrap().chunks.len() <= 4);
+    }
+
+    #[test]
+    fn large_reads_bypass_the_cache() {
+        let (t, reader) = tree(4);
+        let path = "Data/Skyrim - Meshes.bsa";
+        let size = 3 * CHUNK_BYTES + 10;
+        let mut whole = vec![0u8; size as usize + 8];
+        assert_eq!(t.read_at(path, size, 3, &mut whole).unwrap(), size as usize - 3);
+        let seed = path.len() as u64;
+        assert!(whole[..size as usize - 3].iter().enumerate().all(|(i, b)| *b == ((3 + i as u64) * 7 + seed) as u8));
+        assert_eq!(reader.requests.load(Ordering::Relaxed), 1);
+        assert!(t.cache.lock().unwrap().chunks.is_empty());
     }
 }
