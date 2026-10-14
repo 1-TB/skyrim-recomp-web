@@ -1201,7 +1201,7 @@ impl EdramCache {
         }
         let mut readback = None;
         if let Some(plan) = copy {
-            match self.encode_copy(device, encoder, info, plan, shared) {
+            match self.encode_copy(device, encoder, info, plan, shared, None) {
                 CopyOutput::Readback(copy) => readback = Some(copy),
                 CopyOutput::Stored { written } => result.written = Some(written),
             }
@@ -1308,7 +1308,73 @@ struct ClearPlan {
     value: [u32; 2],
 }
 
+/// A resolve source outside the EDRAM emulation: a host texture standing for one surface (the
+/// `--gpu d3d` renderer's D3D surfaces).
+pub struct ExternalSource<'a> {
+    pub texture: &'a Texture,
+    pub format: TextureFormat,
+    pub width: u32,
+    pub height: u32,
+    pub depth: bool,
+    /// The surface's EDRAM base tile (RB_COLOR_INFO / RB_DEPTH_INFO), which its pixels are
+    /// addressed from.
+    pub base_tiles: u32,
+}
+
 impl EdramCache {
+    /// Resolves from `source` instead of the EDRAM render targets: its pixels are laid out as
+    /// the surface described by the resolve's source registers, then converted and stored into
+    /// `shared` like any resolve. Only the copy is done (no clears).
+    pub fn resolve_external(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        info: &ResolveInfo,
+        shared: &SharedMemoryTarget<'_>,
+        source: &ExternalSource<'_>,
+    ) -> Result<ResolveResult, EdramError> {
+        let mut result = ResolveResult { written: None, cleared_depth: false, cleared_color: false };
+        if info.rect.is_empty() {
+            return Ok(result);
+        }
+        let Some(plan) = self.plan_copy(info)? else { return Ok(result) };
+        let s = plan.source;
+        let key = RenderTargetKey {
+            base_tiles: source.base_tiles & (EDRAM_TILE_COUNT - 1),
+            pitch_tiles_at_32bpp: s.pitch_tiles >> u32::from(s.format_is_64bpp),
+            msaa_samples: s.msaa_samples,
+            is_depth: s.is_depth,
+            format: s.format,
+        };
+        let attachment = source.texture.create_view(None);
+        let (read, stencil) = if source.depth {
+            let view =
+                |aspect| source.texture.create_view(Some(&TextureViewDescriptor { aspect, ..Default::default() }));
+            (view(TextureAspect::DepthOnly), Some(view(TextureAspect::StencilOnly)))
+        } else {
+            (attachment.clone(), None)
+        };
+        let rt = HostRt {
+            key,
+            texture: source.texture.clone(),
+            attachment,
+            read,
+            stencil,
+            format: source.format,
+            samples: 1,
+            width: source.width,
+            height: source.height,
+            idle_frames: 0,
+            idle_since: None,
+        };
+        match self.encode_copy(device, encoder, info, plan, Some(shared), Some(&rt)) {
+            CopyOutput::Stored { written } => result.written = Some(written),
+            // A destination outside the GPU copy of memory: nothing is read back here.
+            CopyOutput::Readback(copy) => self.retired_buffers.push(copy.readback),
+        }
+        Ok(result)
+    }
+
     fn plan_copy(&self, info: &ResolveInfo) -> Result<Option<CopyPlan>, EdramError> {
         if info.copy_dest_extent_length == 0 {
             // Unusable destination: Xenia drops the copy and keeps the clears.
@@ -1478,9 +1544,11 @@ impl EdramCache {
         info: &ResolveInfo,
         plan: CopyPlan,
         shared: Option<&SharedMemoryTarget<'_>>,
+        external: Option<&HostRt>,
     ) -> CopyOutput {
         let source = plan.source;
-        // Dump the source tiles from their owners into the EDRAM-layout buffer.
+        // Dump the source tiles from their owners (or the external source) into the
+        // EDRAM-layout buffer.
         let (base, row_length, rows, pitch) = info.copy_edram_tile_span().expect("copy has a source");
         let spans: Vec<(u32, u32)> = if row_length >= pitch {
             vec![(base, (rows * pitch).min(EDRAM_TILE_COUNT))]
@@ -1489,8 +1557,12 @@ impl EdramCache {
         };
         let mut dumps = Vec::new();
         for (start, length) in spans {
-            for range in self.ownership.owners_in(start, length) {
-                let Some(rt) = self.rts.get(&range.owner) else {
+            let ranges: Vec<OwnedRange> = match external {
+                Some(rt) => vec![OwnedRange { start, end: start + length, owner: rt.key }],
+                None => self.ownership.owners_in(start, length),
+            };
+            for range in ranges {
+                let Some(rt) = external.or_else(|| self.rts.get(&range.owner)) else {
                     continue;
                 };
                 let kind = rt.src_kind();

@@ -733,7 +733,24 @@ impl CommandProcessor<'_> {
                 if count > r.remaining {
                     return self.overflow(start, packet, count, r.remaining);
                 }
-                if packet & 1 != 0 && ((self.bin_select & self.bin_mask) == 0 || opcode == pm4::XE_SWAP) {
+                // Predicated packets run only in the tiles they cover. With `--gpu d3d` surfaces are
+                // whole (no tiling): each draw runs once, the first time it comes by, whichever
+                // tiles it covers, so the state packets before it must run in that tile too (a
+                // draw outside the first tile otherwise kept the state the clear left, e.g. its
+                // blend). Synchronization packets keep their predication.
+                let tile_draw = matches!(
+                    opcode,
+                    pm4::DRAW_INDX
+                        | pm4::DRAW_INDX_2
+                        | pm4::SET_CONSTANT
+                        | pm4::SET_CONSTANT2
+                        | pm4::SET_SHADER_CONSTANTS
+                        | pm4::LOAD_ALU_CONSTANT
+                        | pm4::IM_LOAD
+                        | pm4::IM_LOAD_IMMEDIATE
+                ) && crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d;
+                let predicated_out = (self.bin_select & self.bin_mask) == 0 && !tile_draw;
+                if packet & 1 != 0 && (predicated_out || opcode == pm4::XE_SWAP) {
                     r.skip(count);
                     return true;
                 }
@@ -775,15 +792,13 @@ impl CommandProcessor<'_> {
                 let (fb, w, h) = (r.read(mem), r.read(mem), r.read(mem));
                 self.flush_registers();
                 if crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d {
-                    // The present is a D3D call of its own (calls whose marker didn't fit go
-                    // with the next marker: the title queues calls ahead of this point, so
-                    // they can't all be delivered here).
                     let n = self.k.gpu.swaps.load(Ordering::Relaxed) + 1;
                     if n.is_multiple_of(600) {
                         let (run, left) = std::mem::take(&mut self.d3d_draws);
                         log::info!("GPU: d3d: {run} draw packets run, {left} left out over 600 swaps");
                     }
-                } else if let Some(b) = &self.backend {
+                }
+                if let Some(b) = &self.backend {
                     let fetch = std::array::from_fn(|i| self.read_register(reg::SHADER_CONSTANT_FETCH_00_0 + i as u32));
                     b.swap(fetch, w, h);
                 }

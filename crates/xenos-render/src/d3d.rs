@@ -1,14 +1,14 @@
-//! `--gpu d3d`: rendering from the title's D3D calls instead of the command stream (see the
-//! `d3d-hle` crate). Each D3D surface is a host texture of its own (no EDRAM), clears clear it,
-//! a resolve copies it into a host texture standing for the destination texture, and a present
-//! shows the texture the frame was resolved to.
-//!
-//! Draws are not executed yet, so the picture shows every color surface the frame used side by
-//! side (each pass's clear color); `--render-debug d3d-front` shows the front buffer instead.
+//! `--gpu d3d`: rendering with the title's D3D calls in place of EDRAM (see the `d3d-hle` crate).
+//! Each D3D surface is a host texture of its own, which the executor draws into ([`D3dTargets`]);
+//! clears clear it; a resolve's copy draw converts and stores the surface into the GPU copy of
+//! guest memory in the destination's format, where textures (and the front buffer the swap
+//! shows) are loaded from, and the Resolve call does the clears it asks for.
+//! `--render-debug d3d-surfaces` shows every color surface the frame used side by side instead
+//! of the front buffer.
 
 use std::collections::HashMap;
 
-use d3d_hle::args::{ClearArgs, ResolveArgs, TextureHeader, clear, resolve};
+use d3d_hle::args::{ClearArgs, ResolveArgs, clear, resolve};
 use d3d_hle::command::{Command, Surface};
 use gpu_webgpu::*;
 use xenos_state::xenos::ColorRenderTargetFormat;
@@ -29,15 +29,6 @@ struct HostSurface {
     header: [u32; d3d_hle::args::SURFACE_WORDS],
 }
 
-/// A resolve destination's host texture.
-struct HostTexture {
-    texture: Texture,
-    view: TextureView,
-    format: TextureFormat,
-    width: u32,
-    height: u32,
-}
-
 /// A surface's key: its object address, and whether it is bound as depth/stencil (the title
 /// binds some surface objects both ways).
 type SurfaceKey = (u32, bool);
@@ -47,12 +38,13 @@ pub(crate) struct D3dRenderer {
     /// Bound render targets 0-3 and depth/stencil surface.
     targets: [Option<SurfaceKey>; 4],
     depth: Option<SurfaceKey>,
-    /// Resolve destinations by physical base address.
-    textures: HashMap<u32, HostTexture>,
     depth32_stencil8: bool,
     warned: std::collections::HashSet<String>,
     /// Color surfaces used this frame, in order of first use (for the mosaic).
     used: Vec<SurfaceKey>,
+    /// Converts and stores resolves into the GPU copy of guest memory (its EDRAM-layout
+    /// conversion and tiling shaders; it holds no render targets here).
+    edram: Option<xenos_edram::EdramCache>,
     /// What the frame did (logged for one frame in [`LOG_PERIOD`]).
     frame_log: Vec<String>,
     presents: u64,
@@ -150,10 +142,10 @@ impl D3dRenderer {
             surfaces: HashMap::new(),
             targets: [None; 4],
             depth: None,
-            textures: HashMap::new(),
             depth32_stencil8: device.has_feature(FeatureName::Depth32FloatStencil8),
             warned: Default::default(),
             used: Vec::new(),
+            edram: None,
             frame_log: Vec::new(),
             presents: 0,
             mosaic: None,
@@ -287,13 +279,13 @@ impl D3dRenderer {
                         dest.map_or(0, |d| d.base_address())
                     )
                 });
-                self.resolve(device, &args, dest.as_ref());
+                self.resolve(device, &args);
             }
-            Command::Present { front } => {
-                let shown = if crate::debug::D3D_FRONT.load(std::sync::atomic::Ordering::Relaxed) {
-                    self.front_buffer(front.as_ref())
-                } else {
+            Command::Present { .. } => {
+                let shown = if crate::debug::D3D_SURFACES.load(std::sync::atomic::Ordering::Relaxed) {
                     self.mosaic(device)
+                } else {
+                    None
                 };
                 if self.logging() {
                     log::info!(
@@ -397,66 +389,9 @@ impl D3dRenderer {
         device.queue().submit([encoder.finish("d3d clear")]);
     }
 
-    /// Copies the source surface into the destination's host texture, then performs the
-    /// requested clears.
-    fn resolve(&mut self, device: &Device, args: &ResolveArgs, dest: Option<&TextureHeader>) {
-        let source = match args.source_target() {
-            Some(i) => self.targets[i as usize],
-            None => self.depth,
-        };
-        if let (Some(dest), Some(source)) = (dest, source) {
-            let fetch = xenos_texture::TextureFetchConstant::decode(dest.fetch);
-            let base = dest.base_address() & 0x1FFF_FFFF;
-            let Some(s) = self.surfaces.get(&source) else { return };
-            if s.depth {
-                // Depth resolves feed shadows and the like: nothing to show yet.
-                return;
-            }
-            let (format, sw, sh) = (s.format, s.width, s.height);
-            let (width, height) = (fetch.width.max(1), fetch.height.max(1));
-            let fits =
-                self.textures.get(&base).is_some_and(|t| t.format == format && t.width == width && t.height == height);
-            if !fits {
-                let texture = device.create_texture(&TextureDescriptor {
-                    label: "d3d resolve destination",
-                    size: extent(width, height, 1),
-                    format,
-                    usage: TextureUsage::TextureBinding | TextureUsage::CopyDst,
-                    ..Default::default()
-                });
-                let view = texture.create_view(None);
-                if let Some(old) = self.textures.insert(base, HostTexture { texture, view, format, width, height }) {
-                    old.texture.destroy();
-                }
-            }
-            let [x0, y0, x1, y1] = args.source_rect.unwrap_or([0, 0, sw as i32, sh as i32]);
-            let [dx, dy] = args.dest_point.unwrap_or([0, 0]);
-            let (x0, y0) = (x0.max(0) as u32, y0.max(0) as u32);
-            let (dx, dy) = (dx.max(0) as u32, dy.max(0) as u32);
-            let w = (x1.max(0) as u32).min(sw).saturating_sub(x0).min(width.saturating_sub(dx));
-            let h = (y1.max(0) as u32).min(sh).saturating_sub(y0).min(height.saturating_sub(dy));
-            if w > 0 && h > 0 {
-                let s = &self.surfaces[&source];
-                let t = &self.textures[&base];
-                let mut encoder = device.create_command_encoder("d3d resolve");
-                encoder.copy_texture_to_texture(
-                    &TexelCopyTextureInfo {
-                        texture: &s.texture,
-                        mip_level: 0,
-                        origin: Origin3d { x: x0, y: y0, z: 0 },
-                        aspect: TextureAspect::All,
-                    },
-                    &TexelCopyTextureInfo {
-                        texture: &t.texture,
-                        mip_level: 0,
-                        origin: Origin3d { x: dx, y: dy, z: 0 },
-                        aspect: TextureAspect::All,
-                    },
-                    extent(w, h, 1),
-                );
-                device.queue().submit([encoder.finish("d3d resolve")]);
-            }
-        }
+    /// The clears a resolve asks for (its copy was the copy draw before it, see
+    /// [`D3dTargets`]).
+    fn resolve(&mut self, device: &Device, args: &ResolveArgs) {
         let mut flags = 0;
         if args.flags & resolve::CLEAR_RENDERTARGET != 0 {
             flags |= 1 << args.source_target().unwrap_or(0);
@@ -473,18 +408,6 @@ impl D3dRenderer {
                 &ClearArgs { rects: Vec::new(), flags, color, z: args.clear_z, stencil: args.clear_stencil },
             );
         }
-    }
-
-    fn front_buffer(&mut self, front: Option<&TextureHeader>) -> Option<FrontBuffer> {
-        let base = front?.base_address() & 0x1FFF_FFFF;
-        let t = self.textures.get(&base)?;
-        Some(FrontBuffer {
-            view: t.view.clone(),
-            filterable: true,
-            width: t.width,
-            height: t.height,
-            swizzle: [0, 1, 2, 3],
-        })
     }
 }
 
@@ -538,16 +461,46 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         })
     }
 
+    /// A resolve's copy draw (the only D3D-internal draws that run): the bound surface the copy
+    /// reads is converted and stored into the GPU copy of guest memory, so textures made from
+    /// it see the result (the front buffer included). The D3D Resolve call that follows does
+    /// the clears.
     fn resolve(
         &mut self,
-        _device: &Device,
-        _info: &xenos_state::resolve::ResolveInfo,
+        device: &Device,
+        info: &xenos_state::resolve::ResolveInfo,
         _memory: &dyn crate::PhysicalMemory,
-        _shared: Option<&crate::targets::SharedMemoryTarget<'_>>,
-        _encoder: Option<&mut CommandEncoder>,
+        shared: Option<&crate::targets::SharedMemoryTarget<'_>>,
+        encoder: Option<&mut CommandEncoder>,
     ) -> crate::targets::ResolveStatus {
-        // Resolves are D3D calls here; the command stream's copies never reach the executor.
-        crate::targets::ResolveStatus::Done { written: None, in_gpu_memory: false }
+        let none = crate::targets::ResolveStatus::Done { written: None, in_gpu_memory: false };
+        let (Some(shared), Some(encoder), Some(source)) = (shared, encoder, info.source_edram()) else {
+            return none;
+        };
+        let mut r = self.0.borrow_mut();
+        // The cache is taken out while it runs (the surface stays borrowed from `r`).
+        let mut edram = r.edram.take().unwrap_or_else(|| xenos_edram::EdramCache::new(device));
+        let key = if source.is_depth { r.depth } else { r.targets[(info.copy_control.copy_src_select & 3) as usize] };
+        let result = key.and_then(|k| r.surfaces.get(&k)).map(|s| {
+            let external = xenos_edram::ExternalSource {
+                texture: &s.texture,
+                format: s.format,
+                width: s.width,
+                height: s.height,
+                depth: s.depth,
+                base_tiles: s.header[7] & 0xFFF,
+            };
+            edram.resolve_external(device, encoder, info, shared, &external)
+        });
+        r.edram = Some(edram);
+        let Some(result) = result else { return none };
+        match result {
+            Ok(result) => crate::targets::ResolveStatus::Done { written: result.written, in_gpu_memory: true },
+            Err(e) => {
+                r.warn_once(format!("resolve: {e}"));
+                none
+            }
+        }
     }
 
     fn poll_resolve(&mut self, _device: &Device, _memory: &dyn crate::PhysicalMemory) -> crate::targets::ResolveStatus {
@@ -556,5 +509,9 @@ impl crate::targets::RenderTargetCache for D3dTargets {
 
     fn end_frame(&mut self) {}
 
-    fn flush_uploads(&mut self, _device: &Device) {}
+    fn flush_uploads(&mut self, device: &Device) {
+        if let Some(edram) = &self.0.borrow().edram {
+            edram.flush_uploads(device);
+        }
+    }
 }

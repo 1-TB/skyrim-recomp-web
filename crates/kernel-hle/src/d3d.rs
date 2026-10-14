@@ -252,6 +252,11 @@ thread_local! {
     /// Depth of D3D calls on this thread whose own draws are not the title's (Clear, Resolve,
     /// Begin/EndTiling).
     static INTERNAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Resolve calls this thread is in, with the call to deliver when each returns: its copy
+    /// draws run (the renderer stores the copy into guest memory), and the call itself (its
+    /// clears) comes after them.
+    static RESOLVES: std::cell::RefCell<Vec<(u32, d3d_hle::command::Command)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 fn internal_call(kind: HookKind) -> bool {
@@ -278,7 +283,8 @@ fn put_call_marker(k: &Kernel, dev: u32, kind: u32, value: u32) -> bool {
 fn d3d_enter(k: &Kernel, kind: HookKind, call: &Call<'_>) {
     let dev = call.gpr(3);
     if kind == HookKind::DrawLeaf {
-        if INTERNAL.with(|d| d.get()) == 0 {
+        let in_resolve = RESOLVES.with(|r| !r.borrow().is_empty());
+        if INTERNAL.with(|d| d.get()) == 0 || in_resolve {
             let seq = {
                 let mut c = CALLS.lock().unwrap();
                 c.next_draw = c.next_draw.wrapping_add(1);
@@ -292,6 +298,15 @@ fn d3d_enter(k: &Kernel, kind: HookKind, call: &Call<'_>) {
         INTERNAL.with(|d| d.set(d.get() + 1));
     }
     let Some(cmd) = d3d_command(k, kind, call) else { return };
+    if kind == HookKind::Resolve {
+        RESOLVES.with(|r| r.borrow_mut().push((dev, cmd)));
+        return;
+    }
+    queue_call(k, dev, cmd);
+}
+
+/// Queues a D3D call and puts its marker into the command buffer.
+fn queue_call(k: &Kernel, dev: u32, cmd: d3d_hle::command::Command) {
     let id = {
         let mut c = CALLS.lock().unwrap();
         c.next_call = c.next_call.wrapping_add(1);
@@ -307,6 +322,12 @@ fn d3d_enter(k: &Kernel, kind: HookKind, call: &Call<'_>) {
 fn d3d_leave(kind: HookKind) {
     if internal_call(kind) {
         INTERNAL.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+    if kind == HookKind::Resolve
+        && let Some((dev, cmd)) = RESOLVES.with(|r| r.borrow_mut().pop())
+        && let Some(k) = Kernel::try_global()
+    {
+        queue_call(k, dev, cmd);
     }
 }
 

@@ -77,6 +77,8 @@ pub(crate) struct Renderer {
     pub swap_timings: Vec<(std::time::Instant, Duration)>,
     /// `--gpu d3d`: executes the title's D3D calls and holds the surfaces draws render to.
     d3d: Option<std::rc::Rc<std::cell::RefCell<crate::d3d::D3dRenderer>>>,
+    /// `--render-debug d3d-surfaces`: what the next swap shows instead of the front buffer.
+    mosaic: Option<crate::present::FrontBuffer>,
 }
 
 impl Renderer {
@@ -111,6 +113,7 @@ impl Renderer {
             calls_at: (0, gpu_webgpu::counters::snapshot()),
             swap_timings: Vec::new(),
             d3d,
+            mosaic: None,
         }
     }
 
@@ -177,7 +180,11 @@ impl Renderer {
                         self.swap_timings.push((submitted, submitted.elapsed()));
                     }
                     self.executor.end_frame();
-                    let front = self.executor.front_buffer(fetch);
+                    // `--render-debug d3d-surfaces`: the surface mosaic made at the D3D present.
+                    let front = match self.mosaic.take() {
+                        Some(mosaic) => Some(mosaic),
+                        None => self.executor.front_buffer(fetch),
+                    };
                     let size = self.presenter.swap(&self.device, front);
                     gpu_webgpu::timing::collect();
                     if self.presenter.frames == 1 || self.presenter.frames.is_multiple_of(300) {
@@ -208,24 +215,14 @@ impl Renderer {
                     let d3d = self.d3d.clone().expect("checked above");
                     // The draws recorded so far go first (and the next draw starts a new pass:
                     // the call may change what the targets are).
+                    self.executor.flush();
+                    // The present itself is the swap that follows in the command stream: it
+                    // shows the front buffer from the GPU copy of guest memory, where the copy
+                    // draw stored it in the guest's format (gamma included), like the default
+                    // renderer does.
+                    let mosaic = d3d.borrow_mut().execute(&self.device, cmd);
                     if present {
-                        self.executor.end_frame();
-                    } else {
-                        self.executor.flush();
-                    }
-                    let front = d3d.borrow_mut().execute(&self.device, cmd);
-                    if present {
-                        let size = self.presenter.swap(&self.device, front);
-                        gpu_webgpu::timing::collect();
-                        if self.presenter.frames == 1 || self.presenter.frames.is_multiple_of(300) {
-                            log::info!("renderer: frame {}: {:?}", self.presenter.frames, self.executor.stats);
-                            let frames = self.presenter.frames - self.calls_at.0;
-                            if let Some(times) = gpu_times(frames) {
-                                log::info!("renderer: {times}");
-                            }
-                            self.calls_at = (self.presenter.frames, gpu_webgpu::counters::snapshot());
-                        }
-                        on_swap(self, size);
+                        self.mosaic = mosaic;
                     }
                 }
             }
