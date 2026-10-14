@@ -39,15 +39,19 @@ out_directory_path = "../generated/recomp"
 # switch_table_file_path = "skyrim_switch_tables.toml"
 
 # --- Register-in-context options ------------------------------------------------
-# Keep every one of these false. runtime-core's PPCContext mirrors the layout
-# in which all registers live in the context, and guest-sys refuses to build
-# output generated with any of them enabled.
+# Condition, count, fixed-point exception and reservation registers live in C++
+# locals of each generated function (a few % less guest CPU); runtime-core's
+# PPCContext keeps a field for every register either way. Keep skip_lr and
+# skip_msr false (blrl, guest backtraces and the lwarx sequences use them), and
+# keep the GPR/FPR/VMX options false: with non-volatile registers as locals the
+# title's __finally funclets, which read their parent frame's non-volatile
+# registers, see zeros and Skyrim deadlocks at boot.
 skip_lr = false
 skip_msr = false
-ctr_as_local = false
-xer_as_local = false
-reserved_as_local = false
-cr_as_local = false
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
 non_argument_as_local = false
 non_volatile_as_local = false
 
