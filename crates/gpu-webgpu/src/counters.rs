@@ -50,6 +50,8 @@ mod defs {
         set_bind_groups,
         draws,
         dispatches,
+        shader_modules,
+        shader_bytes,
     );
 }
 pub(crate) use defs::count;

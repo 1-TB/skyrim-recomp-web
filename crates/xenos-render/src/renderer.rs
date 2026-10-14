@@ -184,12 +184,17 @@ impl Renderer {
             .map(|g| format!("{} \"{}\" {:.1} MiB ({})", g.kind, g.label, mib(g.bytes), g.count))
             .collect();
         let cache = self.executor.texture_stats();
+        let calls = gpu_webgpu::counters::snapshot();
         format!(
-            "GPU memory {:.1} MiB in {} objects; texture cache {:.1} MiB in {} textures; largest: {}",
+            "GPU memory {:.1} MiB in {} objects; texture cache {:.1} MiB in {} textures; {} shader modules \
+             ({:.1} MiB of WGSL), {} pipelines; largest: {}",
             mib(total),
             groups.iter().map(|g| g.count).sum::<u64>(),
             mib(cache.host_bytes),
             cache.textures,
+            calls.shader_modules,
+            mib(calls.shader_bytes),
+            calls.pipelines,
             top.join(", ")
         )
     }

@@ -414,6 +414,8 @@ impl Device {
 
     /// Compile errors surface through error scopes / the uncaptured-error log.
     pub fn create_shader_module_wgsl(&self, label_: &str, code: &str) -> ShaderModule {
+        crate::counters::add(&crate::counters::count::shader_modules, 1);
+        crate::counters::add(&crate::counters::count::shader_bytes, code.len() as u64);
         let mut source = ffi::WGPUShaderSourceWGSL { code: sv(code), ..Default::default() };
         let raw = ffi::WGPUShaderModuleDescriptor {
             nextInChain: ptr::from_mut(&mut source).cast::<ffi::WGPUChainedStruct>(),

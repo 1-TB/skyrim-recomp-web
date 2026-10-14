@@ -9,9 +9,10 @@
 //          --dist web-dist --game <game dir> --profile <browser profile dir> --out <output dir>
 //          [--seconds 120] [--shot-every 10] [--args "--log info"] [--port 8091] [--reload-after S]
 //          [--stacks-at S[,S...]] [--audio] [--profile-at S:SECONDS] [--stream] [--saves DIR]
-//          [--step "CONDITION => ACTIONS" ...] [--step-timeout S]
+//          [--step "CONDITION => ACTIONS" ...] [--step-timeout S] [--allocators]
 //
-// `--shot-every 0` turns the periodic screenshots off.
+// `--shot-every 0` turns the periodic screenshots off. `--allocators` adds Chromium's memory-infra
+// allocator sizes per process to each measurement (slow; only for finding where memory goes).
 //
 // `--stream` skips the OPFS import and has the runtime stream the game from this server instead
 // (`--stream-game`), through the same /game/manifest and ranged /game/files/ endpoints as
@@ -43,7 +44,8 @@
 //   after:S            S seconds since the step became active
 // Actions: `tap BUTTON` (port 1, held for 200 ms and two presented frames), `tap BUTTON every S`
 // (repeats until the next step's condition holds), `shot NAME`, `measure S LABEL` (collects the
-// perf reports and memory use for S seconds into the summary), `wait S`, `exit`. E.g.
+// perf reports and memory use for S seconds into the summary), `wait S`, `gc` (collects garbage in
+// the page and every worker), `exit`. E.g.
 //   --step "log:XamContentCreateEnumerator => measure 15 title" --step "=> exit"
 // The summary of every `measure` is printed at the end and written to OUT/summary.json.
 import { createServer } from 'node:http';
@@ -97,6 +99,7 @@ function parseStep(text) {
       case 'shot': return { kind: 'shot', name: w[1] ?? 'shot' };
       case 'measure': return { kind: 'measure', seconds: Number(w[1]), label: w[2] ?? `measure${w[1]}` };
       case 'wait': return { kind: 'wait', seconds: Number(w[1]) };
+      case 'gc': return { kind: 'gc' };
       case 'exit': return { kind: 'exit' };
       default: throw new Error(`--step ${text}: unknown action ${a}`);
     }
@@ -122,6 +125,7 @@ const stacksAt = option('stacks-at', '').split(',').filter(Boolean).map(Number);
 const saves = process.argv.includes('--saves') ? resolve(option('saves')) : null;
 const steps = options('step').map(parseStep);
 const stepTimeout = Number(option('step-timeout', '300'));
+const allocatorDumps = process.argv.includes('--allocators');
 mkdirSync(out, { recursive: true });
 const logPath = join(out, 'log.txt');
 writeFileSync(logPath, '');
@@ -208,6 +212,7 @@ const args = (process.env.CHROME_ARGS ??
   '--enable-unsafe-webgpu --enable-features=Vulkan --use-vulkan=swiftshader --use-webgpu-adapter=swiftshader')
   .split(/\s+/).filter(Boolean);
 if (audio) args.push('--autoplay-policy=no-user-gesture-required');
+if (allocatorDumps) args.push('--remote-debugging-port=0');
 const context = await chromium.launchPersistentContext(profile, {
   channel: 'chromium',
   headless: !!process.env.HEADLESS,
@@ -387,7 +392,7 @@ async function tap(name, mask) {
 
 const PERF = /perf: ([\d.]+) fps, (\d+) draws\/frame; renderer thread: (\d+)% executing, (\d+)% waiting for the GPU, (\d+)% waiting for the game/;
 const PER_FRAME = /perf: per frame: .*?(\d+) submits, (\d+) write_buffer \((\d+) KiB\), (\d+) write_texture/;
-const GPU_MEMORY = /perf: GPU memory ([\d.]+) MiB in (\d+) objects; texture cache ([\d.]+) MiB in (\d+) textures; largest: (.*)/;
+const GPU_MEMORY = /perf: GPU memory ([\d.]+) MiB in (\d+) objects; texture cache ([\d.]+) MiB in (\d+) textures; (.*)/;
 
 /// This browser's processes: the one started with the profile and its descendants, with each
 /// one's `--type` (the page's renderer, the GPU process, ...; none for the browser itself).
@@ -431,6 +436,99 @@ function processMemory() {
     }
   }
   return byType;
+}
+
+/// The largest kinds of mappings (by PSS) of this browser's renderer and GPU processes: which of the wasm
+/// memory, compiled code and driver allocations hold the memory.
+function largestMappings() {
+  const result = [];
+  for (const { pid, type } of browserProcesses().filter((p) => p.type === 'renderer' || p.type === 'gpu-process')) {
+    try {
+      let current = null;
+      for (const line of readFileSync(`/proc/${pid}/smaps`, 'utf8').split('\n')) {
+        const head = /^([0-9a-f]+)-([0-9a-f]+) (\S+) \S+ \S+ \S+\s*(.*)$/.exec(line);
+        if (head) {
+          current = { pid, type, sizeMiB: (parseInt(head[2], 16) - parseInt(head[1], 16)) / 2 ** 20, perms: head[3], name: head[4], pssMiB: 0 };
+          result.push(current);
+        } else if (current && line.startsWith('Pss:')) {
+          current.pssMiB = Number(/(\d+)/.exec(line)[1]) / 1024;
+        }
+      }
+    } catch {
+      // Gone.
+    }
+  }
+  // Grouped by process type and mapping name (anonymous memory comes in many mappings).
+  const groups = new Map();
+  for (const m of result) {
+    const key = `${m.type} ${m.perms} ${m.name}`;
+    const g = groups.get(key) ?? { type: m.type, perms: m.perms, name: m.name, mappings: 0, sizeMiB: 0, pssMiB: 0 };
+    g.mappings += 1;
+    g.sizeMiB += m.sizeMiB;
+    g.pssMiB += m.pssMiB;
+    groups.set(key, g);
+  }
+  return [...groups.values()]
+    .sort((a, b) => b.pssMiB - a.pssMiB)
+    .slice(0, 12)
+    .map((g) => ({ ...g, sizeMiB: Math.round(g.sizeMiB), pssMiB: Math.round(g.pssMiB) }));
+}
+
+/// Chromium's own accounting of its processes' memory (a memory-infra dump through DevTools
+/// tracing): the largest allocators by size in each process, e.g. `partition_alloc/partitions/
+/// array_buffer`, `gpu/dawn`, `v8/main/heap`.
+async function allocatorDump() {
+  // Memory dumps need the browser target, which Playwright's persistent contexts don't expose:
+  // talk to it over the remote debugging port (written to DevToolsActivePort in the profile).
+  const [port, path] = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').trim().split('\n');
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+  await new Promise((res, rej) => {
+    ws.onopen = res;
+    ws.onerror = rej;
+  });
+  const events = [];
+  const replies = new Map();
+  let complete;
+  const completed = new Promise((r) => (complete = r));
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.id) replies.get(msg.id)?.(msg);
+    else if (msg.method === 'Tracing.dataCollected') events.push(...msg.params.value);
+    else if (msg.method === 'Tracing.tracingComplete') complete();
+  };
+  let nextId = 1;
+  const send = (method, params = {}) =>
+    new Promise((res) => {
+      const id = nextId++;
+      replies.set(id, res);
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+  await send('Tracing.start', {
+    traceConfig: { includedCategories: ['disabled-by-default-memory-infra'], memoryDumpConfig: { triggers: [] } },
+  });
+  // Every process must have started tracing, or the dump fails.
+  await sleep(2000);
+  const dump = await send('Tracing.requestMemoryDump', { deterministic: true, levelOfDetail: 'detailed' });
+  await send('Tracing.end');
+  await completed;
+  ws.close();
+  // `success` is false when any process failed to dump; the others' dumps are still there.
+  const types = Object.fromEntries(browserProcesses().map((p) => [String(p.pid), p.type]));
+  const byProcess = {};
+  for (const e of events) {
+    const allocators = e.ph === 'v' && e.args?.dumps?.allocators;
+    if (!allocators) continue;
+    const rows = Object.entries(allocators)
+      .map(([name, a]) => [name, parseInt(a.attrs?.size?.value ?? '0', 16)])
+      // Shallow names only: deeper ones repeat their parents' bytes.
+      .filter(([name, size]) => size >= 8 << 20 && name.split('/').length <= 3)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([name, size]) => `${name} ${(size / 2 ** 20).toFixed(0)} MiB`);
+    byProcess[`${types[String(e.pid)] ?? 'other'} ${e.pid}`] = rows;
+  }
+  if (!dump.result?.success) byProcess.incomplete = true;
+  return byProcess;
 }
 
 /// GPU memory the driver attributes to this browser's processes (NVIDIA only), in MiB.
@@ -500,13 +598,15 @@ async function measure(seconds, label) {
     gpuLiveObjects: gpu ? Number(gpu[2]) : null,
     textureCacheMiB: gpu ? Number(gpu[3]) : null,
     textureCacheTextures: gpu ? Number(gpu[4]) : null,
-    gpuLargest: gpu?.[5] ?? null,
+    gpuDetail: gpu?.[5] ?? null,
     wasmMiB: page_.wasmBytes ? page_.wasmBytes / 2 ** 20 : null,
     jsHeapMiB: page_.jsHeapBytes != null ? page_.jsHeapBytes / 2 ** 20 : null,
     uaSpecificMiB: page_.uaBytes != null ? page_.uaBytes / 2 ** 20 : null,
     uaBreakdown: page_.uaBreakdown ?? null,
     processPssMiB: Object.fromEntries(Object.entries(processMemory()).map(([k, v]) => [k, v / 1024])),
     driverGpuMiB: driverGpuMemory(),
+    largestMappings: largestMappings(),
+    allocators: allocatorDumps ? await allocatorDump().catch((e) => ({ error: e.message })) : null,
   };
   measurements.push(row);
   note(`[${elapsed().toFixed(1)} s] measured "${label}": ${JSON.stringify(row)}`);
@@ -598,6 +698,8 @@ if (steps.length === 0) {
         await measure(a.seconds, a.label);
       } else if (a.kind === 'wait') {
         await pumpFor(a.seconds);
+      } else if (a.kind === 'gc') {
+        await collectGarbage();
       } else if (a.kind === 'exit') {
         break run;
       }
@@ -663,6 +765,38 @@ async function profileWorkers(seconds) {
       top.map(([n, c]) => `  ${((100 * c) / total).toFixed(1).padStart(5)}%  ${n}`).join('\n'));
   }
   await cdp.detach();
+}
+
+/// Collects garbage in the page and every worker. Workers that allocate little JS rarely collect
+/// on their own, so their dead ArrayBuffers (and WebGPU wrappers) can hold native memory.
+async function collectGarbage() {
+  const cdp = await context.newCDPSession(page);
+  const workers = new Set();
+  const pending = new Map();
+  let nextId = 1;
+  cdp.on('Target.attachedToTarget', (e) => workers.add(e.sessionId));
+  cdp.on('Target.receivedMessageFromTarget', (e) => {
+    const msg = JSON.parse(e.message);
+    if (msg.id && pending.has(msg.id)) {
+      pending.get(msg.id)(msg);
+      pending.delete(msg.id);
+    }
+  });
+  const send = (sessionId, method, params = {}) =>
+    new Promise((resolve) => {
+      const id = nextId++;
+      pending.set(id, resolve);
+      cdp
+        .send('Target.sendMessageToTarget', { sessionId, message: JSON.stringify({ id, method, params }) })
+        .catch(() => resolve(null));
+      setTimeout(() => resolve(null), 10000);
+    });
+  await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: false });
+  await sleep(1000);
+  await cdp.send('HeapProfiler.collectGarbage');
+  for (const id of workers) await send(id, 'HeapProfiler.collectGarbage');
+  await cdp.detach();
+  note(`[${elapsed().toFixed(1)} s] step: collected garbage in the page and ${workers.size} workers`);
 }
 
 /// Pauses every worker and logs its call stack.
