@@ -9,7 +9,7 @@ const statusEl = $('status');
 // Settings, kept in this browser (localStorage may be unavailable: then they last this visit).
 const SETTINGS_KEY = 'skyrt-settings';
 const DEFAULTS = {
-  source: 'local', fps: '30', log: 'info', touch: 'auto', sensitivity: 1, volume: 1, perf: false, upload: true,
+  source: 'local', sync: true, fps: '30', log: 'info', touch: 'auto', sensitivity: 1, volume: 1, perf: false, upload: true,
   debug: [], extra: '',
 };
 const settings = { ...DEFAULTS };
@@ -237,6 +237,51 @@ async function localGameReady() {
   }
 }
 
+// The runtime is recompiled against one default.xex (with its title update), so an imported copy
+// goes stale whenever the server's game folder is rebuilt. Before booting imported files, copy
+// default.xex and $TitleUpdate/ from the server when they are missing or differ in size, or when
+// the server's default.xex changed since the last copy (its ETag is remembered).
+const SYNCED_KEY = 'skyrt-synced-xex';
+
+async function syncFromServer() {
+  if (!(await streamAvailable())) return;
+  const manifest = (await (await fetch(STREAM_BASE + 'manifest')).text())
+    .split('\n')
+    .map((line) => line.split('\t'))
+    .filter(([size, path]) => path && (path === 'default.xex' || path.startsWith('$TitleUpdate/')));
+  const head = await fetch(STREAM_BASE + 'files/default.xex', { method: 'HEAD' });
+  const xexStamp = head.headers.get('ETag') ?? head.headers.get('Content-Length');
+  let synced = null;
+  try {
+    synced = localStorage.getItem(SYNCED_KEY);
+  } catch {}
+  const root = await gameDir(true);
+  let copied = 0;
+  for (const [size, path] of manifest) {
+    const parts = path.split('/');
+    let dir = root;
+    for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
+    const name = parts[parts.length - 1];
+    let local = null;
+    try {
+      local = await (await dir.getFileHandle(name)).getFile();
+    } catch {}
+    const stale = !local || local.size !== Number(size) || (path === 'default.xex' && synced !== xexStamp);
+    if (!stale) continue;
+    statusEl.textContent = `Updating ${path} from the server…`;
+    const response = await fetch(STREAM_BASE + 'files/' + parts.map(encodeURIComponent).join('/'));
+    if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+    const out = await (await dir.getFileHandle(name, { create: true })).createWritable();
+    await response.body.pipeTo(out);
+    copied += 1;
+  }
+  try {
+    localStorage.setItem(SYNCED_KEY, xexStamp);
+  } catch {}
+  statusEl.textContent = copied ? `Updated ${copied} file(s) from the server.` : '';
+  if (copied) log(`Updated ${copied} file(s) (default.xex / title update) from the server.`);
+}
+
 async function showSource() {
   const stream = settings.source === 'stream';
   $('local-controls').hidden = stream;
@@ -262,6 +307,7 @@ let touch = null;
 const touchWanted = () => settings.touch === 'on' || (settings.touch === 'auto' && matchMedia('(pointer: coarse)').matches);
 
 bindSetting('source', 'source', String, showSource);
+bindSetting('s-sync', 'sync', Boolean);
 bindSetting('s-fps', 'fps');
 bindSetting('s-log', 'log');
 bindSetting('s-touch', 'touch', String, () => { if (touch) touch.visible = touchWanted(); });
@@ -368,9 +414,18 @@ $('boot').onclick = async () => {
       log('The server offers no game files: start it with `cargo xtask serve --game-dir DIR`, or import the game.');
       return;
     }
-  } else if (!(await localGameReady())) {
-    log('No game/default.xex in this browser; import the game folder (or a .zip of it) first, or stream it.');
-    return;
+  } else {
+    if (settings.sync) {
+      try {
+        await syncFromServer();
+      } catch (e) {
+        log(`Updating from the server failed (${e.message}); booting the imported files as they are.`);
+      }
+    }
+    if (!(await localGameReady())) {
+      log('No game/default.xex in this browser; import the game folder (or a .zip of it) first, or stream it.');
+      return;
+    }
   }
   $('boot').disabled = true;
   // Audio needs a user gesture to start: set it up during this click.

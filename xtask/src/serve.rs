@@ -179,7 +179,11 @@ fn serve_game_file(
     let Ok(mut file) = std::fs::File::open(&path) else {
         return respond(stream, "404 Not Found", "text/plain", b"not found", head);
     };
-    let len = file.metadata()?.len();
+    let meta = file.metadata()?;
+    let len = meta.len();
+    // Same form as static files' ETag: the page compares it to notice a rebuilt default.xex.
+    let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+    let etag = format!("\"{:x}-{:x}\"", len, modified.map_or(0, |d| d.as_nanos()));
     let (status, start, end) = match range {
         None => ("200 OK", 0, len),
         Some(r) => match parse_range(r, len) {
@@ -200,6 +204,7 @@ fn serve_game_file(
          Content-Type: application/octet-stream\r\n\
          Content-Length: {}\r\n\
          {content_range}\
+         ETag: {etag}\r\n\
          Accept-Ranges: bytes\r\n\
          Cross-Origin-Opener-Policy: same-origin\r\n\
          Cross-Origin-Embedder-Policy: require-corp\r\n\
