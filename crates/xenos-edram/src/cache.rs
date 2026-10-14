@@ -1209,7 +1209,7 @@ impl EdramCache {
         for clear in &clears {
             let previous = self.ownership.claim(clear.start, clear.length, clear.key);
             self.encode_transfers(device, encoder, clear.key, &previous, Some(clear.rect), None);
-            self.encode_clear(device, encoder, clear);
+            self.encode_clear(device, encoder, clear, None);
             if clear.key.is_depth {
                 result.cleared_depth = true;
             } else {
@@ -1308,71 +1308,130 @@ struct ClearPlan {
     value: [u32; 2],
 }
 
-/// A resolve source outside the EDRAM emulation: a host texture standing for one surface (the
-/// `--gpu d3d` renderer's D3D surfaces).
+/// A resolve source outside the EDRAM emulation: a host texture standing for one whole surface
+/// (the `--gpu d3d` renderer's D3D surfaces).
 pub struct ExternalSource<'a> {
     pub texture: &'a Texture,
     pub format: TextureFormat,
     pub width: u32,
     pub height: u32,
+    /// Host samples: 1, or 4 for 2x and 4x MSAA (laid out as the EDRAM render targets are).
+    pub samples: u32,
     pub depth: bool,
-    /// The surface's EDRAM base tile (RB_COLOR_INFO / RB_DEPTH_INFO), which its pixels are
-    /// addressed from.
+    /// The surface's EDRAM base tile (RB_COLOR_INFO / RB_DEPTH_INFO), which the resolve's
+    /// EDRAM addresses are relative to.
     pub base_tiles: u32,
+    /// Where EDRAM pixel (0, 0) relative to the base is in the texture: a predicated tile's
+    /// screen origin (the texture holds the whole surface, EDRAM only the tile).
+    pub offset: [u32; 2],
+}
+
+impl ExternalSource<'_> {
+    fn host_rt(&self, key: RenderTargetKey) -> HostRt {
+        let attachment = self.texture.create_view(None);
+        let (read, stencil) = if self.depth {
+            let view = |aspect| self.texture.create_view(Some(&TextureViewDescriptor { aspect, ..Default::default() }));
+            (view(TextureAspect::DepthOnly), Some(view(TextureAspect::StencilOnly)))
+        } else {
+            (attachment.clone(), None)
+        };
+        HostRt {
+            key,
+            texture: self.texture.clone(),
+            attachment,
+            read,
+            stencil,
+            format: self.format,
+            samples: self.samples,
+            width: self.width,
+            height: self.height,
+            idle_frames: 0,
+            idle_since: None,
+        }
+    }
 }
 
 impl EdramCache {
-    /// Resolves from `source` instead of the EDRAM render targets: its pixels are laid out as
-    /// the surface described by the resolve's source registers, then converted and stored into
-    /// `shared` like any resolve. Only the copy is done (no clears).
+    /// Resolves from host textures standing for the bound surfaces instead of the EDRAM render
+    /// targets: the copy source (`color` or `depth`, as the resolve selects) is laid out as the
+    /// surface described by the resolve's source registers, converted and stored into `shared`
+    /// like any resolve; the clears the resolve asks for clear the rectangle of `color` /
+    /// `depth`.
     pub fn resolve_external(
         &mut self,
         device: &Device,
         encoder: &mut CommandEncoder,
         info: &ResolveInfo,
         shared: &SharedMemoryTarget<'_>,
-        source: &ExternalSource<'_>,
+        color: Option<&ExternalSource<'_>>,
+        depth: Option<&ExternalSource<'_>>,
     ) -> Result<ResolveResult, EdramError> {
         let mut result = ResolveResult { written: None, cleared_depth: false, cleared_color: false };
         if info.rect.is_empty() {
             return Ok(result);
         }
-        let Some(plan) = self.plan_copy(info)? else { return Ok(result) };
-        let s = plan.source;
-        let key = RenderTargetKey {
-            base_tiles: source.base_tiles & (EDRAM_TILE_COUNT - 1),
-            pitch_tiles_at_32bpp: s.pitch_tiles >> u32::from(s.format_is_64bpp),
-            msaa_samples: s.msaa_samples,
-            is_depth: s.is_depth,
-            format: s.format,
-        };
-        let attachment = source.texture.create_view(None);
-        let (read, stencil) = if source.depth {
-            let view =
-                |aspect| source.texture.create_view(Some(&TextureViewDescriptor { aspect, ..Default::default() }));
-            (view(TextureAspect::DepthOnly), Some(view(TextureAspect::StencilOnly)))
-        } else {
-            (attachment.clone(), None)
-        };
-        let rt = HostRt {
-            key,
-            texture: source.texture.clone(),
-            attachment,
-            read,
-            stencil,
-            format: source.format,
-            samples: 1,
-            width: source.width,
-            height: source.height,
-            idle_frames: 0,
-            idle_since: None,
-        };
-        match self.encode_copy(device, encoder, info, plan, Some(shared), Some(&rt)) {
-            CopyOutput::Stored { written } => result.written = Some(written),
-            // A destination outside the GPU copy of memory: nothing is read back here.
-            CopyOutput::Readback(copy) => self.retired_buffers.push(copy.readback),
+        if let Some(plan) = self.plan_copy(info)? {
+            let s = plan.source;
+            let source = if s.is_depth { depth } else { color };
+            if let Some(source) = source {
+                let key = RenderTargetKey {
+                    base_tiles: source.base_tiles & (EDRAM_TILE_COUNT - 1),
+                    pitch_tiles_at_32bpp: s.pitch_tiles >> u32::from(s.format_is_64bpp),
+                    msaa_samples: s.msaa_samples,
+                    is_depth: s.is_depth,
+                    format: s.format,
+                };
+                let rt = source.host_rt(key);
+                match self.encode_copy(device, encoder, info, plan, Some(shared), Some((&rt, source.offset))) {
+                    CopyOutput::Stored { written } => result.written = Some(written),
+                    // A destination outside the GPU copy of memory: nothing is read back here.
+                    CopyOutput::Readback(copy) => self.retired_buffers.push(copy.readback),
+                }
+            }
+        }
+        for clear in self.plan_clears(info)? {
+            let target = if clear.key.is_depth { depth } else { color };
+            let Some(target) = target else { continue };
+            let rt = target.host_rt(clear.key);
+            self.encode_clear(device, encoder, &clear, Some((&rt, target.offset)));
+            if clear.key.is_depth {
+                result.cleared_depth = true;
+            } else {
+                result.cleared_color = true;
+            }
         }
         Ok(result)
+    }
+
+    /// Copies `src`'s contents into `dst` as EDRAM would see them when both surfaces cover the
+    /// same EDRAM tiles (the title writes one and reads the other, e.g. a depth buffer restored
+    /// by drawing its texture into a color target at the same base), converting the format
+    /// like an ownership transfer. Only for surfaces that fit in EDRAM; returns whether it was
+    /// done.
+    pub fn transfer_external(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        src: (&ExternalSource<'_>, RenderTargetKey),
+        dst: (&ExternalSource<'_>, RenderTargetKey),
+    ) -> bool {
+        let ((src, src_key), (dst, dst_key)) = (src, dst);
+        if src_key == dst_key || self.rts.contains_key(&src_key) || self.rts.contains_key(&dst_key) {
+            return false;
+        }
+        let tile_h = EDRAM_TILE_HEIGHT_SAMPLES >> dst_key.msaa_samples.samples_y_log2();
+        let tiles = dst_key.pitch_tiles() * dst.height.div_ceil(tile_h);
+        if tiles > EDRAM_TILE_COUNT || dst.offset != [0, 0] || src.offset != [0, 0] {
+            return false;
+        }
+        let start = src_key.base_tiles & (EDRAM_TILE_COUNT - 1);
+        self.rts.insert(src_key, src.host_rt(src_key));
+        self.rts.insert(dst_key, dst.host_rt(dst_key));
+        let range = OwnedRange { start, end: start + tiles, owner: src_key };
+        self.encode_transfers(device, encoder, dst_key, &[range], None, None);
+        self.rts.remove(&src_key);
+        self.rts.remove(&dst_key);
+        true
     }
 
     fn plan_copy(&self, info: &ResolveInfo) -> Result<Option<CopyPlan>, EdramError> {
@@ -1498,9 +1557,19 @@ impl EdramCache {
         Ok(plans)
     }
 
-    fn encode_clear(&mut self, device: &Device, encoder: &mut CommandEncoder, clear: &ClearPlan) {
-        let rt = &self.rts[&clear.key];
-        let (format, samples) = (rt.format, rt.samples);
+    /// Clears `clear.rect` of its render target, or of `external` (a host texture with the
+    /// rectangle's origin at the offset).
+    fn encode_clear(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        clear: &ClearPlan,
+        external: Option<(&HostRt, [u32; 2])>,
+    ) {
+        let (format, samples) = match external {
+            Some((rt, _)) => (rt.format, rt.samples),
+            None => (self.rts[&clear.key].format, self.rts[&clear.key].samples),
+        };
         let pipeline = self.pipelines.clear(device, format, samples, clear.key.is_depth);
         let params = uniform(&self.params, device, &[clear.value[0], clear.value[1], format_code(&clear.key), 0]);
         let bind_group = cached_bind_group(
@@ -1510,7 +1579,10 @@ impl EdramCache {
             self.pipelines.clear_layout(),
             &[BindGroupEntry { binding: 0, resource: params.binding() }],
         );
-        let rt = &self.rts[&clear.key];
+        let (rt, offset) = match external {
+            Some((rt, offset)) => (rt, offset),
+            None => (&self.rts[&clear.key], [0, 0]),
+        };
         let color = [Some(RenderPassColorAttachment::load(&rt.attachment))];
         let depth = RenderPassDepthStencilAttachment {
             view: &rt.attachment,
@@ -1528,8 +1600,14 @@ impl EdramCache {
         } else {
             encoder.begin_render_pass("edram clear", &color, None)
         };
-        let [x0, y0, x1, y1] = clear.rect.map(|v| v * self.scale);
-        pass.set_scissor_rect(x0, y0, x1.min(rt.width) - x0, y1.min(rt.height) - y0);
+        let [x0, y0, x1, y1] = clear.rect;
+        let [x0, y0, x1, y1] = [x0 + offset[0], y0 + offset[1], x1 + offset[0], y1 + offset[1]].map(|v| v * self.scale);
+        let (x1, y1) = (x1.min(rt.width), y1.min(rt.height));
+        if x0 >= x1 || y0 >= y1 {
+            pass.end();
+            return;
+        }
+        pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &params.dynamic_offset());
         pass.set_stencil_reference(clear.value[0] & 0xFF);
@@ -1544,8 +1622,12 @@ impl EdramCache {
         info: &ResolveInfo,
         plan: CopyPlan,
         shared: Option<&SharedMemoryTarget<'_>>,
-        external: Option<&HostRt>,
+        external: Option<(&HostRt, [u32; 2])>,
     ) -> CopyOutput {
+        let (external, offset) = match external {
+            Some((rt, offset)) => (Some(rt), offset),
+            None => (None, [0, 0]),
+        };
         let source = plan.source;
         // Dump the source tiles from their owners (or the external source) into the
         // EDRAM-layout buffer.
@@ -1581,8 +1663,8 @@ impl EdramCache {
                         format_code(&rt.key),
                         rt.width,
                         rt.height,
-                        0,
-                        0,
+                        offset[0] * self.scale,
+                        offset[1] * self.scale,
                         0,
                     ],
                 );

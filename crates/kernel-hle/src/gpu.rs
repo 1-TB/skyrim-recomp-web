@@ -51,6 +51,9 @@ pub mod reg {
     pub const D1MODE_V_COUNTER: u32 = 0x194C;
     pub const D1MODE_INTERRUPT_STATUS: u32 = 0x1951;
     pub const D1MODE_VIEWPORT_SIZE: u32 = 0x1961;
+    pub const PA_SC_WINDOW_OFFSET: u32 = 0x2080;
+    pub const PA_SC_WINDOW_SCISSOR_TL: u32 = 0x2081;
+    pub const PA_SC_WINDOW_SCISSOR_BR: u32 = 0x2082;
     pub const VGT_EVENT_INITIATOR: u32 = 0x21F9;
     pub const VGT_DMA_BASE: u32 = 0x21FA;
     pub const VGT_DMA_SIZE: u32 = 0x21FB;
@@ -464,8 +467,11 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         d3d_writes: Vec::new(),
         d3d_packet: (0, 0),
         d3d_last_writer: std::collections::HashMap::new(),
-        d3d_draw_next: false,
-        d3d_last_draw: 0,
+        d3d_draw_next: None,
+        d3d_ran: std::collections::HashSet::new(),
+        d3d_predicated: None,
+        d3d_peek: false,
+        d3d_scissor: None,
         d3d_draws: (0, 0),
     };
     let mut read_index = 0u32;
@@ -565,13 +571,59 @@ struct CommandProcessor<'a> {
     /// opcode) and its address, and per register the last one that wrote it.
     d3d_packet: (u32, u32),
     d3d_last_writer: std::collections::HashMap<u32, (u32, u32)>,
-    /// `--gpu d3d`: draw packets are the title's (a draw marker with a new sequence number came
-    /// before them, and no D3D call or indirect buffer since: one call can emit several draw
-    /// packets), and the last draw sequence number seen.
-    d3d_draw_next: bool,
-    d3d_last_draw: u32,
+    /// `--gpu d3d`: the draw marker the draw packets at hand follow (no D3D call since: one
+    /// call can emit several draw packets, and a marker can be left before the end of a
+    /// command buffer segment, its draw in the next), and whether they run.
+    d3d_draw_next: Option<D3dDraw>,
+    /// `--gpu d3d`: the title draws that ran this frame. With predicated tiling the command
+    /// buffer is replayed per tile; a draw runs in the first tile it is not predicated out of
+    /// (with that tile's state) and covers the whole surface there.
+    d3d_ran: std::collections::HashSet<u32>,
+    /// `--gpu d3d`: the bin mask of the predicated packet being executed.
+    d3d_predicated: Option<u64>,
+    /// `--gpu d3d`: a predicated-out packet is read only for the window scissor it writes.
+    d3d_peek: bool,
+    /// `--gpu d3d`: the union of the per-tile window scissors written since the last group.
+    d3d_scissor: Option<TileScissor>,
     /// `--gpu d3d`: draw packets run and left out since the last report.
     d3d_draws: (u64, u64),
+}
+
+/// A `--gpu d3d` draw marker reached.
+#[derive(Clone, Copy, Debug)]
+struct D3dDraw {
+    seq: u32,
+    /// A resolve's copy draw (runs in every tile).
+    resolve: bool,
+    /// The draw packets after the marker run.
+    runs: bool,
+}
+
+/// `--gpu d3d`: PA_SC_WINDOW_SCISSOR_TL/BR as D3D writes them for each tile of predicated
+/// tiling (the title's scissor clipped to the tile), merged back into the whole surface's.
+#[derive(Clone, Copy, Debug)]
+struct TileScissor {
+    /// Bins of the tiles merged into each corner so far.
+    tl_bins: u64,
+    br_bins: u64,
+    tl: u32,
+    br: u32,
+}
+
+impl TileScissor {
+    fn merge(corner: &mut u32, bins: &mut u64, mask: u64, value: u32, min: bool) {
+        // A tile already merged starts the next group.
+        if *bins & mask != 0 || *bins == 0 {
+            *bins = mask;
+            *corner = value;
+            return;
+        }
+        *bins |= mask;
+        let pick = |a: u32, b: u32| if min { a.min(b) } else { a.max(b) };
+        let x = pick(*corner & 0x7FFF, value & 0x7FFF);
+        let y = pick((*corner >> 16) & 0x7FFF, (value >> 16) & 0x7FFF);
+        *corner = (value & 0x8000_8000) | y << 16 | x;
+    }
 }
 
 /// Register-file base of each SET_CONSTANT / LOAD_ALU_CONSTANT type.
@@ -733,29 +785,29 @@ impl CommandProcessor<'_> {
                 if count > r.remaining {
                     return self.overflow(start, packet, count, r.remaining);
                 }
-                // Predicated packets run only in the tiles they cover. With `--gpu d3d` surfaces are
-                // whole (no tiling): each draw runs once, the first time it comes by, whichever
-                // tiles it covers, so the state packets before it must run in that tile too (a
-                // draw outside the first tile otherwise kept the state the clear left, e.g. its
-                // blend). Synchronization packets keep their predication.
-                let tile_draw = matches!(
-                    opcode,
-                    pm4::DRAW_INDX
-                        | pm4::DRAW_INDX_2
-                        | pm4::SET_CONSTANT
-                        | pm4::SET_CONSTANT2
-                        | pm4::SET_SHADER_CONSTANTS
-                        | pm4::LOAD_ALU_CONSTANT
-                        | pm4::IM_LOAD
-                        | pm4::IM_LOAD_IMMEDIATE
-                ) && crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d;
-                let predicated_out = (self.bin_select & self.bin_mask) == 0 && !tile_draw;
+                // Predicated packets run only in the tiles they cover.
+                let predicated_out = (self.bin_select & self.bin_mask) == 0;
+                let d3d = crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d;
                 if packet & 1 != 0 && (predicated_out || opcode == pm4::XE_SWAP) {
+                    // `--gpu d3d` merges the tiles' window scissors (see TileScissor).
+                    if d3d && predicated_out && matches!(opcode, pm4::SET_CONSTANT | pm4::SET_CONSTANT2) {
+                        let at = (r.pos, r.remaining);
+                        self.d3d_peek = true;
+                        self.d3d_predicated = Some(self.bin_mask);
+                        self.type3(r, opcode, count);
+                        self.d3d_peek = false;
+                        self.d3d_predicated = None;
+                        (r.pos, r.remaining) = at;
+                    }
                     r.skip(count);
                     return true;
                 }
+                if d3d && packet & 1 != 0 {
+                    self.d3d_predicated = Some(self.bin_mask);
+                }
                 let end = r.remaining - count;
                 let ok = self.type3(r, opcode, count);
+                self.d3d_predicated = None;
                 // Every handler consumes exactly its payload; enforce it so a
                 // short read can't desynchronize the stream.
                 if r.remaining > end {
@@ -792,6 +844,7 @@ impl CommandProcessor<'_> {
                 let (fb, w, h) = (r.read(mem), r.read(mem), r.read(mem));
                 self.flush_registers();
                 if crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d {
+                    self.d3d_ran.clear();
                     let n = self.k.gpu.swaps.load(Ordering::Relaxed) + 1;
                     if n.is_multiple_of(600) {
                         let (run, left) = std::mem::take(&mut self.d3d_draws);
@@ -811,7 +864,6 @@ impl CommandProcessor<'_> {
                 self.frame_draws = 0;
             }
             pm4::INDIRECT_BUFFER | pm4::INDIRECT_BUFFER_PFD => {
-                self.d3d_draw_next = false;
                 let ptr = r.read(mem) & 0x1FFF_FFFF;
                 let length = r.read(mem) & 0xF_FFFF;
                 log::trace!("indirect buffer {ptr:#010X}, {length} dwords");
@@ -954,17 +1006,17 @@ impl CommandProcessor<'_> {
                 self.d3d_draws.1 += 1;
                 r.skip(count);
             }
-            pm4::DRAW_INDX => {
+            pm4::DRAW_INDX | pm4::DRAW_INDX_2 => {
                 self.d3d_draws.0 += 1;
                 self.frame_draws += 1;
                 self.verify_d3d_draw();
-                self.draw(r, count, true)
-            }
-            pm4::DRAW_INDX_2 => {
-                self.d3d_draws.0 += 1;
-                self.frame_draws += 1;
-                self.verify_d3d_draw();
-                self.draw(r, count, false)
+                let whole = self.d3d_whole_surface();
+                self.draw(r, count, opcode == pm4::DRAW_INDX);
+                if let Some(saved) = whole {
+                    for (i, v) in saved.into_iter().enumerate() {
+                        self.write_register(reg::PA_SC_WINDOW_OFFSET + i as u32, v);
+                    }
+                }
             }
             // A `--gpu d3d` marker (see crate::d3d).
             pm4::NOP if count >= 3 && crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d => {
@@ -1039,23 +1091,54 @@ impl CommandProcessor<'_> {
 
     /// `--gpu d3d`: whether the draw packet at hand is one of the title's. Other modes run every
     /// draw.
-    fn d3d_title_draw(&self) -> bool {
-        crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3d || self.d3d_draw_next
+    fn d3d_title_draw(&mut self) -> bool {
+        if crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3d {
+            return true;
+        }
+        match self.d3d_draw_next {
+            Some(d) if d.runs => {
+                if !d.resolve {
+                    self.d3d_ran.insert(d.seq);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `--gpu d3d`: before a title draw in a predicated tile, makes its window offset and
+    /// scissor the whole surface's instead of the tile's (the D3D surfaces aren't tiled);
+    /// returns the registers to restore after the draw.
+    fn d3d_whole_surface(&mut self) -> Option<[u32; 3]> {
+        if crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3d || self.d3d_draw_next.is_none_or(|d| d.resolve) {
+            return None;
+        }
+        // Not a tile's own writes (left out of the merge).
+        self.d3d_predicated.take()?;
+        let saved: [u32; 3] = std::array::from_fn(|i| self.read_register(reg::PA_SC_WINDOW_OFFSET + i as u32));
+        self.write_register(reg::PA_SC_WINDOW_OFFSET, 0);
+        if let Some(s) = self.d3d_scissor.filter(|s| s.tl_bins != 0 && s.br_bins != 0) {
+            self.write_register(reg::PA_SC_WINDOW_SCISSOR_TL, s.tl);
+            self.write_register(reg::PA_SC_WINDOW_SCISSOR_BR, s.br);
+        }
+        Some(saved)
     }
 
     fn d3d_marker_reached(&mut self, kind: u32, value: u32) {
         match kind {
             crate::d3d::MARKER_DRAW => {
-                // Tile replays bring old numbers back: those draws already ran.
-                self.d3d_draw_next = value.wrapping_sub(self.d3d_last_draw) as i32 > 0;
-                if self.d3d_draw_next {
-                    self.d3d_last_draw = value;
-                }
+                // Tile replays bring the draws back: each runs once.
+                let runs = !self.d3d_ran.contains(&value);
+                self.d3d_draw_next = Some(D3dDraw { seq: value, resolve: false, runs });
+            }
+            crate::d3d::MARKER_RESOLVE_DRAW => {
+                self.d3d_draw_next = Some(D3dDraw { seq: value, resolve: true, runs: true });
             }
             crate::d3d::MARKER_CALL => {
-                self.d3d_draw_next = false;
+                self.d3d_draw_next = None;
                 self.d3d_deliver(value);
             }
+            crate::d3d::MARKER_INTERNAL => self.d3d_draw_next = None,
             _ => {}
         }
     }
@@ -1096,6 +1179,19 @@ impl CommandProcessor<'_> {
     /// Register write from the command stream, with the side effects of the
     /// registers that have them.
     fn write_register(&mut self, index: u32, value: u32) {
+        if let Some(mask) = self.d3d_predicated
+            && matches!(index, reg::PA_SC_WINDOW_SCISSOR_TL | reg::PA_SC_WINDOW_SCISSOR_BR)
+        {
+            let s = self.d3d_scissor.get_or_insert(TileScissor { tl_bins: 0, br_bins: 0, tl: 0, br: 0 });
+            if index == reg::PA_SC_WINDOW_SCISSOR_TL {
+                TileScissor::merge(&mut s.tl, &mut s.tl_bins, mask, value, true);
+            } else {
+                TileScissor::merge(&mut s.br, &mut s.br_bins, mask, value, false);
+            }
+        }
+        if self.d3d_peek {
+            return;
+        }
         if self.backend.is_some() {
             self.pending.push((index, value));
         }

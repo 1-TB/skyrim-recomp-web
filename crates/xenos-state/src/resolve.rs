@@ -155,6 +155,9 @@ pub struct ResolveInfo {
     pub copy_mask: u32,
     /// Whether ConvertTo1111 can be performed (supported source/destination).
     pub convert_to_1111_supported: bool,
+    /// PA_SC_WINDOW_OFFSET (whether or not it applies to the rectangle): with predicated tiling,
+    /// the tile's screen origin negated.
+    pub window_offset: [i32; 2],
 }
 
 /// Resolve failure.
@@ -403,6 +406,7 @@ pub fn resolve_info(
     }
 
     let mut info = ResolveInfo { copy_control, ..Default::default() };
+    info.window_offset = [window_offset.window_x_offset, window_offset.window_y_offset];
     if x0 >= x1 || y0 >= y1 {
         return Ok(info);
     }

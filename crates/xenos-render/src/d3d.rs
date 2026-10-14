@@ -1,17 +1,24 @@
 //! `--gpu d3d`: rendering with the title's D3D calls in place of EDRAM (see the `d3d-hle` crate).
-//! Each D3D surface is a host texture of its own, which the executor draws into ([`D3dTargets`]);
-//! clears clear it; a resolve's copy draw converts and stores the surface into the GPU copy of
-//! guest memory in the destination's format, where textures (and the front buffer the swap
-//! shows) are loaded from, and the Resolve call does the clears it asks for.
+//! Each D3D surface is a host texture of its own (multisampled like the guest's), which the
+//! executor draws into ([`D3dTargets`]); clears clear it; a resolve's copy draw converts and
+//! stores the surface into the GPU copy of guest memory in the destination's format, where
+//! textures (and the front buffer the swap shows) are loaded from, and does the clears the
+//! resolve asks for.
+//!
+//! Predicated tiling isn't emulated: a surface the title renders in tiles is as tall as the
+//! screen here, each draw runs once over all of it (see the command processor), and each tile's
+//! resolve reads the tile's rows. Where the title relies on surfaces sharing EDRAM (one written,
+//! another at the same base read), the contents are carried over when the other is bound.
 //! `--render-debug d3d-surfaces` shows every color surface the frame used side by side instead
 //! of the front buffer.
 
 use std::collections::HashMap;
 
-use d3d_hle::args::{ClearArgs, ResolveArgs, clear, resolve};
+use d3d_hle::args::{ClearArgs, clear};
 use d3d_hle::command::{Command, Surface};
 use gpu_webgpu::*;
-use xenos_state::xenos::ColorRenderTargetFormat;
+use xenos_state::edram::{EDRAM_TILE_WIDTH_SAMPLES, RenderTargetKey};
+use xenos_state::xenos::{ColorRenderTargetFormat, MsaaSamples};
 
 use crate::present::FrontBuffer;
 
@@ -22,11 +29,33 @@ struct HostSurface {
     format: TextureFormat,
     width: u32,
     height: u32,
+    /// Host samples: 1, or 4 for both 2x and 4x MSAA, like the EDRAM render targets (2x uses
+    /// host samples 0 and 3).
+    samples: u32,
+    /// Guest MSAA is 2x (draws then write only host samples 0 and 3).
+    msaa_2x: bool,
     depth: bool,
     /// D24FS8: the host depth holds half the guest value (as the executor's viewport maps it).
     float24: bool,
     /// The surface header it was made for (a different one replaces it).
     header: [u32; d3d_hle::args::SURFACE_WORDS],
+    /// Where it is in EDRAM on the console, and its layout there.
+    edram: RenderTargetKey,
+}
+
+impl HostSurface {
+    fn external(&self, offset: [u32; 2]) -> xenos_edram::ExternalSource<'_> {
+        xenos_edram::ExternalSource {
+            texture: &self.texture,
+            format: self.format,
+            width: self.width,
+            height: self.height,
+            samples: self.samples,
+            depth: self.depth,
+            base_tiles: self.edram.base_tiles,
+            offset,
+        }
+    }
 }
 
 /// A surface's key: its object address, and whether it is bound as depth/stencil (the title
@@ -35,6 +64,18 @@ type SurfaceKey = (u32, bool);
 
 pub(crate) struct D3dRenderer {
     surfaces: HashMap<SurfaceKey, HostSurface>,
+    /// Rows surfaces were grown to: a surface rendered with predicated tiling is one tile tall
+    /// on the console, and stands for the whole screen here (see [`D3dRenderer::grow`]).
+    rows: HashMap<SurfaceKey, u32>,
+    /// The surface last drawn to or cleared at each EDRAM base tile. Surfaces at the same base
+    /// share their EDRAM on the console, and titles rely on it (Skyrim restores its depth
+    /// buffer by drawing the depth texture into a color target at the depth buffer's base):
+    /// binding one after another was written gets the other's contents (see
+    /// [`D3dTargets::targets`]).
+    edram_owners: HashMap<u32, SurfaceKey>,
+    /// Textures replaced while the executor's batch may still use them, destroyed at the next
+    /// D3D call (the batch is submitted before each).
+    retired: Vec<Texture>,
     /// Bound render targets 0-3 and depth/stencil surface.
     targets: [Option<SurfaceKey>; 4],
     depth: Option<SurfaceKey>,
@@ -140,6 +181,9 @@ impl D3dRenderer {
     pub fn new(device: &Device) -> Self {
         D3dRenderer {
             surfaces: HashMap::new(),
+            rows: HashMap::new(),
+            edram_owners: HashMap::new(),
+            retired: Vec::new(),
             targets: [None; 4],
             depth: None,
             depth32_stencil8: device.has_feature(FeatureName::Depth32FloatStencil8),
@@ -174,7 +218,9 @@ impl D3dRenderer {
     /// Draws the frame's color surfaces into the mosaic and returns it as the front buffer.
     fn mosaic(&mut self, device: &Device) -> Option<FrontBuffer> {
         let mosaic = self.mosaic.get_or_insert_with(|| Mosaic::new(device));
-        let surfaces: Vec<&HostSurface> = self.used.iter().filter_map(|k| self.surfaces.get(k)).collect();
+        // Multisampled surfaces are left out (the tile shader reads single-sampled textures).
+        let surfaces: Vec<&HostSurface> =
+            self.used.iter().filter_map(|k| self.surfaces.get(k)).filter(|s| s.samples == 1).collect();
         let n = surfaces.len().max(1) as u32;
         let cols = (n as f32).sqrt().ceil() as u32;
         let rows = n.div_ceil(cols);
@@ -242,6 +288,9 @@ impl D3dRenderer {
 
     /// Executes `cmd`; a present returns the front buffer to show.
     pub fn execute(&mut self, device: &Device, cmd: Command) -> Option<FrontBuffer> {
+        for texture in self.retired.drain(..) {
+            texture.destroy();
+        }
         match cmd {
             Command::SetRenderTarget { index, surface } => {
                 let key = surface.map(|s| self.surface(device, &s));
@@ -279,7 +328,6 @@ impl D3dRenderer {
                         dest.map_or(0, |d| d.base_address())
                     )
                 });
-                self.resolve(device, &args);
             }
             Command::Present { .. } => {
                 let shown = if crate::debug::D3D_SURFACES.load(std::sync::atomic::Ordering::Relaxed) {
@@ -320,16 +368,11 @@ impl D3dRenderer {
                 TextureFormat::RGBA8Unorm
             })
         };
-        let (width, height) = (s.width(), s.height());
-        let texture = device.create_texture(&TextureDescriptor {
-            label: if s.depth { "d3d depth surface" } else { "d3d color surface" },
-            size: extent(width, height, 1),
-            format,
-            usage: TextureUsage::RenderAttachment | TextureUsage::TextureBinding | TextureUsage::CopySrc,
-            ..Default::default()
-        });
-        let view = texture.create_view(None);
-        log::debug!("d3d renderer: surface {:#010X} {width}x{height} {format:?}", s.address);
+        let width = s.width();
+        let height = s.height().max(self.rows.get(&key).copied().unwrap_or(0));
+        let samples = if s.samples() > 1 { 4 } else { 1 };
+        let (texture, view) = surface_texture(device, s.depth, width, height, samples, format);
+        log::debug!("d3d renderer: surface {:#010X} {width}x{height}x{samples} {format:?}", s.address);
         if let Some(old) = self.surfaces.insert(
             key,
             HostSurface {
@@ -338,14 +381,82 @@ impl D3dRenderer {
                 format,
                 width,
                 height,
+                samples,
+                msaa_2x: s.samples() == 2,
                 depth: s.depth,
                 float24: s.depth && s.format() & 1 != 0,
                 header: s.header.words,
+                edram: edram_key(s),
             },
         ) {
             old.texture.destroy();
         }
         key
+    }
+
+    /// Makes surface `key` at least `rows` tall. With predicated tiling the title's surfaces are
+    /// one tile tall and each tile is drawn with a window offset; here the draws cover the
+    /// whole surface (see the command processor), so it must be the screen's height, which
+    /// the draws' viewport and scissor tell. The texture is replaced (its contents are lost:
+    /// this happens once, on the surface's first tiled use).
+    fn grow(&mut self, device: &Device, key: SurfaceKey, rows: u32) {
+        let Some(s) = self.surfaces.get_mut(&key) else { return };
+        if s.height >= rows {
+            return;
+        }
+        let rows = rows.min(device.limits().maxTextureDimension2D);
+        log::debug!("d3d renderer: surface {:#010X} grows from {} to {rows} rows", key.0, s.height);
+        let (texture, view) = surface_texture(device, s.depth, s.width, rows, s.samples, s.format);
+        let old = std::mem::replace(&mut s.texture, texture);
+        self.retired.push(old);
+        s.view = view;
+        s.height = rows;
+        self.rows.insert(key, rows);
+    }
+
+    /// Makes `key` the owner of its EDRAM base, first copying the previous owner's contents
+    /// into it when the two lay out the same EDRAM the same way (same size and samples, any
+    /// format: what the console would see through the shared memory). Surfaces that only
+    /// partly overlap aren't converted.
+    fn take_edram(&mut self, device: &Device, encoder: &mut CommandEncoder, key: SurfaceKey) {
+        let Some(s) = self.surfaces.get(&key) else { return };
+        let base = s.edram.base_tiles;
+        let previous = self.edram_owners.insert(base, key);
+        let Some(p) = previous.filter(|&p| p != key).and_then(|p| self.surfaces.get(&p)) else { return };
+        let same_layout = (p.width, p.height, p.samples, p.edram.msaa_samples, p.edram.pitch_tiles_at_32bpp)
+            == (s.width, s.height, s.samples, s.edram.msaa_samples, s.edram.pitch_tiles_at_32bpp);
+        if !same_layout {
+            return;
+        }
+        let done = if p.edram == s.edram {
+            // Same format too: the contents as they are.
+            encoder.copy_texture_to_texture(
+                &TexelCopyTextureInfo {
+                    texture: &p.texture,
+                    mip_level: 0,
+                    origin: Origin3d::default(),
+                    aspect: TextureAspect::All,
+                },
+                &TexelCopyTextureInfo {
+                    texture: &s.texture,
+                    mip_level: 0,
+                    origin: Origin3d::default(),
+                    aspect: TextureAspect::All,
+                },
+                extent(s.width, s.height, 1),
+            );
+            true
+        } else {
+            let edram = self.edram.get_or_insert_with(|| xenos_edram::EdramCache::new(device));
+            edram.transfer_external(device, encoder, (&p.external([0, 0]), p.edram), (&s.external([0, 0]), s.edram))
+        };
+        if done {
+            log::debug!(
+                "d3d renderer: EDRAM base {base} passes from {:#010X} to {:#010X}",
+                previous.unwrap_or_default().0,
+                key.0
+            );
+        }
     }
 
     /// Clears the bound surfaces the flags name (the whole surface: the title's clear rectangles
@@ -358,7 +469,8 @@ impl D3dRenderer {
             if args.flags & (1 << i) == 0 {
                 continue;
             }
-            if let Some(s) = target.and_then(|t| self.surfaces.get(&t)) {
+            if let Some((key, s)) = target.and_then(|t| Some((t, self.surfaces.get(&t)?))) {
+                self.edram_owners.insert(s.edram.base_tiles, key);
                 let pass = encoder.begin_render_pass(
                     "d3d clear",
                     &[Some(RenderPassColorAttachment::clear(&s.view, color))],
@@ -368,8 +480,9 @@ impl D3dRenderer {
             }
         }
         if args.flags & (clear::ZBUFFER | clear::STENCIL) != 0
-            && let Some(s) = self.depth.and_then(|d| self.surfaces.get(&d))
+            && let Some((key, s)) = self.depth.and_then(|d| Some((d, self.surfaces.get(&d)?)))
         {
+            self.edram_owners.insert(s.edram.base_tiles, key);
             let keep_depth = args.flags & clear::ZBUFFER == 0;
             let keep_stencil = args.flags & clear::STENCIL == 0;
             let depth = RenderPassDepthStencilAttachment {
@@ -388,27 +501,43 @@ impl D3dRenderer {
         }
         device.queue().submit([encoder.finish("d3d clear")]);
     }
+}
 
-    /// The clears a resolve asks for (its copy was the copy draw before it, see
-    /// [`D3dTargets`]).
-    fn resolve(&mut self, device: &Device, args: &ResolveArgs) {
-        let mut flags = 0;
-        if args.flags & resolve::CLEAR_RENDERTARGET != 0 {
-            flags |= 1 << args.source_target().unwrap_or(0);
-        }
-        if args.flags & resolve::CLEAR_DEPTHSTENCIL != 0 {
-            flags |= clear::ZBUFFER | clear::STENCIL;
-        }
-        if flags != 0 {
-            let c = args.clear_color.unwrap_or([0.0; 4]);
-            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
-            let color = byte(c[3]) << 24 | byte(c[0]) << 16 | byte(c[1]) << 8 | byte(c[2]);
-            self.clear(
-                device,
-                &ClearArgs { rects: Vec::new(), flags, color, z: args.clear_z, stencil: args.clear_stencil },
-            );
-        }
+/// A surface's place and layout in EDRAM.
+fn edram_key(s: &Surface) -> RenderTargetKey {
+    let msaa = MsaaSamples::from_raw((s.header.surface_info() >> 16) & 3);
+    let format =
+        if s.depth { s.format() } else { ColorRenderTargetFormat::from_raw(s.format()).storage_format().raw() };
+    RenderTargetKey {
+        base_tiles: s.header.info() & 0xFFF,
+        pitch_tiles_at_32bpp: (s.width() << msaa.samples_x_log2()).div_ceil(EDRAM_TILE_WIDTH_SAMPLES),
+        msaa_samples: msaa,
+        is_depth: s.depth,
+        format,
     }
+}
+
+fn surface_texture(
+    device: &Device,
+    depth: bool,
+    width: u32,
+    height: u32,
+    samples: u32,
+    format: TextureFormat,
+) -> (Texture, TextureView) {
+    let texture = device.create_texture(&TextureDescriptor {
+        label: if depth { "d3d depth surface" } else { "d3d color surface" },
+        size: extent(width, height, 1),
+        sample_count: samples,
+        format,
+        usage: TextureUsage::RenderAttachment
+            | TextureUsage::TextureBinding
+            | TextureUsage::CopySrc
+            | TextureUsage::CopyDst,
+        ..Default::default()
+    });
+    let view = texture.create_view(None);
+    (texture, view)
 }
 
 /// The executor's render targets under `--gpu d3d`: the D3D surfaces bound to each slot.
@@ -417,24 +546,34 @@ pub(crate) struct D3dTargets(pub std::rc::Rc<std::cell::RefCell<D3dRenderer>>);
 impl crate::targets::RenderTargetCache for D3dTargets {
     fn targets(
         &mut self,
-        _device: &Device,
-        _encoder: &mut CommandEncoder,
+        device: &Device,
+        encoder: &mut CommandEncoder,
         setup: &xenos_state::edram::RenderTargetSetup,
-        _min_height: u32,
+        min_height: u32,
     ) -> Option<crate::targets::DrawTargets> {
         let mut r = self.0.borrow_mut();
-        // Attachments of a pass must share their size: the first bound one decides.
+        let bound: Vec<SurfaceKey> = (0..4)
+            .filter(|&i| setup.color[i].is_some())
+            .filter_map(|i| r.targets[i])
+            .chain(r.depth.filter(|_| setup.depth.is_some()))
+            .collect();
+        for &key in &bound {
+            r.grow(device, key, min_height);
+        }
+        for &key in &bound {
+            r.take_edram(device, encoder, key);
+        }
+        // Attachments of a pass must share their size and sample count: the first bound one
+        // decides.
         let mut size = None;
         let mut warning = None;
         let mut pick = |key: Option<SurfaceKey>, r: &D3dRenderer| {
             let s = r.surfaces.get(&key?)?;
+            let this = (s.width, s.height, s.samples, s.msaa_2x);
             match size {
-                None => size = Some((s.width, s.height)),
-                Some(wh) if wh != (s.width, s.height) => {
-                    warning = Some(format!(
-                        "surfaces of different sizes bound together: {wh:?} and {}x{}",
-                        s.width, s.height
-                    ));
+                None => size = Some(this),
+                Some(first) if first != this => {
+                    warning = Some(format!("surfaces of different sizes bound together: {first:?} and {this:?}"));
                     return None;
                 }
                 Some(_) => {}
@@ -447,7 +586,7 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         if let Some(w) = warning {
             r.warn_once(w);
         }
-        let (width, height) = size?;
+        let (width, height, samples, msaa_2x) = size?;
         Some(crate::targets::DrawTargets {
             blendable: colors.each_ref().map(|c| {
                 c.as_ref().is_none_or(|(_, f)| !matches!(*f, TextureFormat::R32Float | TextureFormat::RG32Float))
@@ -456,15 +595,15 @@ impl crate::targets::RenderTargetCache for D3dTargets {
             depth,
             width,
             height,
-            sample_count: 1,
-            sample_mask: !0,
+            sample_count: samples,
+            sample_mask: if msaa_2x { 0b1001 } else { !0 },
         })
     }
 
     /// A resolve's copy draw (the only D3D-internal draws that run): the bound surface the copy
     /// reads is converted and stored into the GPU copy of guest memory, so textures made from
-    /// it see the result (the front buffer included). The D3D Resolve call that follows does
-    /// the clears.
+    /// it see the result (the front buffer included), and the clears the resolve asks for are
+    /// done to the bound surfaces.
     fn resolve(
         &mut self,
         device: &Device,
@@ -474,26 +613,20 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         encoder: Option<&mut CommandEncoder>,
     ) -> crate::targets::ResolveStatus {
         let none = crate::targets::ResolveStatus::Done { written: None, in_gpu_memory: false };
-        let (Some(shared), Some(encoder), Some(source)) = (shared, encoder, info.source_edram()) else {
+        let (Some(shared), Some(encoder)) = (shared, encoder) else {
             return none;
         };
         let mut r = self.0.borrow_mut();
-        // The cache is taken out while it runs (the surface stays borrowed from `r`).
+        // The cache is taken out while it runs (the surfaces stay borrowed from `r`).
         let mut edram = r.edram.take().unwrap_or_else(|| xenos_edram::EdramCache::new(device));
-        let key = if source.is_depth { r.depth } else { r.targets[(info.copy_control.copy_src_select & 3) as usize] };
-        let result = key.and_then(|k| r.surfaces.get(&k)).map(|s| {
-            let external = xenos_edram::ExternalSource {
-                texture: &s.texture,
-                format: s.format,
-                width: s.width,
-                height: s.height,
-                depth: s.depth,
-                base_tiles: s.header[7] & 0xFFF,
-            };
-            edram.resolve_external(device, encoder, info, shared, &external)
-        });
+        // With predicated tiling the resolve covers one tile, whose screen origin the window
+        // offset moved to the EDRAM origin; the surfaces hold the whole screen.
+        let offset = info.window_offset.map(|v| (-v).max(0) as u32);
+        let external = |key: Option<SurfaceKey>| key.and_then(|k| r.surfaces.get(&k)).map(|s| s.external(offset));
+        let color = external(r.targets[(info.copy_control.copy_src_select & 3) as usize]);
+        let depth = external(r.depth);
+        let result = edram.resolve_external(device, encoder, info, shared, color.as_ref(), depth.as_ref());
         r.edram = Some(edram);
-        let Some(result) = result else { return none };
         match result {
             Ok(result) => crate::targets::ResolveStatus::Done { written: result.written, in_gpu_memory: true },
             Err(e) => {

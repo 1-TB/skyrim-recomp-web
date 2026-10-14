@@ -245,6 +245,10 @@ static CALLS: Mutex<Calls> = Mutex::new(Calls { queue: VecDeque::new(), next_cal
 /// Marker kinds of `--gpu d3d` (payload: signature, kind, value).
 pub(crate) const MARKER_DRAW: u32 = 1;
 pub(crate) const MARKER_CALL: u32 = 2;
+/// A resolve's copy draw: runs in every tile it comes by in (each tile is resolved on its own).
+pub(crate) const MARKER_RESOLVE_DRAW: u32 = 3;
+/// A D3D call whose draws aren't the title's begins (tiling).
+pub(crate) const MARKER_INTERNAL: u32 = 4;
 /// First payload word of `--gpu d3d` markers ('SKDC').
 pub(crate) const CALL_MARKER_SIGNATURE: u32 = 0x534B_4443;
 
@@ -253,8 +257,8 @@ thread_local! {
     /// Begin/EndTiling).
     static INTERNAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// Resolve calls this thread is in, with the call to deliver when each returns: its copy
-    /// draws run (the renderer stores the copy into guest memory), and the call itself (its
-    /// clears) comes after them.
+    /// draws run (the renderer stores the copy into guest memory and does its clears), and the
+    /// call itself comes after them.
     static RESOLVES: std::cell::RefCell<Vec<(u32, d3d_hle::command::Command)>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
@@ -263,13 +267,18 @@ fn internal_call(kind: HookKind) -> bool {
     matches!(kind, HookKind::Clear | HookKind::Resolve | HookKind::BeginTiling | HookKind::EndTiling)
 }
 
+/// Bytes past the command buffer's soft limit that ending a segment takes (with some margin).
+const SEGMENT_END_BYTES: u32 = 64;
+
 /// Writes a `--gpu d3d` marker into the device's command buffer, if it fits.
 fn put_call_marker(k: &Kernel, dev: u32, kind: u32, value: u32) -> bool {
     let mem = k.mem();
     let write = mem.read_u32(dev + device::COMMAND_WRITE);
-    let limit = mem.read_u32(dev + device::COMMAND_LIMIT);
     let end = mem.read_u32(dev + device::COMMAND_END);
-    if write == 0 || write + 16 > limit || write + 16 >= end {
+    // Past the soft limit the title kicks the segment off before its next packets; up to
+    // `end` it keeps room for that (an indirect buffer return and a few events, 60 bytes), of
+    // which the marker may take some: it then lands before the kick and its draw after it.
+    if write == 0 || write + 16 + SEGMENT_END_BYTES > end {
         return false;
     }
     mem.write_u32(write + 4, d3d_hle::nop_header(3));
@@ -290,12 +299,15 @@ fn d3d_enter(k: &Kernel, kind: HookKind, call: &Call<'_>) {
                 c.next_draw = c.next_draw.wrapping_add(1);
                 c.next_draw
             };
-            put_call_marker(k, dev, MARKER_DRAW, seq);
+            put_call_marker(k, dev, if in_resolve { MARKER_RESOLVE_DRAW } else { MARKER_DRAW }, seq);
         }
         return;
     }
     if internal_call(kind) {
         INTERNAL.with(|d| d.set(d.get() + 1));
+        if kind != HookKind::Clear {
+            put_call_marker(k, dev, MARKER_INTERNAL, 0);
+        }
     }
     let Some(cmd) = d3d_command(k, kind, call) else { return };
     if kind == HookKind::Resolve {

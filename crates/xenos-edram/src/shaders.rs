@@ -502,9 +502,10 @@ struct DumpParams {
     format: u32,
     width: u32,
     height: u32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    // Where the base's pixel (0, 0) is in the source (host pixels).
+    offset_x: u32,
+    offset_y: u32,
+    pad: u32,
 }
 
 @group(0) @binding(0) var<uniform> p: DumpParams;
@@ -518,10 +519,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     }
     let a = (p.start + i) % EDRAM_DWORDS;
     let loc = edram_locate(a, p.base, p.pitch, p.msaa, (p.flags & 1u) != 0u, (p.flags & 2u) != 0u);
-    if (loc.px.x >= p.width || loc.px.y >= p.height) {
+    let px = loc.px + vec2<u32>(p.offset_x, p.offset_y);
+    if (px.x >= p.width || px.y >= p.height) {
         return;
     }
-    let v = load_src_packed(loc.px, host_sample_of_guest(loc.sample, p.msaa), p.format);
+    let v = load_src_packed(px, host_sample_of_guest(loc.sample, p.msaa), p.format);
     edram[a] = select(v.x, v.y, loc.half != 0u);
 }
 "#;
