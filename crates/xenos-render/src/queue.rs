@@ -21,6 +21,8 @@ struct State {
     /// frame queues thousands of commands).
     renderer_waiting: bool,
     idle_waiters: u32,
+    /// When each swap not yet executed was submitted, oldest first (for frame-latency reports).
+    swaps: VecDeque<std::time::Instant>,
 }
 
 #[derive(Default)]
@@ -57,6 +59,9 @@ impl RendererHandle {
         s.submitted += 1;
         let seq = s.submitted;
         if !s.closed {
+            if matches!(cmd, Command::Swap { .. }) {
+                s.swaps.push_back(std::time::Instant::now());
+            }
             s.pending.push_back((seq, cmd));
         }
         let wake = s.renderer_waiting;
@@ -83,6 +88,11 @@ impl RendererHandle {
             s = self.shared.changed.wait(s).unwrap();
         }
         s.idle_waiters -= 1;
+    }
+
+    /// Renderer side: when the swap it is executing was submitted.
+    pub(crate) fn take_swap_time(&self) -> Option<std::time::Instant> {
+        self.shared.state.lock().unwrap().swaps.pop_front()
     }
 
     pub fn submitted(&self) -> u64 {

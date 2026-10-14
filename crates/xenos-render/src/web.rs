@@ -40,6 +40,8 @@ struct Running {
     presented: u64,
     last_report: f64,
     perf: Perf,
+    /// When frames were shown since the last perf report.
+    presents: Vec<std::time::Instant>,
 }
 
 fn run(handle: RendererHandle, memory: Arc<dyn PhysicalMemory>, canvas: &str, targets: TargetsFactory) {
@@ -143,6 +145,7 @@ fn configure(
         presented: u64::MAX,
         last_report: 0.0,
         perf: Perf::default(),
+        presents: Vec::new(),
     })
 }
 
@@ -189,6 +192,7 @@ impl Running {
                 crate::renderer::calls_per_frame(&gpu_webgpu::counters::snapshot().since(&p.calls), n)
             );
             log::info!("perf: {}", self.renderer.gpu_memory());
+            log::info!("perf: {}", crate::renderer::pacing(&mut self.presents, &mut self.renderer.swap_timings));
         }
         if p.start_ms == 0.0 || now - p.start_ms >= PERF_WINDOW_MS {
             *p = Perf {
@@ -243,6 +247,7 @@ impl Running {
             self.renderer.presenter.encode(&mut encoder, &view, WIDTH, HEIGHT);
             device.queue().submit([encoder.finish("present")]);
             frame.present();
+            self.presents.push(std::time::Instant::now());
         }
         for e in self.renderer.device.take_errors() {
             log::error!("renderer: GPU error: {e:?}");

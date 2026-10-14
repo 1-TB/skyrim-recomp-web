@@ -221,14 +221,20 @@ fn run(
         std::fs::create_dir_all(dir).map_err(|e| Error::Invalid(format!("{}: {e}", dir.display())))?;
     }
     let every = options.dump_every.max(1);
+    let mut presents = Vec::new();
+    let mut busy = Duration::ZERO;
+    let mut report_at = std::time::Instant::now();
 
     loop {
         instance.process_events();
+        let started = std::time::Instant::now();
+        let before = handle.completed();
         renderer.pump(handle, Some(Duration::from_millis(5)), None, |r, size| {
             let Some((w, h)) = size else { return };
             if let Some(p) = presentation.as_mut() {
                 p.present(&r.device, &r.presenter);
             }
+            presents.push(std::time::Instant::now());
             let Some(dir) = &options.dump_dir else { return };
             if format != TextureFormat::RGBA8Unorm {
                 return;
@@ -249,6 +255,21 @@ fn run(
         });
         for e in device.take_errors() {
             log::error!("renderer: GPU error: {e:?}");
+        }
+        // Time spent executing commands (not waiting for the title to submit some).
+        if handle.completed() != before || renderer.backlog_len() > 0 {
+            busy += started.elapsed();
+        }
+        let window = report_at.elapsed();
+        if window >= Duration::from_secs(5) {
+            let fps = presents.len() as f64 / window.as_secs_f64();
+            log::info!(
+                "perf: {fps:.1} fps; renderer busy {:.0}%; {}",
+                100.0 * busy.as_secs_f64() / window.as_secs_f64(),
+                crate::renderer::pacing(&mut presents, &mut renderer.swap_timings)
+            );
+            busy = Duration::ZERO;
+            report_at = std::time::Instant::now();
         }
     }
 }

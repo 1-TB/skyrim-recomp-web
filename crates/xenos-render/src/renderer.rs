@@ -62,6 +62,9 @@ pub(crate) struct Renderer {
     blocked: Option<u64>,
     /// Frame count and WebGPU call counters at the last frame report.
     calls_at: (u64, gpu_webgpu::counters::Counters),
+    /// Per swap executed since the host last took them: when the title submitted it, and how long
+    /// it waited in the queue before the renderer got to it.
+    pub swap_timings: Vec<(std::time::Instant, Duration)>,
 }
 
 impl Renderer {
@@ -79,6 +82,7 @@ impl Renderer {
             backlog: Default::default(),
             blocked: None,
             calls_at: (0, gpu_webgpu::counters::snapshot()),
+            swap_timings: Vec::new(),
         }
     }
 
@@ -140,6 +144,9 @@ impl Renderer {
                 Command::Shader { stage, code } => self.executor.load_shader(stage, code),
                 Command::Draw => self.executor.draw(),
                 Command::Swap { fetch, .. } => {
+                    if let Some(submitted) = handle.take_swap_time() {
+                        self.swap_timings.push((submitted, submitted.elapsed()));
+                    }
                     self.executor.end_frame();
                     let front = self.executor.front_buffer(fetch);
                     let size = self.presenter.swap(&self.device, front);
@@ -209,6 +216,40 @@ impl Renderer {
             top.join(", ")
         )
     }
+}
+
+/// Frame pacing since the last call, for the perf log: intervals between frames shown
+/// (`presents`, which is cleared), between the title's swaps, and how long swaps waited in the
+/// queue before the renderer executed them. Stutter shows as a high p95/max next to a normal
+/// median; latency as a long queue wait.
+pub(crate) fn pacing(
+    presents: &mut Vec<std::time::Instant>,
+    swaps: &mut Vec<(std::time::Instant, Duration)>,
+) -> String {
+    fn intervals(times: impl Iterator<Item = std::time::Instant>) -> Vec<f64> {
+        let times: Vec<_> = times.collect();
+        let mut v: Vec<f64> = times.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1000.0).collect();
+        v.sort_by(f64::total_cmp);
+        v
+    }
+    fn describe(v: &[f64]) -> String {
+        if v.is_empty() {
+            return "-".into();
+        }
+        let at = |q: f64| v[((v.len() - 1) as f64 * q).round() as usize];
+        let hitches = v.iter().filter(|&&ms| ms > 50.0).count();
+        format!("p50 {:.1} ms, p95 {:.1} ms, max {:.1} ms, {hitches} over 50 ms", at(0.5), at(0.95), at(1.0))
+    }
+    let shown = intervals(presents.drain(..));
+    let issued = intervals(swaps.iter().map(|s| s.0));
+    let waits: Vec<f64> = swaps.drain(..).map(|s| s.1.as_secs_f64() * 1000.0).collect();
+    let wait_avg = waits.iter().sum::<f64>() / waits.len().max(1) as f64;
+    let wait_max = waits.iter().copied().fold(0.0, f64::max);
+    format!(
+        "frames shown: {}; title's swaps: {}; swap queue wait avg {wait_avg:.1} ms, max {wait_max:.1} ms",
+        describe(&shown),
+        describe(&issued)
+    )
 }
 
 /// Commands between checks of the pump's time budget.
