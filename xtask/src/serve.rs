@@ -162,7 +162,13 @@ fn parse_range(value: &str, len: u64) -> Option<(u64, u64)> {
 }
 
 /// `GET /game/files/PATH`, streamed from disk (game archives are gigabytes).
-fn serve_game_file(stream: &mut TcpStream, game: &Path, rel: &str, range: Option<&str>, head: bool) -> std::io::Result<()> {
+fn serve_game_file(
+    stream: &mut TcpStream,
+    game: &Path,
+    rel: &str,
+    range: Option<&str>,
+    head: bool,
+) -> std::io::Result<()> {
     let mut path = game.to_path_buf();
     for part in rel.split('/').filter(|p| !p.is_empty()) {
         match percent_decode(part) {
@@ -272,7 +278,8 @@ fn handle(mut stream: TcpStream, root: &Path, game: Option<&Path>) -> std::io::R
             }
             let mut body = vec![0; content_length];
             reader.read_exact(&mut body)?;
-            let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, &body));
+            let written =
+                path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, &body));
             return match written {
                 Ok(()) => respond(&mut stream, "204 No Content", "text/plain", b"", false),
                 Err(_) => respond(&mut stream, "500 Internal Server Error", "text/plain", b"write failed", false),
@@ -312,7 +319,7 @@ fn handle(mut stream: TcpStream, root: &Path, game: Option<&Path>) -> std::io::R
 }
 
 /// A static file, with an ETag, 304 for a matching `If-None-Match`, and the `.gz` copy when the
-/// client accepts gzip and the copy is at least as new.
+/// client accepts gzip and the copy is non-empty and at least as new.
 fn serve_static(
     stream: &mut TcpStream,
     path: &Path,
@@ -334,8 +341,14 @@ fn serve_static(
         return stream.write_all(header.as_bytes());
     }
     let gz = path.with_file_name(format!("{}.gz", path.file_name().unwrap_or_default().to_string_lossy()));
+    // Not an empty copy (an interrupted compression) nor one older than the file.
     let gz_fresh = accepts_gzip
-        && std::fs::metadata(&gz).ok().and_then(|g| g.modified().ok()).zip(meta.modified().ok()).is_some_and(|(g, m)| g >= m);
+        && std::fs::metadata(&gz)
+            .ok()
+            .filter(|g| g.len() > 0)
+            .and_then(|g| g.modified().ok())
+            .zip(meta.modified().ok())
+            .is_some_and(|(g, m)| g >= m);
     let (file_path, encoding) = if gz_fresh { (gz.as_path(), "Content-Encoding: gzip\r\n") } else { (path, "") };
     let mut file = std::fs::File::open(file_path)?;
     let len = file.metadata()?.len();

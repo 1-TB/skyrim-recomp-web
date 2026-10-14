@@ -308,17 +308,39 @@ fn build_web_with(release: bool, e2e: Option<&Recompiled>) -> Result<PathBuf> {
     let profile = if release { "release" } else { "debug" };
     let out = root.join("target/wasm32-unknown-emscripten").join(profile);
     let dist = if e2e.is_some() { root.join("target/e2e/web") } else { root.join("web-dist") };
-    fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
+    // Everything is assembled in a staging directory and then renamed into place file by file
+    // (atomic on one filesystem): the dist directory is served live, and an interrupted build
+    // left a truncated module (an empty .gz once) that phones then failed to parse.
+    let staging = dist.join(".staging");
+    if staging.exists() {
+        fs::remove_dir_all(&staging).map_err(|e| format!("{}: {e}", staging.display()))?;
+    }
+    fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     for name in ["host-web.js", "host_web.wasm"] {
-        fs::copy(out.join(name), dist.join(name)).map_err(|e| format!("{name}: {e}"))?;
+        fs::copy(out.join(name), staging.join(name)).map_err(|e| format!("{name}: {e}"))?;
     }
     for entry in fs::read_dir(root.join("hosts/host-web/web")).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
-        fs::copy(entry.path(), dist.join(entry.file_name())).map_err(|e| e.to_string())?;
+        fs::copy(entry.path(), staging.join(entry.file_name())).map_err(|e| e.to_string())?;
     }
     // A gzip copy of the (very large) module for `serve` to send to browsers that accept it.
-    let wasm = dist.join("host_web.wasm");
-    run_tool(Command::new("gzip").args(["-kf6"]).arg(&wasm), "compressing host_web.wasm")?;
+    run_tool(Command::new("gzip").args(["-kf6"]).arg(staging.join("host_web.wasm")), "compressing host_web.wasm")?;
+    // The module before its .gz copy (`serve` sends the copy only if it isn't older), the page's
+    // files last.
+    let mut names: Vec<_> = fs::read_dir(&staging)
+        .map_err(|e| e.to_string())?
+        .map(|e| e.map(|e| e.file_name()).map_err(|e| e.to_string()))
+        .collect::<Result<_>>()?;
+    names.sort_by_key(|n| match n.to_str() {
+        Some("host_web.wasm") => 0,
+        Some("host_web.wasm.gz") => 1,
+        Some("host-web.js") => 2,
+        _ => 3,
+    });
+    for name in names {
+        fs::rename(staging.join(&name), dist.join(&name)).map_err(|e| format!("{}: {e}", name.to_string_lossy()))?;
+    }
+    fs::remove_dir(&staging).map_err(|e| e.to_string())?;
     println!("web build in {}", dist.display());
     Ok(dist)
 }
