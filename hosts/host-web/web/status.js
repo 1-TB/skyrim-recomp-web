@@ -28,7 +28,8 @@ const RULES = [
   [/open "([^"]*\\)?([^"\\]+\.bsa)" -> .*\(Opened\)/i, (s, m) => s.fileOpened(m[2])],
   [/first call: xam\.xex!XamContentCreateEnumerator/, (s) => s.phase('title', 'Title screen', 'Press Start')],
   [/XamContentCreateEnumerator: type 0x1,/, (s) => s.phase('menu', 'Main menu')],
-  [/open "[^"]*Savegame\.dat"/, (s) => s.phase('loading', 'Loading save')],
+  // Logged once per load, on the first read past a save's header (the save menu reads only that).
+  [/content: loading save (.+?)\s*$/, (s, m) => s.loadingSave(m[1])],
   [/perf: ([\d.]+) fps, (\d+) draws\/frame/, (s, m) => s.perf(Number(m[1]), Number(m[2]))],
 ];
 
@@ -122,12 +123,20 @@ export function createStatus(onPhase = () => {}) {
       if (currentStep === 'files') $('bs-detail').textContent = `Opened ${name}`;
     },
 
+    // `name`: the save's package (e.g. "Save 3 - Prisoner  Skyrim  00.07.53.exs").
+    loadingSave(name) {
+      state.saveName = name.replace(/\.exs$/i, '').replace(/\s+/g, ' ');
+      // A load from inside the game goes back to loading.
+      if (state.phaseName === 'ingame' || state.phaseName === 'loading') state.phaseName = 'menu';
+      this.phase('loading', 'Loading save', state.saveName);
+    },
+
     streamed(mib, seconds) {
       mibStreamed += mib;
       const rate = `${(mib / seconds).toFixed(1)} MiB/s`;
       const text = `${mibStreamed.toFixed(0)} MiB streamed from the server (${rate} lately)`;
       if (panelOpen) $('bs-note').textContent = text;
-      else if (state.phaseName === 'loading') $('phase-text').textContent = `Loading save · ${mibStreamed.toFixed(0)} MiB streamed`;
+      else if (state.phaseName === 'loading') $('phase-text').textContent = `Loading save · ${state.saveName} · ${mibStreamed.toFixed(0)} MiB streamed`;
     },
 
     note(text) {

@@ -618,6 +618,56 @@ function watchMemory() {
   setInterval(report, 20000);
 }
 
+// Whether WebAssembly runs compiled: browsers can run it in an interpreter instead (Edge's
+// "Enhance your security on the web" mode does on unfamiliar sites such as a LAN address), which
+// makes the game about ten times slower. A tiny loop takes a few ms compiled (about 4 ms on a
+// desktop, under 15 ms on an old phone) and far longer interpreted; the best of three runs
+// counts, so a garbage collection or Safari's interpreter tier before tier-up don't.
+const JIT_LOOP_ITERATIONS = 5_000_000;
+const JIT_SLOW_MS = 30;
+
+function checkWasmJit() {
+  const warn = (text) => {
+    $('jit-warning').textContent = text;
+    $('jit-warning').hidden = false;
+  };
+  if (typeof WebAssembly === 'undefined') {
+    log('Startup check: WebAssembly is unavailable in this browser.');
+    warn('This browser has WebAssembly turned off, so the game can\'t run. In Edge, turn off '
+      + '"Enhance your security on the web" for this site.');
+    return;
+  }
+  // (func (param $n i32) (result i32) (local $acc i32)
+  //   loop  acc = (acc + n) * 155; n -= 1; br_if n  end  acc)
+  const bytes = new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f, // type: (i32) -> i32
+    0x03, 0x02, 0x01, 0x00, // function 0 has type 0
+    0x07, 0x05, 0x01, 0x01, 0x66, 0x00, 0x00, // export "f"
+    0x0a, 0x1f, 0x01, 0x1d, 0x01, 0x01, 0x7f, // code: one i32 local
+    0x03, 0x40, 0x20, 0x01, 0x20, 0x00, 0x6a, 0x41, 0x9b, 0x01, 0x6c, 0x21, 0x01,
+    0x20, 0x00, 0x41, 0x01, 0x6b, 0x22, 0x00, 0x0d, 0x00, 0x0b, 0x20, 0x01, 0x0b,
+  ]);
+  try {
+    const f = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.f;
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now();
+      f(JIT_LOOP_ITERATIONS);
+      best = Math.min(best, performance.now() - t);
+    }
+    const slow = best > JIT_SLOW_MS;
+    log(`Startup check: WebAssembly test loop took ${best.toFixed(1)} ms (over ${JIT_SLOW_MS} ms means no JIT)${slow ? ': interpreted' : ''}`);
+    if (slow) {
+      warn('This browser is running WebAssembly without its JIT, so the game will be very slow. In Edge, turn off '
+        + '"Enhance your security on the web" for this site.');
+    }
+  } catch (e) {
+    log(`Startup check: WebAssembly test failed: ${e.message}`);
+  }
+}
+setTimeout(checkWasmJit, 300);
+
 // Fullscreen shows the game (and the touch controls) alone, in landscape on phones.
 // Without the Fullscreen API for elements (iPhone Safari) the stage fills the viewport instead.
 function setFilled(on) {
