@@ -9,6 +9,7 @@
 //! The renderer reads guest memory (front buffers, vertex data, textures) itself through
 //! [`PhysicalMemory`], at physical addresses as the GPU sees them.
 
+mod d3d;
 pub mod debug;
 pub mod edram;
 pub mod executor;
@@ -78,7 +79,7 @@ pub trait PhysicalMemory: Send + Sync {
 }
 
 /// Work for the renderer, in command-stream order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     /// Register writes (index, value) in stream order, including the constant registers.
     Registers(Vec<(u32, u32)>),
@@ -89,6 +90,8 @@ pub enum Command {
     /// A frame is complete: show the front buffer described by the texture fetch constant
     /// VdSwap built (`fetch`, host-order dwords).
     Swap { fetch: [u32; 6], width: u32, height: u32 },
+    /// `--gpu d3d`: a D3D call of the title, rendered without the command stream.
+    D3d(d3d_hle::command::Command),
 }
 
 /// Adapts [`PhysicalMemory`] to the texture loader's memory trait.

@@ -635,6 +635,7 @@ name = "host-native"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "d3d-hle",
  "gilrs",
  "gpu-webgpu",
  "guest-sys",
@@ -652,6 +653,7 @@ dependencies = [
 name = "host-web"
 version = "0.1.0"
 dependencies = [
+ "d3d-hle",
  "gpu-webgpu",
  "guest-sys",
  "kernel-hle",
@@ -2406,6 +2408,7 @@ dependencies = [
 name = "xenos-render"
 version = "0.1.0"
 dependencies = [
+ "d3d-hle",
  "gpu-webgpu",
  "log",
  "naga",

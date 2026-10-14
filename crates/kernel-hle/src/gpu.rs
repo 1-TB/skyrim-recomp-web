@@ -186,6 +186,14 @@ pub trait GpuBackend: Send + Sync {
     fn swap(&self, fetch: [u32; 6], width: u32, height: u32);
     /// Blocks until everything sent so far has been executed, including writes to guest memory.
     fn wait_idle(&self);
+    /// `--gpu d3d`: a D3D call for the D3D-level renderer; returns its sequence number.
+    fn d3d(&self, _cmd: d3d_hle::command::Command) -> u64 {
+        0
+    }
+    /// Blocks until the command with sequence number `seq` has been executed.
+    fn wait_for(&self, _seq: u64) {
+        self.wait_idle();
+    }
 }
 
 pub struct Gpu {
@@ -304,6 +312,10 @@ impl Gpu {
     /// the first backend is kept.
     pub fn set_backend(&self, backend: Arc<dyn GpuBackend>) -> bool {
         self.backend.set(backend).is_ok()
+    }
+
+    pub(crate) fn backend(&self) -> Option<&Arc<dyn GpuBackend>> {
+        self.backend.get()
     }
 
     pub fn swap_count(&self) -> u64 {
@@ -446,7 +458,9 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         bin_mask: 0xFFFF_FFFF,
         bin_select: 0xFFFF_FFFF,
         zpd_samples: 0,
-        backend: k.gpu.backend.get().cloned(),
+        // With `--gpu d3d` the renderer takes the title's D3D calls instead (crate::d3d); the
+        // command processor only keeps the fences, interrupts and swaps going.
+        backend: k.gpu.backend.get().cloned().filter(|_| crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3d),
         pending: Vec::new(),
         syncs: [0; 128],
         sync_wait: Duration::ZERO,

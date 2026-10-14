@@ -8,6 +8,7 @@ publish.workspace = true
 build = "build.rs"
 
 [dependencies]
+d3d-hle.workspace = true
 gpu-webgpu.workspace = true
 log.workspace = true
 rustc-hash.workspace = true

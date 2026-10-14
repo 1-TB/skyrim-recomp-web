@@ -5,6 +5,8 @@
 //! layout of the device's register shadow ([`device`]), and a check of that layout against the
 //! command processor's registers at every draw ([`verify`]).
 
+pub mod args;
+pub mod command;
 pub mod device;
 pub mod verify;
 
@@ -16,7 +18,10 @@ pub enum HookKind {
     /// A draw entry point that reaches a [`HookKind::DrawLeaf`].
     Draw,
     Clear,
+    /// `Resolve` (see [`args::ResolveArgs`]).
     Resolve,
+    /// Engine code around D3D calls, hooked for counting only.
+    Engine,
     BeginTiling,
     EndTiling,
     SetRenderTarget,
@@ -43,9 +48,9 @@ pub const HOOKS: &[Hook] = &[
     Hook { function: "sub_823A3AD0", kind: HookKind::Draw, name: "DrawIndexedPrimitiveUP" },
     Hook { function: "sub_823D9C20", kind: HookKind::Draw, name: "DrawIndexed variant (outer)" },
     Hook { function: "sub_82366A10", kind: HookKind::Draw, name: "DrawPrimitiveUP" },
-    Hook { function: "sub_823A7690", kind: HookKind::Draw, name: "internal draw (outer)" },
+    Hook { function: "sub_823A7690", kind: HookKind::Resolve, name: "Resolve" },
     Hook { function: "sub_823E6800", kind: HookKind::Clear, name: "Clear" },
-    Hook { function: "sub_823A8A30", kind: HookKind::Resolve, name: "Resolve" },
+    Hook { function: "sub_823A8A30", kind: HookKind::Engine, name: "engine render-to-texture update" },
     Hook { function: "sub_82405598", kind: HookKind::BeginTiling, name: "BeginTiling" },
     Hook { function: "sub_823EF368", kind: HookKind::EndTiling, name: "EndTiling" },
     Hook { function: "sub_8242E650", kind: HookKind::SetRenderTarget, name: "SetRenderTarget" },

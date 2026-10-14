@@ -12,6 +12,7 @@ name = "skyrim-native"
 path = "src/main.rs"
 
 [dependencies]
+d3d-hle.workspace = true
 gpu-webgpu.workspace = true
 guest-sys.workspace = true
 kernel-hle.workspace = true

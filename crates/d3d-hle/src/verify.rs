@@ -311,6 +311,92 @@ impl Verifier {
     }
 }
 
+/// Checks of the decoded call arguments and object fields ([`crate::args`]) against the
+/// registers they end up in.
+#[derive(Default, Debug)]
+pub struct ArgumentChecks {
+    checks: BTreeMap<&'static str, CheckStats>,
+}
+
+/// One check's results: compared, equal, and the first differences as (expected, actual).
+type CheckStats = (u64, u64, Vec<(u32, u32)>);
+
+impl ArgumentChecks {
+    pub fn check(&mut self, name: &'static str, expected: u32, actual: u32) {
+        let c = self.checks.entry(name).or_default();
+        c.0 += 1;
+        if expected == actual {
+            c.1 += 1;
+        } else if c.2.len() < 4 {
+            c.2.push((expected, actual));
+        }
+    }
+
+    /// At a draw: the bound surfaces' header fields against the device's RB registers, which
+    /// the table maps to `shadow(register)`. `targets` are the render target surfaces 0-3 and
+    /// `depth` the depth/stencil surface (`None` when unbound).
+    pub fn check_surfaces(
+        &mut self,
+        targets: &[Option<crate::args::SurfaceHeader>; 4],
+        depth: Option<&crate::args::SurfaceHeader>,
+        shadow: impl Fn(u32) -> u32,
+    ) {
+        if let Some(t) = targets[0].as_ref().or(depth) {
+            self.check("surface +24 = RB_SURFACE_INFO", t.surface_info(), shadow(0x2000));
+        }
+        if let Some(t) = &targets[0] {
+            self.check("render target 0 +28 = RB_COLOR_INFO", t.info(), shadow(0x2001));
+        }
+        for (i, t) in targets.iter().enumerate().skip(1) {
+            if let Some(t) = t {
+                self.check("render target 1-3 +28 = RB_COLORn_INFO", t.info(), shadow(0x2002 + i as u32));
+            }
+        }
+        if let Some(d) = depth {
+            self.check("depth surface +28 = RB_DEPTH_INFO", d.info(), shadow(0x2002));
+        }
+    }
+
+    /// At a resolve's copy draw: the decoded Resolve arguments against the RB_COPY registers
+    /// (`cp(register)`).
+    pub fn check_resolve(
+        &mut self,
+        args: &crate::args::ResolveArgs,
+        dest: Option<&crate::args::TextureHeader>,
+        cp: impl Fn(u32) -> u32,
+    ) {
+        use crate::args::resolve;
+        let control = cp(0x2318);
+        self.check("Resolve flags source = RB_COPY_CONTROL source", args.flags & resolve::SOURCE, control & 7);
+        self.check(
+            "Resolve clear target = RB_COPY_CONTROL color clear",
+            u32::from(args.flags & resolve::CLEAR_RENDERTARGET != 0),
+            (control >> 8) & 1,
+        );
+        self.check(
+            "Resolve clear depth = RB_COPY_CONTROL depth clear",
+            u32::from(args.flags & resolve::CLEAR_DEPTHSTENCIL != 0),
+            (control >> 9) & 1,
+        );
+        if let Some(t) = dest {
+            self.check("Resolve texture base = RB_COPY_DEST_BASE", t.base_address(), cp(0x2319) & 0xFFFF_F000);
+        }
+    }
+
+    pub fn report(&self) -> String {
+        let mut out = String::new();
+        for (name, (n, ok, diffs)) in &self.checks {
+            let diffs: Vec<String> = diffs.iter().map(|(e, a)| format!("{e:#010X} vs {a:#010X}")).collect();
+            out.push_str(&format!(
+                "d3d verify: {name}: {ok} of {n} equal{}{}\n",
+                if diffs.is_empty() { "" } else { "; first differences " },
+                diffs.join(", ")
+            ));
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -90,6 +90,17 @@ impl RendererHandle {
         s.idle_waiters -= 1;
     }
 
+    /// Blocks until the command with sequence number `seq` has been processed (or the renderer
+    /// has stopped).
+    pub fn wait_for(&self, seq: u64) {
+        let mut s = self.shared.state.lock().unwrap();
+        s.idle_waiters += 1;
+        while s.completed < seq && !s.closed {
+            s = self.shared.changed.wait(s).unwrap();
+        }
+        s.idle_waiters -= 1;
+    }
+
     /// Renderer side: when the swap it is executing was submitted.
     pub(crate) fn take_swap_time(&self) -> Option<std::time::Instant> {
         self.shared.state.lock().unwrap().swaps.pop_front()

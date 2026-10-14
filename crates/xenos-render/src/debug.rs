@@ -40,6 +40,9 @@ pub(crate) static NO_BC: AtomicBool = AtomicBool::new(false);
 /// Don't use depth32float-stencil8 even when the device has it (float24 depth then lives in
 /// depth24plus-stencil8, as on devices without it).
 pub(crate) static NO_D32S8: AtomicBool = AtomicBool::new(false);
+/// `--gpu d3d`: show the front buffer instead of the frame's color surfaces (until draws are
+/// rendered there, the front buffer is only the last clear color).
+pub(crate) static D3D_FRONT: AtomicBool = AtomicBool::new(false);
 /// Alpha to coverage is never enabled.
 pub(crate) static NO_A2C: AtomicBool = AtomicBool::new(false);
 
@@ -83,13 +86,17 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "no-bc" => &NO_BC,
         "no-d32s8" => &NO_D32S8,
         "no-a2c" => &NO_A2C,
+        "d3d-front" => {
+            D3D_FRONT.store(true, Ordering::Relaxed);
+            return Ok(());
+        }
         "gpu-time" => {
             GPU_TIME.store(true, Ordering::Relaxed);
             return Ok(());
         }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, gpu-time, frames=N, mirror=MIB, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, d3d-front, gpu-time, frames=N, mirror=MIB, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };

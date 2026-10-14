@@ -31,9 +31,11 @@ options:
   --tap BUTTON@SECONDS     press a port-1 button at that time after boot (held for 200 ms
                            and two frames), e.g. START@20
                            (A B X Y START BACK LB RB LS RS UP DOWN LEFT RIGHT; repeatable)
-  --gpu MODE               xenos (default: render the command stream), d3d-probe (also count the
-                           title's Direct3D calls), d3d-verify (also check the D3D device's
-                           register copy against the command stream at every draw)
+  --gpu MODE               xenos (default: render the command stream), d3d (render from the
+                           title's Direct3D calls; so far surfaces, clears, resolves and present:
+                           it shows the frame's color surfaces), d3d-probe (count the Direct3D
+                           calls), d3d-verify (also check the D3D device's register copy and the
+                           decoded call arguments against the command stream at every draw)
   --resolution-scale N     draw at N (1, 2 or 3) times the console's resolution along each axis
                            (default 1)
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
@@ -45,8 +47,9 @@ options:
                            nopool (never reuse textures), nomemo (bind textures per draw),
                            cpu-resolve (read resolves back to guest memory), cpu-texture (convert
                            textures on the CPU), no-bc (no BC textures), no-d32s8 (float24 depth
-                           in depth24plus-stencil8), no-a2c (no alpha to coverage), gpu-time (GPU
-                           time per pass, with timestamp queries), trace-frame=N (log frame N's
+                           in depth24plus-stencil8), no-a2c (no alpha to coverage), d3d-front
+                           (with --gpu d3d, show the front buffer), gpu-time (GPU time per pass,
+                           with timestamp queries), trace-frame=N (log frame N's
                            draws and, natively, write their shaders to target/shader-dump/),
                            trace-every=K (and every Kth frame after N)";
 

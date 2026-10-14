@@ -75,6 +75,8 @@ pub(crate) struct Renderer {
     /// Per swap executed since the host last took them: when the title submitted it, and how long
     /// it waited in the queue before the renderer got to it.
     pub swap_timings: Vec<(std::time::Instant, Duration)>,
+    /// `--gpu d3d`: the renderer of the title's D3D calls (made on the first one).
+    d3d: Option<crate::d3d::D3dRenderer>,
 }
 
 impl Renderer {
@@ -100,6 +102,7 @@ impl Renderer {
             blocked: None,
             calls_at: (0, gpu_webgpu::counters::snapshot()),
             swap_timings: Vec::new(),
+            d3d: None,
         }
     }
 
@@ -152,6 +155,7 @@ impl Renderer {
                 Command::Shader { code, .. } => ("shader", code.len()),
                 Command::Draw => ("draw", 0),
                 Command::Swap { .. } => ("swap", 0),
+                Command::D3d(_) => ("d3d", 0),
             };
             log::trace!("renderer: command {seq}: {what:?}");
             let timed = matches!(cmd, Command::Swap { .. }) || seq.is_multiple_of(TIMED_COMMAND_INTERVAL);
@@ -189,6 +193,16 @@ impl Renderer {
                         self.calls_at = (self.presenter.frames, calls);
                     }
                     on_swap(self, size);
+                }
+                Command::D3d(cmd) => {
+                    let present = matches!(cmd, d3d_hle::command::Command::Present { .. });
+                    let device = self.device.clone();
+                    let d3d = self.d3d.get_or_insert_with(|| crate::d3d::D3dRenderer::new(&device));
+                    let front = d3d.execute(&device, cmd);
+                    if present {
+                        let size = self.presenter.swap(&self.device, front);
+                        on_swap(self, size);
+                    }
                 }
             }
             if timed {

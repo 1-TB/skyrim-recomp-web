@@ -135,8 +135,8 @@ PPC_FUNC({f}) {{
             println!("cargo:warning=some D3D functions to hook are missing from the recompiled output");
         }
         cpp.push_str(
-            "\nextern \"C\" void skyrt_d3d_enter(uint32_t id, uint32_t r3, uint32_t r4, uint32_t r5, uint32_t r6, uint32_t lr);\n\
-             extern \"C\" void skyrt_d3d_leave(uint32_t id);\n",
+            "\nextern \"C\" void skyrt_d3d_enter(uint32_t id, PPCContext* ctx);\n\
+             extern \"C\" void skyrt_d3d_leave(uint32_t id, PPCContext* ctx);\n",
         );
         for (id, hook) in hooks {
             writeln!(
@@ -145,9 +145,9 @@ PPC_FUNC({f}) {{
 // {name}
 extern "C" PPC_FUNC(__imp__{f});
 PPC_FUNC({f}) {{
-    skyrt_d3d_enter({id}, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, uint32_t(ctx.lr));
+    skyrt_d3d_enter({id}, &ctx);
     __imp__{f}(ctx, base);
-    skyrt_d3d_leave({id});
+    skyrt_d3d_leave({id}, &ctx);
 }}"#,
                 name = hook.name,
                 f = hook.function,

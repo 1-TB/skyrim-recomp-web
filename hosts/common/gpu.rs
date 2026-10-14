@@ -70,6 +70,14 @@ impl GpuBackend for Renderer {
     fn wait_idle(&self) {
         self.0.wait_idle();
     }
+
+    fn d3d(&self, cmd: d3d_hle::command::Command) -> u64 {
+        self.0.submit(Command::D3d(cmd))
+    }
+
+    fn wait_for(&self, seq: u64) {
+        self.0.wait_for(seq);
+    }
 }
 
 /// The EDRAM emulation for the renderer thread.
