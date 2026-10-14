@@ -398,7 +398,10 @@ impl D3dRenderer {
         };
         let width = s.width();
         let height = s.height().max(self.rows.get(&key).copied().unwrap_or(0));
-        let samples = if s.samples() > 1 { 4 } else { 1 };
+        // Phones and tablets draw multisampled surfaces single-sampled: MSAA would take most of
+        // their memory (a whole-screen 4x depth surface is 28 MiB) for little visible gain.
+        let samples =
+            if s.samples() > 1 && !crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed) { 4 } else { 1 };
         let edram = edram_key(s);
         let texture_key = TextureKey { edram, width, height, samples, format };
         let (texture, view) = self.acquire(device, texture_key, s.depth);
@@ -412,7 +415,7 @@ impl D3dRenderer {
                 width,
                 height,
                 samples,
-                msaa_2x: s.samples() == 2,
+                msaa_2x: s.samples() == 2 && samples > 1,
                 depth: s.depth,
                 float24: s.depth && s.format() & 1 != 0,
                 header: s.header.words,
