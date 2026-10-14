@@ -3,42 +3,115 @@
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::io;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
+use gpu_webgpu::web::{Next, run_event_loop};
 use vfs::remote::{DEFAULT_CACHE_CHUNKS, RangeReader, RemoteTree};
 
 unsafe extern "C" {
     fn skyrt_http_get_text(url: *const c_char) -> *mut c_char;
-    fn skyrt_http_read(base: *const c_char, path: *const c_char, offset: f64, dst: *mut u8, len: u32) -> i32;
+    fn skyrt_fetch_range(
+        base: *const c_char,
+        path: *const c_char,
+        offset: f64,
+        dst: *mut u8,
+        len: u32,
+        done: extern "C" fn(*mut c_void, i32),
+        arg: *mut c_void,
+    );
+    fn emscripten_futex_wake(addr: *const c_void, count: i32) -> i32;
     fn free(ptr: *mut c_void);
 }
 
-/// Range reads of `<base>files/<path>`.
+/// One range read: filled in by the fetch thread, waited for by the reading thread.
+struct Job {
+    path: CString,
+    offset: u64,
+    dst: usize,
+    len: u32,
+    result: Mutex<Option<i32>>,
+    finished: Condvar,
+}
+
+/// Reads queued for the fetch thread. `posted` counts them; the thread sleeps until it changes.
+struct Queue {
+    jobs: Mutex<Vec<Arc<Job>>>,
+    posted: AtomicU32,
+}
+
+/// Range reads of `<base>files/<path>`, made with fetch() on a thread of their own (see
+/// `skyrt_fetch_range` in lib/http_files.js for why not a synchronous request) while the
+/// reading thread blocks.
 struct HttpRanges {
-    files: CString,
+    queue: Arc<Queue>,
+}
+
+impl HttpRanges {
+    fn new(files: CString) -> io::Result<Self> {
+        let queue = Arc::new(Queue { jobs: Mutex::new(Vec::new()), posted: AtomicU32::new(0) });
+        let thread_queue = queue.clone();
+        std::thread::Builder::new().name("streaming".into()).stack_size(256 << 10).spawn(move || {
+            // Requests run concurrently in the thread's event loop; each finishes in `done`.
+            run_event_loop(move || {
+                let seen = thread_queue.posted.load(Ordering::Acquire);
+                for job in std::mem::take(&mut *thread_queue.jobs.lock().unwrap()) {
+                    extern "C" fn done(arg: *mut c_void, n: i32) {
+                        // SAFETY: `arg` is the Arc leaked when the request started.
+                        let job = unsafe { Arc::from_raw(arg.cast::<Job>()) };
+                        *job.result.lock().unwrap() = Some(n);
+                        job.finished.notify_all();
+                    }
+                    let (path, offset, dst, len) = (job.path.as_ptr(), job.offset as f64, job.dst as *mut u8, job.len);
+                    // SAFETY: valid C strings (kept alive by the job, which `done` releases);
+                    // the reading thread keeps `dst` valid until the job finishes.
+                    unsafe {
+                        skyrt_fetch_range(files.as_ptr(), path, offset, dst, len, done, Arc::into_raw(job).cast_mut().cast())
+                    };
+                }
+                Next::OnChange { addr: &thread_queue.posted, value: seen, timeout_ms: 1000 }
+            });
+        })?;
+        Ok(HttpRanges { queue })
+    }
 }
 
 impl RangeReader for HttpRanges {
     fn read(&self, path: &str, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
-        let path = CString::new(path).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let path_c = CString::new(path).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
         // Each request is capped; the tree asks again for the rest. Offsets fit an f64 exactly.
         let len = buf.len().min(MAX_REQUEST) as u32;
         let started = std::time::Instant::now();
-        // SAFETY: valid C strings; `buf` has at least `len` writable bytes.
-        let n = unsafe { skyrt_http_read(self.files.as_ptr(), path.as_ptr(), offset as f64, buf.as_mut_ptr(), len) };
+        let job = Arc::new(Job {
+            path: path_c,
+            offset,
+            dst: buf.as_mut_ptr() as usize,
+            len,
+            result: Mutex::new(None),
+            finished: Condvar::new(),
+        });
+        self.queue.jobs.lock().unwrap().push(job.clone());
+        self.queue.posted.fetch_add(1, Ordering::Release);
+        // SAFETY: wakes the fetch thread's Atomics.waitAsync on the counter.
+        unsafe { emscripten_futex_wake(std::ptr::from_ref(&self.queue.posted).cast(), i32::MAX) };
+        let mut result = job.result.lock().unwrap();
+        while result.is_none() {
+            result = job.finished.wait(result).unwrap();
+        }
+        let n = result.expect("set above");
         let took = started.elapsed();
         if took >= SLOW_REQUEST {
             // Slow links (a phone on mobile data) otherwise look like a hang.
             log::info!(
                 "streaming: {} bytes of {} took {:.1} s ({:.1} MiB/s)",
                 len,
-                path.to_string_lossy(),
+                path,
                 took.as_secs_f64(),
                 f64::from(len) / took.as_secs_f64() / f64::from(1u32 << 20)
             );
         }
         if n < 0 {
-            return Err(io::Error::other(format!("streaming {}: request failed", path.to_string_lossy())));
+            return Err(io::Error::other(format!("streaming {path}: request failed")));
         }
         Ok(n as usize)
     }
@@ -66,7 +139,8 @@ pub fn open(base: &str) -> Result<Arc<RemoteTree>, String> {
         s
     };
     let files = CString::new(format!("{base}files/")).map_err(|e| e.to_string())?;
-    let tree = RemoteTree::from_manifest(&manifest, Arc::new(HttpRanges { files }), DEFAULT_CACHE_CHUNKS);
+    let ranges = HttpRanges::new(files).map_err(|e| format!("starting the streaming thread: {e}"))?;
+    let tree = RemoteTree::from_manifest(&manifest, Arc::new(ranges), DEFAULT_CACHE_CHUNKS);
     let Some((vfs::remote::RemoteKind::File { size }, _)) = tree.lookup("default.xex") else {
         return Err(format!("the streamed game at {base} has no default.xex"));
     };
