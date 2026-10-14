@@ -108,6 +108,7 @@ impl RangeReader for HttpRanges {
         }
         let n = result.expect("set above");
         let took = started.elapsed();
+        STATS.note(len, took);
         if took >= SLOW_REQUEST {
             // Slow links (a phone on mobile data) otherwise look like a hang.
             log::info!(
@@ -122,6 +123,52 @@ impl RangeReader for HttpRanges {
             return Err(io::Error::other(format!("streaming {path}: request failed")));
         }
         Ok(n as usize)
+    }
+}
+
+/// Requests and the time readers spent waiting for them, logged every [`STATS_PERIOD`] while
+/// requests are made: a title thread blocked on streaming shows up as hitches.
+struct Stats {
+    requests: AtomicU32,
+    bytes: std::sync::atomic::AtomicU64,
+    wait_us: std::sync::atomic::AtomicU64,
+    max_us: std::sync::atomic::AtomicU64,
+    last_report: Mutex<Option<std::time::Instant>>,
+}
+
+static STATS: Stats = Stats {
+    requests: AtomicU32::new(0),
+    bytes: std::sync::atomic::AtomicU64::new(0),
+    wait_us: std::sync::atomic::AtomicU64::new(0),
+    max_us: std::sync::atomic::AtomicU64::new(0),
+    last_report: Mutex::new(None),
+};
+
+const STATS_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl Stats {
+    fn note(&self, len: u32, took: std::time::Duration) {
+        let us = took.as_micros() as u64;
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.bytes.fetch_add(u64::from(len), Ordering::Relaxed);
+        self.wait_us.fetch_add(us, Ordering::Relaxed);
+        self.max_us.fetch_max(us, Ordering::Relaxed);
+        let mut last = self.last_report.lock().unwrap();
+        let now = std::time::Instant::now();
+        let since = *last.get_or_insert(now);
+        if now - since < STATS_PERIOD {
+            return;
+        }
+        *last = Some(now);
+        let n = self.requests.swap(0, Ordering::Relaxed);
+        log::info!(
+            "streaming: {n} requests, {:.1} MiB in the last {:.0} s; readers waited {:.2} s in all (avg {:.1} ms, max {:.0} ms)",
+            self.bytes.swap(0, Ordering::Relaxed) as f64 / f64::from(1u32 << 20),
+            (now - since).as_secs_f64(),
+            self.wait_us.load(Ordering::Relaxed) as f64 / 1e6,
+            self.wait_us.swap(0, Ordering::Relaxed) as f64 / 1e3 / f64::from(n.max(1)),
+            self.max_us.swap(0, Ordering::Relaxed) as f64 / 1e3
+        );
     }
 }
 
