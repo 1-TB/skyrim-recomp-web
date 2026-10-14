@@ -12,7 +12,7 @@
 //! | `sub_823B73B8` (16 dwords per bit) | dirty[0], dirty[1] (64 each) | VS, PS float constants |
 //! | `sub_823B7B28` (1 dword per bit) | dirty[2], dirty[3], dirty[4] | RB/PA/VGT/SQ blocks, bool/loop constants |
 //! | `sub_823B7980` (6 dwords per bit) | dirty[3] low 32 bits | fetch constants |
-//! | `sub_8240F100` (4 dwords per bit) | dirty[4] bits 49..54 | 0x2388-0x239F |
+//! | `sub_8240F100` (4 dwords per bit) | dirty[4] bits 49..54 | user clip planes |
 //!
 //! Everything else the draw emits (shader uploads in `sub_823B3D88`, the HiZ and surface packets
 //! of `sub_82393070`, `sub_823A5850`) is computed from other device fields, not a register copy.
@@ -66,14 +66,14 @@ pub const BLOCKS: &[Block] = &[
     Block { offset: 0x1780, first: 0x4400, count: 1024, name: "PS float constants" },
     Block { offset: 0x0480, first: 0x4800, count: 192, name: "fetch constants" },
     Block { offset: 10112, first: 0x4900, count: 40, name: "bool and loop constants" },
-    Block { offset: 10272, first: 0x2388, count: 24, name: "0x2388-0x239F" },
+    Block { offset: 10272, first: 0x2388, count: 24, name: "PA_CL_UCP_0_X..PA_CL_UCP_5_W" },
     Block { offset: 10368, first: 0x2000, count: 16, name: "RB_SURFACE_INFO..PA_SC_SCREEN_SCISSOR_BR" },
     Block { offset: 10444, first: 0x2100, count: 21, name: "VGT_MAX_VTX_INDX..PA_CL_VPORT_ZOFFSET" },
     Block { offset: 10528, first: 0x2180, count: 5, name: "SQ_PROGRAM_CNTL..SQ_WRAPPING_1" },
     Block { offset: 10548, first: 0x2200, count: 12, name: "RB_DEPTHCONTROL..RB_BLENDCONTROL3" },
     Block { offset: 10596, first: 0x2280, count: 21, name: "PA_SU_POINT_SIZE..VGT_ENHANCE" },
-    Block { offset: 10680, first: 0x2300, count: 38, name: "PA_SC_LINE_CNTL.." },
-    Block { offset: 10832, first: 0x2380, count: 8, name: "0x2380-0x2387" },
+    Block { offset: 10680, first: 0x2300, count: 38, name: "PA_SC_LINE_CNTL..RB_SAMPLE_COUNT_ADDR" },
+    Block { offset: 10832, first: 0x2380, count: 8, name: "PA_SU_POLY_OFFSET_FRONT_SCALE..PA_CL_POINT_CULL_RAD" },
 ];
 
 /// Where `register` is kept in the device, if it is.
