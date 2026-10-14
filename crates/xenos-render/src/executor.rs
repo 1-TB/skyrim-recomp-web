@@ -391,6 +391,8 @@ pub struct Executor {
     resolving: bool,
     max_texture_dimension: u32,
     warned: HashSet<String>,
+    /// Pipelines the device rejected (the first few are logged with their shaders' WGSL).
+    pipeline_failures: u32,
     pub stats: ExecutorStats,
 }
 
@@ -662,6 +664,7 @@ impl Executor {
             resolving: false,
             max_texture_dimension: limits.maxTextureDimension2D,
             warned: HashSet::new(),
+            pipeline_failures: 0,
             stats: ExecutorStats::default(),
         }
     }
@@ -1890,7 +1893,7 @@ impl Executor {
             Some(PipelineEntry::Failed) => return None,
             Some(PipelineEntry::Compiling(pending)) => {
                 let result = pending.try_take()?;
-                return self.compiled(key, result);
+                return self.compiled(key, result, vs, ps);
             }
             None => {}
         }
@@ -1986,17 +1989,51 @@ impl Executor {
                 return None;
             }
         };
-        self.compiled(key, result)
+        self.compiled(key, result, vs, ps)
     }
 
-    fn compiled(&mut self, key: PipelineKey, result: gpu_webgpu::Result<RenderPipeline>) -> Option<RenderPipeline> {
+    fn compiled(
+        &mut self,
+        key: PipelineKey,
+        result: gpu_webgpu::Result<RenderPipeline>,
+        vs: &CachedShader,
+        ps: Option<&CachedShader>,
+    ) -> Option<RenderPipeline> {
         match result {
             Ok(pipeline) => {
                 self.pipelines.insert(key, PipelineEntry::Ready(pipeline.clone()));
                 Some(pipeline)
             }
             Err(e) => {
-                self.warn_once(format!("pipeline rejected: {e}"));
+                // Every failure is logged with what identifies it (backends such as wgpu's D3D12
+                // one reject pipelines other implementations accept); the first few with the
+                // WGSL of their shaders, so a user's log pinpoints the construct.
+                self.pipeline_failures += 1;
+                let colors: Vec<String> = key.colors[..key.color_slots]
+                    .iter()
+                    .map(|c| {
+                        c.as_ref().map_or("-".into(), |c| {
+                            format!("{:?}{}", c.format, if c.blend.is_some() { "+blend" } else { "" })
+                        })
+                    })
+                    .collect();
+                log::warn!(
+                    "renderer: pipeline rejected (#{}): {e}; vertex shader {}, pixel shader {:?}, topology {:?}, \
+                     colors [{}], samples {}, mask {:#X}",
+                    self.pipeline_failures,
+                    vs.id,
+                    ps.map(|p| p.id),
+                    key.topology,
+                    colors.join(", "),
+                    key.sample_count,
+                    key.sample_mask,
+                );
+                if self.pipeline_failures <= 3 {
+                    log::warn!("renderer: rejected pipeline's vertex shader {}:\n{}", vs.id, vs.translation.wgsl);
+                    if let Some(ps) = ps {
+                        log::warn!("renderer: rejected pipeline's pixel shader {}:\n{}", ps.id, ps.translation.wgsl);
+                    }
+                }
                 self.pipelines.insert(key, PipelineEntry::Failed);
                 None
             }
