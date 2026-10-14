@@ -114,6 +114,8 @@ impl RenderTargetCache for OneTarget {
     fn poll_resolve(&mut self, _device: &Device, _memory: &dyn PhysicalMemory) -> ResolveStatus {
         ResolveStatus::Done { written: None, in_gpu_memory: false }
     }
+
+    fn end_frame(&mut self) {}
 }
 
 pub fn device() -> Device {

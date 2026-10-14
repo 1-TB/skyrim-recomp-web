@@ -43,7 +43,17 @@ struct HostRt {
     samples: u32,
     width: u32,
     height: u32,
+    /// Frame ends since it was last bound or cleared, while owning no EDRAM tile.
+    idle_frames: u32,
 }
+
+/// Frames a host render target may go unused while owning no EDRAM tile before
+/// [`EdramCache::end_frame`] destroys it. Most targets are used every frame but lose their tiles
+/// to later passes before it ends, so ownership alone would recreate them over and over.
+const RT_MAX_IDLE_FRAMES: u32 = 60;
+
+/// Render target heights are multiples of this many tile rows (see [`EdramCache::ensure_rt`]).
+const RT_HEIGHT_GRANULARITY_TILES: u32 = 8;
 
 impl HostRt {
     fn src_kind(&self) -> SrcKind {
@@ -458,6 +468,9 @@ pub struct EdramCache {
     max_dimension: u32,
     max_output_bytes: u64,
     rts: HashMap<RenderTargetKey, HostRt>,
+    /// Textures of render targets replaced by taller ones, destroyed at the end of the frame
+    /// (recorded work may still use them until it is submitted).
+    outgrown: Vec<Texture>,
     ownership: OwnershipMap,
     /// EDRAM-layout copy of the tiles dumped for resolves.
     shadow: Buffer,
@@ -531,6 +544,7 @@ impl EdramCache {
                 .min(limits.maxBufferSize)
                 .min(MAX_RESOLVE_OUTPUT_BYTES),
             rts: HashMap::new(),
+            outgrown: Vec::new(),
             ownership: OwnershipMap::default(),
             shadow,
             resolve_out: None,
@@ -566,9 +580,28 @@ impl EdramCache {
 
     /// Destroys host render targets that no longer own any EDRAM tile.
     pub fn trim(&mut self) {
+        self.trim_unowned(0);
+    }
+
+    /// Frame boundary, with everything recorded submitted: destroys host render targets that
+    /// own no EDRAM tile and were not used for [`RT_MAX_IDLE_FRAMES`] frames (their contents
+    /// are unreachable; a later use starts a new one).
+    pub fn end_frame(&mut self) {
+        self.trim_unowned(RT_MAX_IDLE_FRAMES);
+    }
+
+    fn trim_unowned(&mut self, max_idle_frames: u32) {
+        for texture in self.outgrown.drain(..) {
+            texture.destroy();
+        }
         let ranges = self.ownership.ranges();
         self.rts.retain(|key, rt| {
-            let keep = ranges.iter().any(|r| r.owner == *key);
+            if ranges.iter().any(|r| r.owner == *key) {
+                rt.idle_frames = 0;
+                return true;
+            }
+            rt.idle_frames += 1;
+            let keep = rt.idle_frames <= max_idle_frames;
             if !keep {
                 rt.texture.destroy();
             }
@@ -590,9 +623,34 @@ impl EdramCache {
         }
     }
 
-    fn ensure_rt(&mut self, device: &Device, key: RenderTargetKey) -> Result<(), EdramError> {
-        if self.rts.contains_key(&key) {
-            return Ok(());
+    /// Height of a new or grown render target that must cover `min_height` rows: rounded up so
+    /// small increases don't each cost a new texture, and at most [`EdramCache::rt_height`].
+    fn grown_height(&self, key: &RenderTargetKey, min_height: u32) -> u32 {
+        let tile_h = EDRAM_TILE_HEIGHT_SAMPLES >> key.msaa_samples.samples_y_log2();
+        let max = self.rt_height(key.pitch_tiles_at_32bpp, key.msaa_samples);
+        min_height.max(1).next_multiple_of(tile_h * RT_HEIGHT_GRANULARITY_TILES).min(max)
+    }
+
+    /// Makes sure the host render target for `key` exists and is at least `min_height` rows
+    /// tall (clamped to what one EDRAM addressing period needs). Targets are made only as tall
+    /// as their uses so far: a full-period texture is mostly never touched (a 720-row frame in
+    /// a 2048-row texture; a 320x8192 depth buffer of which 256 rows are addressable before the
+    /// end of EDRAM), and that cost ~200 MiB of GPU memory in Skyrim. A taller use replaces the
+    /// texture, copying the tiles it owns over with the ownership-transfer passes encoded into
+    /// `encoder` (partial copies of depth/stencil and multisampled textures aren't allowed).
+    fn ensure_rt(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        key: RenderTargetKey,
+        min_height: u32,
+    ) -> Result<(), EdramError> {
+        let height = self.grown_height(&key, min_height);
+        if let Some(rt) = self.rts.get_mut(&key) {
+            rt.idle_frames = 0;
+            if rt.height >= height {
+                return Ok(());
+            }
         }
         if key.msaa_samples.count().is_none() {
             return Err(EdramError::InvalidMsaa(key.msaa_samples.raw()));
@@ -602,7 +660,6 @@ impl EdramCache {
         if width == 0 || width > self.max_dimension {
             return Err(EdramError::PitchTooLarge { width, max: self.max_dimension });
         }
-        let height = self.rt_height(key.pitch_tiles_at_32bpp, key.msaa_samples);
         let samples = host_samples(key.msaa_samples);
         let texture = device.create_texture(&TextureDescriptor {
             label: if key.is_depth { "edram depth" } else { "edram color" },
@@ -619,8 +676,28 @@ impl EdramCache {
         } else {
             (attachment.clone(), None)
         };
-        log::debug!("edram: new {width}x{height}x{samples} {format:?} render target for {key:?}");
-        self.rts.insert(key, HostRt { key, texture, attachment, read, stencil, format, samples, width, height });
+        let rt = HostRt {
+            key,
+            texture,
+            attachment,
+            read,
+            stencil,
+            format,
+            samples,
+            width,
+            height,
+            idle_frames: 0,
+        };
+        match self.rts.insert(key, rt) {
+            None => log::debug!("edram: new {width}x{height}x{samples} {format:?} render target for {key:?}"),
+            Some(old) => {
+                log::debug!("edram: {key:?} grows from {} to {height} rows", old.height);
+                let owned: Vec<OwnedRange> =
+                    self.ownership.ranges().iter().filter(|r| r.owner == key).copied().collect();
+                self.encode_transfers(device, encoder, key, &owned, None, Some(&old));
+                self.outgrown.push(old.texture);
+            }
+        }
         Ok(())
     }
 
@@ -664,13 +741,18 @@ impl EdramCache {
         if bound.is_empty() {
             return Ok(out);
         }
-        for (_, key, ..) in &bound {
-            self.host_format(key)?;
-            self.ensure_rt(device, *key)?;
-        }
         let height = self.rt_height(setup.pitch_tiles_at_32bpp, msaa);
         let tile_h = EDRAM_TILE_HEIGHT_SAMPLES >> msaa.samples_y_log2();
         let rows_tiles = min_height.clamp(1, height).div_ceil(tile_h);
+        // Attachments of one pass must be the same size: all grow to the tallest.
+        let mut common = rows_tiles * tile_h;
+        for (_, key, ..) in &bound {
+            self.host_format(key)?;
+            common = common.max(self.rts.get(key).map_or(0, |rt| rt.height));
+        }
+        for (_, key, ..) in &bound {
+            self.ensure_rt(device, encoder, *key, common)?;
+        }
 
         // Each target owns from its base up to the rows used, but not past the next target's base.
         let mut order: Vec<usize> = (0..bound.len()).collect();
@@ -691,7 +773,7 @@ impl EdramCache {
             }
         }
         for (key, previous) in claims {
-            self.encode_transfers(device, encoder, key, &previous, None);
+            self.encode_transfers(device, encoder, key, &previous, None, None);
         }
 
         let any = &self.rts[&bound[0].1];
@@ -719,7 +801,8 @@ impl EdramCache {
         Ok(out)
     }
 
-    /// Copies tiles `previous` (owned by other targets) into `dest`'s texture.
+    /// Copies tiles `previous` (owned by other targets, or by `dest_key` itself in `outgrown`,
+    /// the texture it replaces) into `dest`'s texture.
     fn encode_transfers(
         &mut self,
         device: &Device,
@@ -727,6 +810,7 @@ impl EdramCache {
         dest_key: RenderTargetKey,
         previous: &[OwnedRange],
         cutout: Option<Cutout>,
+        outgrown: Option<&HostRt>,
     ) {
         struct Draw {
             pipelines: Vec<(RenderPipeline, u32)>,
@@ -740,7 +824,9 @@ impl EdramCache {
         let tile_h = EDRAM_TILE_HEIGHT_SAMPLES >> dest_key.msaa_samples.samples_y_log2();
         let mut draws = Vec::new();
         for range in previous {
-            let Some(src) = self.rts.get(&range.owner) else {
+            // `dest_key`'s own tiles come from its previous texture (when it grows).
+            let src = if range.owner == dest_key { outgrown } else { self.rts.get(&range.owner) };
+            let Some(src) = src else {
                 continue;
             };
             let kind = src.src_kind();
@@ -864,11 +950,12 @@ impl EdramCache {
         }
         let copy = self.plan_copy(info)?;
         let clears = self.plan_clears(info)?;
+        let mut encoder = device.create_command_encoder("edram resolve");
         for clear in &clears {
-            self.ensure_rt(device, clear.key)?;
+            let tile_h = EDRAM_TILE_HEIGHT_SAMPLES >> clear.key.msaa_samples.samples_y_log2();
+            self.ensure_rt(device, &mut encoder, clear.key, clear.rect[3].next_multiple_of(tile_h))?;
         }
 
-        let mut encoder = device.create_command_encoder("edram resolve");
         let mut stored = None;
         if let Some(plan) = copy {
             match self.encode_copy(device, &mut encoder, info, plan, shared) {
@@ -878,7 +965,7 @@ impl EdramCache {
         }
         for clear in &clears {
             let previous = self.ownership.claim(clear.start, clear.length, clear.key);
-            self.encode_transfers(device, &mut encoder, clear.key, &previous, Some(clear.rect));
+            self.encode_transfers(device, &mut encoder, clear.key, &previous, Some(clear.rect), None);
             self.encode_clear(device, &mut encoder, clear);
             if clear.key.is_depth {
                 pending.cleared_depth = true;

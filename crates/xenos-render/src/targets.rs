@@ -62,4 +62,7 @@ pub trait RenderTargetCache {
 
     /// Continues the resolve [`RenderTargetCache::resolve`] left pending.
     fn poll_resolve(&mut self, device: &Device, memory: &dyn PhysicalMemory) -> ResolveStatus;
+
+    /// Frame boundary; everything recorded has been submitted, so unused targets can be freed.
+    fn end_frame(&mut self);
 }

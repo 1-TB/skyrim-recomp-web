@@ -678,6 +678,7 @@ impl Executor {
         // Textures are revalidated against guest memory once per frame.
         self.forget_texture_sets();
         self.textures.destroy_retired();
+        self.targets.end_frame();
         self.frames_in_flight.push_back(self.device.queue().on_submitted_work_done());
         self.textures.end_frame();
         let frame = self.frame;
@@ -1027,7 +1028,30 @@ impl Executor {
         let viewport_regs = ViewportRegisters::from_registers(regs, depth_control.z_enable);
         let viewport = host_viewport_info(&viewport_regs, &ViewportArgs::webgpu(self.max_texture_dimension));
         let guest_scissor = scissor(regs, true, false);
-        let min_height = (guest_scissor.offset[1] + guest_scissor.extent[1]).min(self.max_texture_dimension).max(1);
+        // Rows the draw can touch, which is how tall its render targets are made and how much
+        // EDRAM it claims. With clipping, primitives stay inside the host viewport, so below it
+        // nothing is drawn even when the scissor is the whole surface (as it often is). Without
+        // clipping and with an 8192x8192 scissor (Direct3D 9's screen-space draws), the vertices
+        // themselves are run on the CPU to find out, like Xenia does.
+        let mut min_height = (guest_scissor.offset[1] + guest_scissor.extent[1]).min(self.max_texture_dimension);
+        if !viewport_regs.clip_cntl.clip_disable {
+            let viewport_bottom = i64::from(viewport.xy_offset[1]) + i64::from(viewport.xy_extent[1]);
+            min_height = min_height.min(viewport_bottom.clamp(0, i64::from(u32::MAX)) as u32);
+        } else {
+            let unclamped = scissor(regs, false, false);
+            if unclamped.offset[0] + unclamped.extent[0] >= xenos::TEXTURE_2D_MAX_WIDTH_HEIGHT
+                && unclamped.offset[1] + unclamped.extent[1] >= xenos::TEXTURE_2D_MAX_WIDTH_HEIGHT
+            {
+                min_height = min_height.min(crate::extent::vertex_max_y(
+                    &desc,
+                    regs,
+                    &viewport_regs,
+                    &vs.shader,
+                    &*self.memory,
+                ));
+            }
+        }
+        let min_height = min_height.max(1);
 
         mark!(self, 2);
         // Index data and ring space (submit first if this draw's data may not fit).

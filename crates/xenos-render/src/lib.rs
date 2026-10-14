@@ -12,6 +12,7 @@
 pub mod debug;
 pub mod edram;
 pub mod executor;
+mod extent;
 mod float_patch;
 mod present;
 mod queue;

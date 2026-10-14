@@ -10,6 +10,8 @@ use xenos_shader::{Shader, ShaderStage, Translation, TranslationOptions};
 pub struct CachedShader {
     pub module: ShaderModule,
     pub translation: Translation,
+    /// The decoded microcode (vertex shaders are run on the CPU to bound unclipped draws).
+    pub shader: Shader,
     /// Identifies this (microcode, options) pair in pipeline keys.
     pub id: u64,
 }
@@ -77,6 +79,6 @@ impl ShaderCache {
         // still rejects is reported through its uncaptured-error log.
         let module = device.create_shader_module_wgsl(&format!("{stage:?} {hash:016X}"), &translation.wgsl);
         self.next_id += 1;
-        Some(Rc::new(CachedShader { module, translation, id: self.next_id }))
+        Some(Rc::new(CachedShader { module, translation, shader, id: self.next_id }))
     }
 }

@@ -11,14 +11,32 @@ use crate::parsed::{
 use crate::program::{Instruction, Program};
 use crate::ucode::{self, FetchOpcode, scalar_op as s, vector_op as v, vertex_format as vfmt};
 
+/// Guest physical memory as vertex fetches read it.
+pub trait SharedMemoryWords {
+    /// Dword `index`: bytes `4 * index..4 * index + 3` as stored (little-endian), 0 past the end.
+    fn word(&self, index: u32) -> u32;
+}
+
+impl SharedMemoryWords for [u32] {
+    fn word(&self, index: u32) -> u32 {
+        self.get(index as usize).copied().unwrap_or(0)
+    }
+}
+
+impl SharedMemoryWords for Vec<u32> {
+    fn word(&self, index: u32) -> u32 {
+        self.as_slice().word(index)
+    }
+}
+
 /// Inputs of an invocation.
 pub struct Environment<'a> {
     /// The 256 float constants of the shader's stage.
     pub float_constants: &'a [[f32; 4]],
     pub bool_loop: &'a BoolLoopConstants,
     pub fetch_constants: &'a [u32],
-    /// Guest physical memory, u32 `i` holding bytes `4i..4i+3` as stored.
-    pub shared_memory: &'a [u32],
+    /// Guest physical memory.
+    pub shared_memory: &'a dyn SharedMemoryWords,
 }
 
 /// Values written by the shader.
@@ -569,7 +587,7 @@ impl<'a> Interpreter<'a> {
         if (address as u32) >= (end as u32) {
             return 0;
         }
-        swap32(self.env.shared_memory.get(address as u32 as usize).copied().unwrap_or(0), endian)
+        swap32(self.env.shared_memory.word(address as u32), endian)
     }
 
     pub fn vertex_fetch(&mut self, vf: &ParsedVertexFetch) {
