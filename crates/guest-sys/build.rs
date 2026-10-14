@@ -91,7 +91,26 @@ fn title_overrides(title: Option<(u32, u32)>, declared: &HashSet<String>) -> Str
     // Spinning there kept the render thread busy whenever the GPU was behind; instead sleep
     // until the command processor writes the read pointer back (or 1 ms passes).
     const SKYRIM_RING_WAIT: &str = "sub_82C8B818";
-    if title == Some((0x4253_07E6, 0x0000_0A02)) && declared.contains(SKYRIM_RING_WAIT) {
+    let skyrim = title == Some((0x4253_07E6, 0x0000_0A02));
+    // zlib's deflateInit_ (level in r4; -1 = default, 6). The title compresses buffers with it
+    // while playing (one call took 330 ms natively, ~550 ms in the browser, and the frame
+    // waits for it: a visible hitch). Level 1 (deflate_fast) produces a valid stream for the
+    // title's own inflate several times faster.
+    const SKYRIM_DEFLATE_INIT: &str = "sub_82CA7930";
+    if skyrim && declared.contains(SKYRIM_DEFLATE_INIT) {
+        writeln!(
+            cpp,
+            r#"
+extern "C" PPC_FUNC(__imp__{f});
+PPC_FUNC({f}) {{
+    if (ctx.r4.s32 != 0) ctx.r4.s64 = 1;
+    __imp__{f}(ctx, base);
+}}"#,
+            f = SKYRIM_DEFLATE_INIT
+        )
+        .unwrap();
+    }
+    if skyrim && declared.contains(SKYRIM_RING_WAIT) {
         writeln!(
             cpp,
             r#"

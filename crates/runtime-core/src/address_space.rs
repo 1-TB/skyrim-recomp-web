@@ -472,7 +472,15 @@ impl AddressSpace {
     }
 
     pub fn is_committed(&self, addr: u32) -> bool {
-        self.query(addr).is_some_and(|i| i.state == PageState::Committed)
+        // The page's state only: `query` measures the whole run of like pages, which can be
+        // most of a heap (the command processor asks for every buffer it reads).
+        let state = match region_of(addr) {
+            Region::Virtual | Region::Stack | Region::Xex => self.with_page_heap(addr, |h| h.state_of(addr)).ok().flatten(),
+            Region::Physical(_) => self.physical_address(addr).and_then(|p| self.physical.lock().unwrap().state_of(p)),
+            Region::System | Region::Mmio => Some(PageState::Committed),
+            Region::HostReserved => None,
+        };
+        state == Some(PageState::Committed)
     }
 
     /// Committed physical pages (for MmQueryStatistics).

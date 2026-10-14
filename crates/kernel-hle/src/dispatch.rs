@@ -132,6 +132,10 @@ pub struct ImportStats {
     pub implemented: bool,
 }
 
+/// Kernel calls taking at least this many milliseconds are logged with their caller (0 = off;
+/// `--slow-calls MS`), for finding what a stalled title thread waits on.
+pub static SLOW_CALL_MS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// Unimplemented imports log every call up to this many, then every Nth.
 const UNIMPLEMENTED_LOG_ALL: u64 = 64;
 const UNIMPLEMENTED_LOG_EVERY: u64 = 1024;
@@ -198,7 +202,26 @@ impl Kernel {
                     log::info!("first call: {}!{} ({:#05X})", self.module_name(module), e.name, ordinal);
                 }
                 let mut call = Call { kernel: self, ctx, module, ordinal };
+                let slow_ms = SLOW_CALL_MS.load(std::sync::atomic::Ordering::Relaxed);
+                let started = (slow_ms != 0).then(std::time::Instant::now);
+                if slow_ms != 0 {
+                    crate::thread::set_caller_lr(call.ctx.lr as u32);
+                }
                 let ret = (e.handler)(&mut call);
+                if let Some(started) = started {
+                    let took = started.elapsed();
+                    if took.as_millis() >= u128::from(slow_ms) {
+                        log::info!(
+                            "slow call: {}({:08X} {:08X} {:08X}) took {:.0} ms, from {:08X?}",
+                            e.name,
+                            args[0],
+                            args[1],
+                            args[2],
+                            took.as_secs_f64() * 1000.0,
+                            call.guest_backtrace(6)
+                        );
+                    }
+                }
                 log::trace!(
                     "{}!{}({:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}) = {:#X}",
                     self.module_name(module),

@@ -24,6 +24,8 @@ options:
   --vblank-hz N            vblank interrupts per second (default 60). Skyrim shows a frame every
                            second vblank, so 120 allows 60 fps and e.g. 1000 removes the cap
                            (physics may misbehave at very high frame rates)
+  --slow-calls MS          log kernel calls that take at least MS milliseconds, with their
+                           guest callers (what a stalled title thread is waiting on)
   --no-signin              start with no profile signed in
   --no-pad                 start with no controller connected (default: one on port 1)
   --tap BUTTON@SECONDS     press a port-1 button at that time after boot (held for 200 ms
@@ -98,6 +100,10 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             "--no-signin" => o.no_signin = true,
             "--no-pad" => o.no_pad = true,
             "--vblank-hz" => o.vblank_hz = Some(value()?.parse().map_err(|e| format!("--vblank-hz: {e}"))?),
+            "--slow-calls" => {
+                let ms: u32 = value()?.parse().map_err(|e| format!("--slow-calls: {e}"))?;
+                kernel_hle::dispatch::SLOW_CALL_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+            }
             "--tap" => o.taps.push(parse_tap(&value()?)?),
             "--render-debug" => xenos_render::debug::enable(&value()?)?,
             "--resolution-scale" => {

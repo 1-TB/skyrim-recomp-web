@@ -283,9 +283,19 @@ struct DispState {
     /// Threads involved in each notification event's signals since its last
     /// reset that may not have caught up yet.
     involved: HashMap<ObjId, Vec<Arc<Participant>>>,
+    /// Who last signalled each object (thread id, caller's return address, when), kept only
+    /// while slow-call logging is on (see [`ObjectManager::last_signal`]).
+    last_signal: HashMap<ObjId, (u32, u32, Instant)>,
 }
 
 impl DispState {
+    fn note_signal(&mut self, id: ObjId) {
+        if crate::dispatch::SLOW_CALL_MS.load(Ordering::Relaxed) != 0 {
+            let (tid, lr) = crate::thread::current_caller();
+            self.last_signal.insert(id, (tid, lr, Instant::now()));
+        }
+    }
+
     fn mirror(&self, mem: &GuestMemory, id: ObjId) {
         if let (Some(s), Some(&ptr)) = (self.sync.get(&id), self.headers.get(&id)) {
             mem.write_i32(ptr + dh::SIGNAL_STATE, s.signal_state());
@@ -670,6 +680,7 @@ impl ObjectManager {
     fn update<R>(&self, mem: &GuestMemory, obj: &KObject, f: impl FnOnce(&mut SyncState) -> R) -> Option<R> {
         let mut d = self.lock();
         let r = f(d.sync.get_mut(&obj.id)?);
+        d.note_signal(obj.id);
         d.mirror(mem, obj.id);
         d.wake_waiters(mem);
         Some(r)
@@ -683,6 +694,7 @@ impl ObjectManager {
             SyncState::Event { signaled, .. } => std::mem::replace(signaled, true) as i32,
             _ => 0,
         };
+        d.note_signal(obj.id);
         d.mirror(mem, obj.id);
         if d.wake_waiters(mem) {
             let signaller = Arc::new(Participant::current());
@@ -757,6 +769,7 @@ impl ObjectManager {
             SyncState::Event { signaled, .. } => std::mem::replace(signaled, true) as i32,
             _ => return Some(0),
         };
+        d.note_signal(obj.id);
         d.wake_waiters(mem);
         if let Some(SyncState::Event { signaled, .. }) = d.sync.get_mut(&obj.id) {
             *signaled = false;
@@ -906,6 +919,12 @@ impl ObjectManager {
             Some(r) if !withdrawn => WaitOutcome::Satisfied(r),
             _ => interrupted,
         }
+    }
+
+    /// Who last signalled `id`: (thread id, guest return address of the signalling call, when).
+    /// Recorded only while `--slow-calls` logging is on.
+    pub fn last_signal(&self, id: ObjId) -> Option<(u32, u32, Instant)> {
+        self.lock().last_signal.get(&id).copied()
     }
 
     /// Threads currently blocked in a wait (for hang diagnostics).

@@ -76,6 +76,21 @@ pub(crate) fn note_kernel_call() {
     })
 }
 
+thread_local! {
+    /// Guest return address of the kernel call this thread is in (for diagnostics).
+    static CALLER_LR: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+pub(crate) fn set_caller_lr(lr: u32) {
+    CALLER_LR.with(|c| c.set(lr));
+}
+
+/// (guest thread id or 0, return address of its current kernel call), for diagnostics.
+pub(crate) fn current_caller() -> (u32, u32) {
+    let tid = CURRENT.with(|c| c.borrow().as_ref().map_or(0, |t| t.block.thread_id));
+    (tid, CALLER_LR.with(|c| c.get()))
+}
+
 /// Kernel calls the calling guest thread has made (0 on host threads).
 pub(crate) fn kernel_call_count() -> u64 {
     CURRENT.with(|c| c.borrow().as_ref().map_or(0, |t| t.kernel_calls.load(Ordering::Relaxed)))

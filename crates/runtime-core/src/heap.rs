@@ -91,13 +91,29 @@ pub struct PageHeap {
     base: u32,
     pages: Vec<Page>,
     allocations: BTreeMap<u32, Allocation>,
+    /// Free page runs (first page -> length), so allocation doesn't scan the page array (with
+    /// tens of thousands of pages in use that took milliseconds per call, and the title
+    /// allocates thousands of times while streaming).
+    free: BTreeMap<u32, u32>,
+    /// Pages reserved or committed, and committed (MmQueryStatistics asks often).
+    used_pages: u32,
+    committed_pages: u32,
 }
 
 impl PageHeap {
     pub fn new(name: &'static str, base: u32, size: u32) -> Self {
         assert!(base.is_multiple_of(PAGE_SIZE) && size.is_multiple_of(PAGE_SIZE));
         let free = Page { state: PageState::Free, protect: 0, alloc_base: 0 };
-        PageHeap { name, base, pages: vec![free; (size / PAGE_SIZE) as usize], allocations: BTreeMap::new() }
+        let count = size / PAGE_SIZE;
+        PageHeap {
+            name,
+            base,
+            pages: vec![free; count as usize],
+            allocations: BTreeMap::new(),
+            free: if count > 0 { BTreeMap::from([(0, count)]) } else { BTreeMap::new() },
+            used_pages: 0,
+            committed_pages: 0,
+        }
     }
 
     pub fn name(&self) -> &'static str {
@@ -131,7 +147,42 @@ impl PageHeap {
         self.pages[first as usize..(first + count) as usize].iter().all(|p| p.state == PageState::Free)
     }
 
+    /// Removes `[first, first + count)` (wholly free) from the free runs.
+    fn take_free(&mut self, first: u32, count: u32) {
+        let (&start, &len) = self.free.range(..=first).next_back().expect("range is free");
+        debug_assert!(first + count <= start + len);
+        self.free.remove(&start);
+        if first > start {
+            self.free.insert(start, first - start);
+        }
+        if first + count < start + len {
+            self.free.insert(first + count, start + len - (first + count));
+        }
+    }
+
+    /// Returns `[first, first + count)` to the free runs, merging with its neighbours.
+    fn add_free(&mut self, first: u32, count: u32) {
+        let (mut start, mut len) = (first, count);
+        if let Some((&s, &l)) = self.free.range(..first).next_back()
+            && s + l == first
+        {
+            self.free.remove(&s);
+            start = s;
+            len += l;
+        }
+        if let Some(&l) = self.free.get(&(first + count)) {
+            self.free.remove(&(first + count));
+            len += l;
+        }
+        self.free.insert(start, len);
+    }
+
     fn mark(&mut self, first: u32, count: u32, commit: bool, protect: u32) -> Vec<(u32, u32)> {
+        self.take_free(first, count);
+        self.used_pages += count;
+        if commit {
+            self.committed_pages += count;
+        }
         let state = if commit { PageState::Committed } else { PageState::Reserved };
         for p in &mut self.pages[first as usize..(first + count) as usize] {
             *p = Page { state, protect, alloc_base: first };
@@ -182,36 +233,28 @@ impl PageHeap {
         }
         let last_start = (hi_end - count) / align_pages * align_pages;
 
-        let mut candidate = if top_down { last_start } else { lo };
-        loop {
-            if candidate < lo || candidate > last_start {
-                return Err(HeapError::NoSpace);
+        // First fit over the free runs, from the bottom or the top of [lo, hi_end).
+        let fit = |run_start: u32, run_len: u32| -> Option<u32> {
+            let (from, to) = (run_start.max(lo), (run_start + run_len).min(hi_end));
+            if to < from + count {
+                return None;
             }
-            // Find the first non-free page in the window to skip past it quickly.
-            let window = &self.pages[candidate as usize..(candidate + count) as usize];
-            match if top_down {
-                window.iter().rposition(|p| p.state != PageState::Free)
+            let c = if top_down {
+                (to - count) / align_pages * align_pages
             } else {
-                window.iter().position(|p| p.state != PageState::Free)
-            } {
-                None => {
-                    let newly = self.mark(candidate, count, commit, protect);
-                    return Ok(Allocated { address: self.base + candidate * PAGE_SIZE, newly_committed: newly });
-                }
-                Some(busy) => {
-                    let busy = candidate + busy as u32;
-                    if top_down {
-                        // The next window must end at or before the busy page.
-                        if busy < count {
-                            return Err(HeapError::NoSpace);
-                        }
-                        candidate = (busy - count) / align_pages * align_pages;
-                    } else {
-                        candidate = (busy + 1).div_ceil(align_pages) * align_pages;
-                    }
-                }
-            }
-        }
+                from.div_ceil(align_pages) * align_pages
+            };
+            (c >= from && c + count <= to && c <= last_start).then_some(c)
+        };
+        let found = if top_down {
+            self.free.range(..hi_end).rev().find_map(|(&s, &l)| fit(s, l))
+        } else {
+            let first_run = self.free.range(..=lo).next_back().map_or(lo, |(&s, _)| s);
+            self.free.range(first_run..).find_map(|(&s, &l)| fit(s, l))
+        };
+        let candidate = found.ok_or(HeapError::NoSpace)?;
+        let newly = self.mark(candidate, count, commit, protect);
+        Ok(Allocated { address: self.base + candidate * PAGE_SIZE, newly_committed: newly })
     }
 
     /// Allocation at a caller-chosen address. Free ranges are reserved (and
@@ -245,6 +288,7 @@ impl PageHeap {
                 if page.state != PageState::Committed {
                     page.state = PageState::Committed;
                     page.protect = protect;
+                    self.committed_pages += 1;
                     run = Some(match run {
                         Some((s, n)) if s + n == i => (s, n + 1),
                         Some(prev) => {
@@ -280,6 +324,7 @@ impl PageHeap {
             let page = &mut self.pages[i as usize];
             if page.state == PageState::Committed {
                 page.state = PageState::Reserved;
+                self.committed_pages -= 1;
                 match ranges.last_mut() {
                     Some((s, n)) if *s + *n == self.base + i * PAGE_SIZE => *n += PAGE_SIZE,
                     _ => ranges.push((self.base + i * PAGE_SIZE, PAGE_SIZE)),
@@ -301,6 +346,7 @@ impl PageHeap {
         for i in first..first + alloc.pages {
             let page = &mut self.pages[i as usize];
             if page.state == PageState::Committed {
+                self.committed_pages -= 1;
                 match committed.last_mut() {
                     Some((s, n)) if *s + *n == self.base + i * PAGE_SIZE => *n += PAGE_SIZE,
                     _ => committed.push((self.base + i * PAGE_SIZE, PAGE_SIZE)),
@@ -308,6 +354,8 @@ impl PageHeap {
             }
             *page = Page { state: PageState::Free, protect: 0, alloc_base: 0 };
         }
+        self.used_pages -= alloc.pages;
+        self.add_free(first, alloc.pages);
         Ok((alloc.pages * PAGE_SIZE, committed))
     }
 
@@ -375,18 +423,64 @@ impl PageHeap {
 
     /// Counts of (reserved-or-committed pages, committed pages).
     pub fn usage(&self) -> (u32, u32) {
-        let mut used = 0;
-        let mut committed = 0;
-        for p in &self.pages {
-            match p.state {
-                PageState::Free => {}
-                PageState::Reserved => used += 1,
-                PageState::Committed => {
-                    used += 1;
-                    committed += 1;
+        (self.used_pages, self.committed_pages)
+    }
+}
+
+#[cfg(test)]
+mod free_run_tests {
+    use super::*;
+
+    /// The free runs and counters stay consistent with the page array through random
+    /// allocations (aligned, top-down, ranged, fixed), commits and releases.
+    #[test]
+    fn free_runs_track_the_page_array() {
+        let mut h = PageHeap::new("test", 0x4000_0000, 0x400_0000);
+        let mut live = Vec::new();
+        let mut seed = 0x1234_5678u32;
+        let mut rand = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed >> 8
+        };
+        for _ in 0..4000 {
+            match rand() % 5 {
+                0 | 1 => {
+                    let size = (rand() % 64 + 1) * PAGE_SIZE;
+                    let align = [PAGE_SIZE, 0x1_0000, 0x10_0000][(rand() % 3) as usize];
+                    if let Ok(a) = h.alloc(size, align, rand() % 2 == 0, protect::READWRITE, rand() % 2 == 0) {
+                        assert_eq!(a.address % align, 0);
+                        live.push(a.address);
+                    }
                 }
+                2 => {
+                    let lo = 0x4000_0000 + (rand() % 0x300) * 0x1_0000;
+                    if let Ok(a) = h.alloc_range(lo, lo + 0x40_0000, 0x3000, PAGE_SIZE, true, protect::READWRITE, false) {
+                        assert!(a.address >= lo && a.address + 0x3000 <= lo + 0x40_0001);
+                        live.push(a.address);
+                    }
+                }
+                3 => {
+                    let addr = 0x4000_0000 + (rand() % 0x4000) * PAGE_SIZE;
+                    if let Ok(a) = h.alloc_fixed(addr, 0x2000, true, protect::READWRITE)
+                        && h.allocations.contains_key(&((a.address - h.base) / PAGE_SIZE))
+                        && !live.contains(&a.address)
+                    {
+                        live.push(a.address);
+                    }
+                }
+                _ if !live.is_empty() => {
+                    let i = (rand() as usize) % live.len();
+                    h.release(live.swap_remove(i)).unwrap();
+                }
+                _ => {}
             }
+            let free_pages: u32 = h.free.values().sum();
+            assert_eq!(free_pages + h.used_pages, h.pages.len() as u32);
+            for (&start, &len) in &h.free {
+                assert!(h.pages[start as usize..(start + len) as usize].iter().all(|p| p.state == PageState::Free));
+            }
+            let committed = h.pages.iter().filter(|p| p.state == PageState::Committed).count() as u32;
+            assert_eq!(committed, h.committed_pages);
         }
-        (used, committed)
     }
 }

@@ -129,6 +129,19 @@ pub(crate) fn do_wait(
     let site = c.guest_backtrace(6);
     let outcome = c.kernel.objects.wait(mem, tid, &ids, wait_all, deadline, alertable, site.clone());
     mem.write_u8(k + kthread::THREAD_STATE, kthread::STATE_RUNNING);
+    let slow_ms = crate::dispatch::SLOW_CALL_MS.load(std::sync::atomic::Ordering::Relaxed);
+    if slow_ms != 0 && started.elapsed().as_millis() >= u128::from(slow_ms) {
+        let ended = std::time::Instant::now();
+        for o in objects {
+            if let Some((by, lr, at)) = c.kernel.objects.last_signal(o.id) {
+                log::info!(
+                    "slow wait on {:#010X}: last signalled by thread {by:#X} from {lr:#010X}, {:.0} ms before it ended",
+                    o.guest_ptr,
+                    ended.saturating_duration_since(at).as_secs_f64() * 1000.0
+                );
+            }
+        }
+    }
     if log::log_enabled!(log::Level::Debug) {
         let ptrs: Vec<String> = objects.iter().map(|o| format!("{:#010X}", o.guest_ptr)).collect();
         log::debug!(
