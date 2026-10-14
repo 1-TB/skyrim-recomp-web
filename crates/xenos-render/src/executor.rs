@@ -1940,7 +1940,9 @@ impl Executor {
             color_slots: color_slots(targets),
             sample_count: targets.sample_count,
             sample_mask: targets.sample_mask,
-            alpha_to_coverage: output.alpha_to_coverage.is_some() && targets.sample_count > 1,
+            alpha_to_coverage: output.alpha_to_coverage.is_some()
+                && targets.sample_count > 1
+                && !crate::debug::NO_A2C.load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 

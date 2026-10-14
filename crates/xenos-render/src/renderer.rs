@@ -40,15 +40,22 @@ pub fn wanted_features(available: &[FeatureName]) -> Vec<FeatureName> {
     if crate::debug::GPU_TIME.load(std::sync::atomic::Ordering::Relaxed) {
         wanted.push(FeatureName::TimestampQuery);
     }
+    if crate::debug::NO_D32S8.load(std::sync::atomic::Ordering::Relaxed) {
+        wanted.retain(|f| *f != FeatureName::Depth32FloatStencil8);
+    }
     if crate::debug::NO_BC.load(std::sync::atomic::Ordering::Relaxed) {
         wanted.retain(|f| *f != FeatureName::TextureCompressionBC && *f != FeatureName::TextureCompressionBCSliced3D);
     }
     let has = |f| if available.contains(&f) { "yes" } else { "no" };
     log::info!(
-        "renderer: texture compression BC {}, ETC2 {}, ASTC {}{}",
+        "renderer: texture compression BC {}, ETC2 {}, ASTC {}; depth32float-stencil8 {}, float32-filterable {}, \
+         texture-formats-tier1 {}{}",
         has(FeatureName::TextureCompressionBC),
         has(FeatureName::TextureCompressionETC2),
         has(FeatureName::TextureCompressionASTC),
+        has(FeatureName::Depth32FloatStencil8),
+        has(FeatureName::Float32Filterable),
+        has(FeatureName::TextureFormatsTier1),
         crate::debug::describe()
     );
     wanted.retain(|f| available.contains(f));

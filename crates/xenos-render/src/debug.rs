@@ -37,6 +37,11 @@ pub(crate) static MAX_FRAMES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(2);
 /// Don't use BC texture compression even when the device has it (as on phones, where BC
 /// textures are decompressed), to measure what that costs.
 pub(crate) static NO_BC: AtomicBool = AtomicBool::new(false);
+/// Don't use depth32float-stencil8 even when the device has it (float24 depth then lives in
+/// depth24plus-stencil8, as on devices without it).
+pub(crate) static NO_D32S8: AtomicBool = AtomicBool::new(false);
+/// Alpha to coverage is never enabled.
+pub(crate) static NO_A2C: AtomicBool = AtomicBool::new(false);
 
 /// Pass GPU times are measured with timestamp queries and logged with the frame reports.
 pub(crate) static GPU_TIME: AtomicBool = AtomicBool::new(false);
@@ -76,13 +81,15 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "cpu-resolve" => &CPU_RESOLVES,
         "cpu-texture" => &CPU_TEXTURES,
         "no-bc" => &NO_BC,
+        "no-d32s8" => &NO_D32S8,
+        "no-a2c" => &NO_A2C,
         "gpu-time" => {
             GPU_TIME.store(true, Ordering::Relaxed);
             return Ok(());
         }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, gpu-time, frames=N, mirror=MIB, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, gpu-time, frames=N, mirror=MIB, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };
@@ -111,6 +118,12 @@ pub fn describe() -> String {
     }
     if CPU_TEXTURES.load(Ordering::Relaxed) {
         parts.push("cpu-texture".to_string());
+    }
+    if NO_A2C.load(Ordering::Relaxed) {
+        parts.push("no-a2c".to_string());
+    }
+    if NO_D32S8.load(Ordering::Relaxed) {
+        parts.push("no-d32s8".to_string());
     }
     if NO_BC.load(Ordering::Relaxed) {
         parts.push("no-bc".to_string());

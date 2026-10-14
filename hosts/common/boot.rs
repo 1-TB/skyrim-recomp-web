@@ -41,9 +41,11 @@ options:
                            GPU memory budgets used on phones and tablets),
                            nopool (never reuse textures), nomemo (bind textures per draw),
                            cpu-resolve (read resolves back to guest memory), cpu-texture (convert
-                           textures on the CPU), trace-frame=N (log frame N's draws and, natively,
-                           write their shaders to target/shader-dump/), trace-every=K (and every
-                           Kth frame after N)";
+                           textures on the CPU), no-bc (no BC textures), no-d32s8 (float24 depth
+                           in depth24plus-stencil8), no-a2c (no alpha to coverage), gpu-time (GPU
+                           time per pass, with timestamp queries), trace-frame=N (log frame N's
+                           draws and, natively, write their shaders to target/shader-dump/),
+                           trace-every=K (and every Kth frame after N)";
 
 #[derive(Default)]
 pub struct Options {
