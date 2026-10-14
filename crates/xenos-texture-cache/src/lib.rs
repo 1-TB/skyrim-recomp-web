@@ -134,6 +134,8 @@ pub struct CacheStats {
     pub fallbacks: u64,
     /// Textures dropped by [`TextureCache::invalidate`].
     pub invalidated: u64,
+    /// Of those, reloaded into the same texture.
+    pub reloaded_in_place: u64,
     /// Textures dropped by age or budget.
     pub evicted: u64,
     /// Guest bytes hashed for revalidation.
@@ -456,6 +458,13 @@ pub struct TextureCache {
     retired: Vec<Pooled>,
     /// Textures retired before the last `destroy_retired`, released by the next one.
     retiring: Vec<Pooled>,
+    /// Textures dropped by [`TextureCache::invalidate`], by key: a reload of the same key fills
+    /// the same texture again (nothing recorded since uses it, see `invalidate`), so textures
+    /// read from resolve output every frame don't each keep a pooled and a retired copy alive.
+    /// The rest are retired at the end of the frame.
+    stale: FxHashMap<TextureKey, Pooled>,
+    /// The stale texture offered to the load in progress (taken by `new_texture`).
+    reload_into: Option<Pooled>,
     pool: TexturePool,
     warned: HashSet<([u32; 6], u8)>,
     scratch: Vec<u8>,
@@ -500,6 +509,8 @@ impl TextureCache {
             cpu_load_kinds: HashSet::new(),
             retired: Vec::new(),
             retiring: Vec::new(),
+            stale: FxHashMap::default(),
+            reload_into: None,
             pool: TexturePool::default(),
             warned: HashSet::new(),
             scratch: Vec::new(),
@@ -603,8 +614,9 @@ impl TextureCache {
     }
 
     /// Guest physical memory `[addr, addr + len)` changed (e.g. a resolve wrote it): drops every
-    /// texture reading from it. Bind groups holding its views keep the old contents. Returns the
-    /// raw handles of the dropped textures' views (for callers remembering bindings).
+    /// texture reading from it. Returns the raw handles of the dropped textures' views (for
+    /// callers remembering bindings). Work using those textures must have been submitted: a
+    /// reload of the same texture this frame may be written into the same texture and views.
     pub fn invalidate(&mut self, addr: u32, len: u32) -> Vec<usize> {
         let mut dropped_views = Vec::new();
         if len == 0 {
@@ -612,15 +624,17 @@ impl TextureCache {
         }
         let start = u64::from(addr & PHYSICAL_ADDRESS_MASK);
         let end = start + u64::from(len);
-        let retired = &mut self.retired;
+        let (retired, stale) = (&mut self.retired, &mut self.stale);
         let mut invalidated = 0;
-        self.textures.retain(|_, e| {
+        self.textures.retain(|key, e| {
             let keep = !e.ranges.iter().any(|r| {
                 let (rs, re) = (u64::from(r.address), u64::from(r.address) + u64::from(r.length));
                 rs < end && start < re
             });
             if !keep {
-                retired.push(e.pooled());
+                if let Some(older) = stale.insert(*key, e.pooled()) {
+                    retired.push(older);
+                }
                 dropped_views.extend(e.views.iter().flatten().map(|v| v.raw() as usize));
                 invalidated += 1;
             }
@@ -632,6 +646,7 @@ impl TextureCache {
 
     /// Frame boundary: textures get revalidated on their next use, old ones are evicted.
     pub fn end_frame(&mut self) {
+        self.retired.extend(self.stale.drain().map(|(_, p)| p));
         let ended = self.frame;
         self.frame += 1;
         let max_unused = self.config.max_unused_frames;
@@ -690,6 +705,8 @@ impl TextureCache {
         self.textures.clear();
         self.retired.clear();
         self.retiring.clear();
+        self.stale.clear();
+        self.reload_into = None;
         self.pool = TexturePool::default();
         self.samplers.clear();
         self.failed.clear();
@@ -748,7 +765,12 @@ impl TextureCache {
             self.warn_once(dwords, 4, "texture failed to load before");
             return None;
         }
-        match self.load(device, memory, fetch, gpu) {
+        self.reload_into = self.stale.remove(&key);
+        let loaded = self.load(device, memory, fetch, gpu);
+        if let Some(unused) = self.reload_into.take() {
+            self.retired.push(unused);
+        }
+        match loaded {
             Ok(entry) => {
                 self.stats.loads += 1;
                 self.textures.insert(key, entry);
@@ -975,6 +997,10 @@ impl TextureCache {
     /// their previous contents, so they're only used when the load writes every level
     /// (`fills_all`); a new texture starts out zeroed.
     fn new_texture(&mut self, device: &Device, key: PoolKey, fills_all: bool) -> (Texture, [Option<TextureView>; 4]) {
+        if fills_all && let Some(p) = self.reload_into.take_if(|p| p.key == key) {
+            self.stats.reloaded_in_place += 1;
+            return (p.texture, p.views);
+        }
         if fills_all
             && self.config.reuse_textures
             && let Some(p) = self.pool.take(&key)

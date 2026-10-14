@@ -606,13 +606,15 @@ fn revalidation_and_invalidation() {
     assert_eq!(cache.bind(&gpu.device, &mem, &fc, &bind_a).view, second.view);
     assert_eq!(cache.stats().hashed_bytes - hashed, 32 * 32 * 4);
 
-    // Explicit invalidation drops overlapping textures immediately, others stay.
+    // Explicit invalidation drops overlapping textures immediately (reloading them into the
+    // same texture), others stay.
     let tex_b = cache.bind(&gpu.device, &mem, &fc, &bind_b);
     cache.invalidate(0x10000 + 100, 4);
     assert_eq!(cache.stats().invalidated, 1);
     write_level(&mut mem, &a, 0, |x, y, _| rgba_pattern(x, y, 3).to_vec());
     let third = cache.bind(&gpu.device, &mem, &fc, &bind_a);
-    assert_ne!(third.view, second.view);
+    assert_eq!(third.view, second.view);
+    assert_eq!(cache.stats().reloaded_in_place, 1);
     assert_close(load_texels(&gpu, &third, Read::D2, (32, 32, 1), 0)[33], unorm(rgba_pattern(1, 1, 3)), 1e-6, "c");
     assert_eq!(cache.bind(&gpu.device, &mem, &fc, &bind_b).view, tex_b.view);
     // Ranges ending right before / starting right after do not overlap; virtual addresses
@@ -634,30 +636,32 @@ fn dropped_textures_are_reused_with_their_views() {
     let fc = constants(&[(0, &a)]);
     let bind_a = binding(0, TextureBindingDimension::D2);
     let mut cache = TextureCache::for_device(&gpu.device);
+    let texel = |bound: &BoundTexture| load_texels(&gpu, bound, Read::D2, (32, 32, 1), 0)[33];
 
+    // Invalidated (by a resolve, with everything recorded submitted): reloaded in place.
     let first = cache.bind(&gpu.device, &mem, &fc, &bind_a);
     cache.invalidate(0x10000, 4);
-    // Dropped textures are kept for a frame (work recorded with them may not be submitted yet)
-    // before they can be reused.
-    cache.destroy_retired();
     write_level(&mut mem, &a, 0, |x, y, _| rgba_pattern(x, y, 1).to_vec());
     let second = cache.bind(&gpu.device, &mem, &fc, &bind_a);
-    assert_ne!(second.view, first.view, "still retiring: a new texture");
-    assert_eq!(cache.stats().reused, 0);
-    cache.destroy_retired();
-    cache.invalidate(0x10000, 4);
-    cache.destroy_retired();
-    cache.destroy_retired();
+    assert_eq!(second.view, first.view);
+    assert_eq!(cache.stats().reloaded_in_place, 1);
+    assert_close(texel(&second), unorm(rgba_pattern(1, 1, 1)), 1e-6, "reloaded in place");
+
+    // Changed by the CPU: work recorded with the old texture may not be submitted yet, so it is
+    // kept for a frame before it can be reused, with its views.
+    cache.end_frame();
     write_level(&mut mem, &a, 0, |x, y, _| rgba_pattern(x, y, 2).to_vec());
     let third = cache.bind(&gpu.device, &mem, &fc, &bind_a);
+    assert_ne!(third.view, second.view, "still retiring: a new texture");
+    assert_eq!(cache.stats().reused, 0);
+    cache.destroy_retired();
+    cache.destroy_retired();
+    cache.end_frame();
+    write_level(&mut mem, &a, 0, |x, y, _| rgba_pattern(x, y, 3).to_vec());
+    let fourth = cache.bind(&gpu.device, &mem, &fc, &bind_a);
     assert_eq!(cache.stats().reused, 1);
-    assert!(third.view == first.view || third.view == second.view, "a pooled texture and its view");
-    assert_close(
-        load_texels(&gpu, &third, Read::D2, (32, 32, 1), 0)[33],
-        unorm(rgba_pattern(1, 1, 2)),
-        1e-6,
-        "new data",
-    );
+    assert_eq!(fourth.view, first.view, "the pooled texture and its view");
+    assert_close(texel(&fourth), unorm(rgba_pattern(1, 1, 3)), 1e-6, "new data");
     assert_no_errors(&gpu);
 }
 
