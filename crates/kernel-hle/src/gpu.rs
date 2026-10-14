@@ -17,7 +17,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Once, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use runtime_core::PPCContext;
@@ -205,6 +205,12 @@ pub struct Gpu {
     /// one: 30 fps at the hardware's 60 Hz), so a higher rate lifts their frame rate cap, like
     /// Xenia's `vsync` option.
     vblank_hz: AtomicU32,
+    /// Bumped whenever the command processor writes back its read pointer; title code waiting
+    /// for ring space sleeps on it (see [`skyrt_gpu_wait_progress`]).
+    progress: AtomicU32,
+    progress_waiters: AtomicU32,
+    progress_lock: Mutex<()>,
+    progress_changed: Condvar,
 }
 
 impl Default for Gpu {
@@ -226,7 +232,32 @@ impl Gpu {
             command_processor: Once::new(),
             vblank: Once::new(),
             vblank_hz: AtomicU32::new(DEFAULT_VBLANK_HZ),
+            progress: AtomicU32::new(0),
+            progress_waiters: AtomicU32::new(0),
+            progress_lock: Mutex::new(()),
+            progress_changed: Condvar::new(),
         }
+    }
+
+    /// Records command-processor progress and wakes threads waiting for it.
+    fn note_progress(&self) {
+        self.progress.fetch_add(1, Ordering::SeqCst);
+        if self.progress_waiters.load(Ordering::SeqCst) != 0 {
+            drop(self.progress_lock.lock().unwrap());
+            self.progress_changed.notify_all();
+        }
+    }
+
+    /// Waits until progress moves past `seen` or `timeout` passes.
+    fn wait_progress(&self, seen: u32, timeout: Duration) {
+        self.progress_waiters.fetch_add(1, Ordering::SeqCst);
+        let guard = self.progress_lock.lock().unwrap();
+        if self.progress.load(Ordering::SeqCst) == seen {
+            let _ = self.progress_changed.wait_timeout_while(guard, timeout, |_| {
+                self.progress.load(Ordering::SeqCst) == seen
+            });
+        }
+        self.progress_waiters.fetch_sub(1, Ordering::SeqCst);
     }
 
     /// Sets the vblank interrupt rate (default 60, the hardware's); takes effect at the next
@@ -459,6 +490,7 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
             }
             if let Some(a) = writeback {
                 mem.write_u32(a, reader.pos);
+                k.gpu.note_progress();
             }
         }
         read_index = write_index;
@@ -1049,5 +1081,21 @@ mod tests {
         assert_eq!(packet_type3(pm4::XE_SWAP, 4), 0xC003_6400);
         assert_eq!(packet_type0(reg::SHADER_CONSTANT_FETCH_00_0, 6), 0x0005_4800);
         assert_eq!(SWAP_SIGNATURE, 0x5357_4150);
+    }
+}
+
+/// Command-processor progress counter, for title code that waits for ring space (guest-sys
+/// wraps D3D's ring-space poll with these instead of letting it spin; see its build script).
+#[unsafe(no_mangle)]
+pub extern "C" fn skyrt_gpu_progress() -> u32 {
+    Kernel::try_global().map_or(0, |k| k.gpu.progress.load(Ordering::SeqCst))
+}
+
+/// Sleeps until the command processor's progress counter differs from `seen`, at most
+/// `timeout_us` microseconds.
+#[unsafe(no_mangle)]
+pub extern "C" fn skyrt_gpu_wait_progress(seen: u32, timeout_us: u32) {
+    if let Some(k) = Kernel::try_global() {
+        k.gpu.wait_progress(seen, Duration::from_micros(u64::from(timeout_us)));
     }
 }

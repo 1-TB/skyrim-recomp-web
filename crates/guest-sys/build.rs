@@ -61,7 +61,8 @@ fn main() {
     let imports = xex.imports().unwrap_or_else(|e| fail(format!("import table: {e}")));
 
     let shim = out_dir.join("skyrt_imports.cpp");
-    let (cpp, rust) = generate(&imports, &module_of, &names, &declared);
+    let (mut cpp, rust) = generate(&imports, &module_of, &names, &declared);
+    cpp.push_str(&title_overrides(xex.execution_info().map(|e| (e.title_id, e.version)), &declared));
     fs::write(&shim, cpp).unwrap();
     fs::write(out_dir.join("imports.rs"), rust).unwrap();
 
@@ -76,6 +77,35 @@ fn main() {
     if !env::var("TARGET").unwrap().contains("emscripten") {
         println!("cargo:rustc-link-lib=dylib=stdc++");
     }
+}
+
+/// Host replacements for guest functions of known titles, wrapping the recompiled function
+/// (a strong definition of `sub_X` overrides the recompiler's weak alias; `__imp__sub_X` stays
+/// the recompiled body).
+fn title_overrides(title: Option<(u32, u32)>, declared: &HashSet<String>) -> String {
+    let mut cpp = String::new();
+    // Skyrim, disc version. D3D's wait for ring-buffer space calls this between checks of the
+    // read pointer (it spins four iterations and checks for a hang; nonzero = keep waiting).
+    // Spinning there kept the render thread busy whenever the GPU was behind; instead sleep
+    // until the command processor writes the read pointer back (or 1 ms passes).
+    const SKYRIM_RING_WAIT: &str = "sub_82C8B818";
+    if title == Some((0x4253_07E6, 0x0000_0A02)) && declared.contains(SKYRIM_RING_WAIT) {
+        writeln!(
+            cpp,
+            r#"
+extern "C" uint32_t skyrt_gpu_progress(void);
+extern "C" void skyrt_gpu_wait_progress(uint32_t seen, uint32_t timeout_us);
+extern "C" PPC_FUNC(__imp__{f});
+PPC_FUNC({f}) {{
+    uint32_t seen = skyrt_gpu_progress();
+    __imp__{f}(ctx, base);
+    if (ctx.r3.u32 != 0) skyrt_gpu_wait_progress(seen, 1000);
+}}"#,
+            f = SKYRIM_RING_WAIT
+        )
+        .unwrap();
+    }
+    cpp
 }
 
 /// The output must come from our forked header with every register kept in

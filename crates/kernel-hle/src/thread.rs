@@ -76,6 +76,11 @@ pub(crate) fn note_kernel_call() {
     })
 }
 
+/// Kernel calls the calling guest thread has made (0 on host threads).
+pub(crate) fn kernel_call_count() -> u64 {
+    CURRENT.with(|c| c.borrow().as_ref().map_or(0, |t| t.kernel_calls.load(Ordering::Relaxed)))
+}
+
 /// The calling guest thread's kernel-call counter (None on host threads).
 pub(crate) fn current_kernel_calls() -> Option<Arc<AtomicU64>> {
     CURRENT.with(|c| c.borrow().as_ref().map(|t| t.kernel_calls.clone()))

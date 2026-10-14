@@ -435,7 +435,7 @@ fn KeDelayExecutionThread(c: &mut Call) -> u64 {
     let (alertable, interval_ptr) = (c.arg(1) != 0, c.arg(2));
     let interval = read_timeout(c.mem(), interval_ptr).unwrap_or(0);
     if interval == 0 && !alertable {
-        std::thread::yield_now();
+        yield_execution();
         return status::SUCCESS as u64;
     }
     match do_wait(c, &[], false, alertable, Some(interval)) {
@@ -445,8 +445,35 @@ fn KeDelayExecutionThread(c: &mut Call) -> u64 {
 }
 
 fn NtYieldExecution(_c: &mut Call) -> u64 {
-    std::thread::yield_now();
+    yield_execution();
     status::SUCCESS as u64
+}
+
+/// Zero-length yields in a row (no other kernel call between them) before the thread naps.
+const YIELDS_BEFORE_NAP: u32 = 32;
+const YIELD_NAP: std::time::Duration = std::time::Duration::from_micros(100);
+
+/// Sleep(0) / NtYieldExecution. Titles poll with these (Skyrim's spin lock calls Sleep(0)
+/// up to 10000 times before Sleep(1)); on the web `sched_yield` returns at once, so such a
+/// loop would keep a core busy. After a run of back-to-back yields the thread sleeps briefly
+/// instead, which frees the core (and, on phones, power) without delaying a short wait.
+fn yield_execution() {
+    thread_local! {
+        /// (this thread's kernel-call count at its last yield, yields in a row)
+        static STREAK: std::cell::Cell<(u64, u32)> = const { std::cell::Cell::new((0, 0)) };
+    }
+    let calls = crate::thread::kernel_call_count();
+    let streak = STREAK.with(|s| {
+        let (last, n) = s.get();
+        let n = if calls == last + 1 { n.saturating_add(1) } else { 0 };
+        s.set((calls, n));
+        n
+    });
+    if streak >= YIELDS_BEFORE_NAP {
+        std::thread::sleep(YIELD_NAP);
+    } else {
+        std::thread::yield_now();
+    }
 }
 
 // --- Critical sections ------------------------------------------------------
