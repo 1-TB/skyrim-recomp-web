@@ -1659,10 +1659,11 @@ impl Executor {
         // with its first bytes.
         let regs = &self.regs;
         let blend = format!(
-            "blend {:08x} colorcontrol {:08x} mask {:08x}",
+            "blend {:08x} colorcontrol {:08x} mask {:08x} depthcontrol {:08x}",
             regs.reg(xenos_state::registers::RB_BLENDCONTROL0),
             regs.reg(xenos_state::registers::RB_COLORCONTROL),
-            regs.reg(xenos_state::registers::RB_COLOR_MASK)
+            regs.reg(xenos_state::registers::RB_COLOR_MASK),
+            regs.reg(xenos_state::registers::RB_DEPTHCONTROL)
         );
         let mut ps_consts = Vec::new();
         regs.float_constants_window(256, 8, &mut ps_consts);

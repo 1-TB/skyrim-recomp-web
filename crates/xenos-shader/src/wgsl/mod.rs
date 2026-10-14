@@ -744,7 +744,11 @@ var<private> xe_out_depth: f32;
             outputs &= !(1 << location);
             self.warn(format!("interpolator {location} not output: its location holds the point size"));
         }
-        m.push_str("struct XeVertexOutput {\n    @builtin(position) position: vec4<f32>,\n");
+        // Invariant: titles draw the same geometry with different shaders (a depth pre-pass, then
+        // shading with an equal depth test), and positions must come out bit-identical, as they
+        // do on the Xenos. Without it host compilers contract and reorder each shader's math its
+        // own way (Intel's D3D12 compiler left holes in distant geometry).
+        m.push_str("struct XeVertexOutput {\n    @invariant @builtin(position) position: vec4<f32>,\n");
         for i in 0..16 {
             if outputs & (1 << i) != 0 {
                 writeln!(m, "    @location({i}) o{i}: vec4<f32>,").unwrap();
