@@ -77,6 +77,13 @@
         <div class="group">
           <h3>Display</h3>
           <div class="field">
+            <span class="label">Renderer<span class="hint">Applies at next boot</span></span>
+            <select data-setting="gpu">
+              <option value="xenos">Classic (Xenos emulation)</option>
+              <option value="d3d">Direct3D (experimental)</option>
+            </select>
+          </div>
+          <div class="field">
             <span class="label">Frame rate cap<span class="hint">Applies at next boot</span></span>
             <select data-setting="fps">
               <option value="30">30 fps (original)</option>
@@ -156,6 +163,7 @@
     <button id="fullscreen">Fullscreen</button>
     <button id="open-menu" disabled title="In-game menu (F1)">Menu <kbd>F1</kbd></button>
     <div class="phase" aria-live="polite"><span id="boot-dot" class="dot"></span><span id="boot-phase">Not running</span></div>
+    <span id="boot-renderer" class="badge" hidden></span>
   </section>
 
   <section class="card stage-card">
@@ -188,6 +196,7 @@
             <span class="hint"><kbd>F1</kbd> or <kbd>Esc</kbd> closes</span>
           </div>
           <p class="hint">The game keeps running behind this menu; its own pause menu is on Start.</p>
+          <p class="hint" id="menu-renderer"></p>
           <div class="field">
             <span class="label">Volume</span>
             <div class="range"><input type="range" min="0" max="1" step="0.01" data-setting="volume" aria-label="Volume"><output data-output="volume"></output></div>

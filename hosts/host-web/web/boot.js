@@ -12,7 +12,7 @@ const statusEl = $('status');
 const SETTINGS_KEY = 'skyrt-settings';
 const DEFAULTS = {
   source: 'local', sync: true, fps: '30', log: 'info', touch: 'auto', sensitivity: 1, volume: 1, perf: false, upload: true,
-  debug: [], extra: '', theme: 'auto', scale: '1', keys: null, tab: 'controls',
+  debug: [], extra: '', theme: 'auto', scale: '1', keys: null, tab: 'controls', gpu: 'xenos',
 };
 const settings = { ...DEFAULTS };
 try {
@@ -95,7 +95,7 @@ function fatal(message) {
 function log(line) {
   if (FATAL_LINE.test(line)) queueMicrotask(() => fatal(line));
   const perf = PERF_LINE.exec(line);
-  if (perf) $('perf').textContent = `${perf[1]} fps · ${perf[2]} draws · renderer ${perf[3]}% busy`;
+  if (perf) $('perf').textContent = `${perf[1]} fps · ${perf[2]} draws · renderer ${perf[3]}% busy · ${activeRenderer?.short ?? ''}`;
   bootStatus?.line(line);
   fullLog.push(line);
   unsent.push(line);
@@ -555,6 +555,15 @@ modules.then(({ controls, saves }) => {
 
 showSource();
 
+// Renderers (`--gpu MODE`): the default renders the GPU command stream (Xenos emulation), d3d
+// renders from the title's Direct3D calls.
+const RENDERERS = {
+  xenos: { name: 'Classic (Xenos emulation)', short: 'Xenos' },
+  d3d: { name: 'Direct3D (experimental)', short: 'D3D' },
+};
+// The renderer of this page's boot, once booted.
+let activeRenderer = null;
+
 // Vblank interrupts per second for each cap: the title presents every second vblank.
 const VBLANK_HZ = { 30: 60, 60: 120, unlimited: 1000 };
 
@@ -575,6 +584,7 @@ function runtimeArguments() {
   // Only when above the default: builds from before the flag reject it.
   const scale = resolutionScale();
   if (scale > 1) args.push('--resolution-scale', String(scale));
+  if (settings.gpu === 'd3d') args.push('--gpu', 'd3d');
   for (const mode of settings.debug) args.push('--render-debug', mode);
   if (settings.source === 'stream') args.push('--stream-game', STREAM_BASE);
   return args.concat(settings.extra.split(/\s+/).filter(Boolean));
@@ -776,6 +786,12 @@ $('boot').onclick = async () => {
   }
   $('boot').disabled = true;
   running = true;
+  // Shown beside the phase, in the menu and in the perf overlay, so logs and screenshots say which ran.
+  activeRenderer = RENDERERS[settings.gpu] ?? RENDERERS.xenos;
+  $('boot-renderer').textContent = `${activeRenderer.short} renderer`;
+  $('boot-renderer').title = activeRenderer.name;
+  $('boot-renderer').hidden = false;
+  $('menu-renderer').textContent = `Running with the ${activeRenderer.name} renderer.`;
   $('pick-server').disabled = true;
   bootStatus = (await modules).status.createStatus(showPhase);
   bootStatus.start({ logLevel: settings.log, streaming: settings.source === 'stream' });
@@ -796,6 +812,7 @@ $('boot').onclick = async () => {
   }
   const args = runtimeArguments();
   log(`Booting with: ${args.join(' ')}`);
+  log(`Renderer: ${activeRenderer.name}`);
   log(`Browser: ${navigator.userAgent}; device memory ${navigator.deviceMemory ?? '?'} GiB; ${navigator.hardwareConcurrency} threads`);
   watchMemory();
   log(`Canvas transfer probe: ${probeCanvasTransfer()}`);
