@@ -34,7 +34,26 @@ let logUpload = settings.upload;
 // "perf: 58.1 fps, 2260 draws/frame; renderer thread: 72% executing, ...".
 const PERF_LINE = /perf: ([\d.]+) fps, (\d+) draws\/frame; renderer thread: (\d+)% executing/;
 
+// Lines meaning a thread died (a Rust panic, an abort, a worker's uncaught error): the game may
+// keep running without a renderer, which otherwise looks like a frozen picture.
+const FATAL_LINE = /panicked at |^Aborted\(|worker sent an error|RuntimeError: /;
+let fatalShown = false;
+
+// Shows `message` over the page (once) and sends the log at once.
+function fatal(message) {
+  if (!fatalShown) {
+    fatalShown = true;
+    const banner = document.createElement('div');
+    banner.textContent = `The game stopped with an error: ${message}. Reload the page to retry; the log has been sent.`;
+    banner.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:1000;padding:12px 16px;'
+      + 'background:#b00020;color:#fff;font:14px/1.4 system-ui,sans-serif;white-space:pre-wrap';
+    document.body.appendChild(banner);
+  }
+  sendLog();
+}
+
 function log(line) {
+  if (FATAL_LINE.test(line)) queueMicrotask(() => fatal(line));
   const perf = PERF_LINE.exec(line);
   if (perf) $('perf').textContent = `${perf[1]} fps · ${perf[2]} draws · renderer ${perf[3]}% busy`;
   fullLog.push(line);
@@ -380,6 +399,7 @@ $('boot').onclick = async () => {
     arguments: args,
     print: log,
     printErr: log,
+    onAbort: (what) => fatal(`aborted (${what})`),
     // Compiles the module with progress in the log, sent at once: phones may close the tab
     // while compiling (the module is about 200 MB) before the periodic upload.
     instantiateWasm(imports, receive) {
