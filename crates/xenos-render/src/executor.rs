@@ -310,6 +310,8 @@ pub struct Executor {
     /// Float constant blocks, built on the GPU from per-draw patches.
     floats: FloatPatcher,
     shared_group: BindGroup,
+    /// [`SharedMemory::generation`] `shared_group` was made for.
+    shared_generation: u64,
     constants_layout: BindGroupLayout,
     shared_layout: BindGroupLayout,
     texture_layouts: FxHashMap<Vec<(u32, SlotKind)>, (BindGroupLayout, PipelineLayout)>,
@@ -363,6 +365,23 @@ pub struct ExecutorStats {
     pub constant_blocks_reused: u64,
     pub index_upload_bytes: u64,
     pub memory_upload_bytes: u64,
+}
+
+/// The bind group of the shared memory buffers (recreated when one is created lazily).
+fn shared_memory_group(device: &Device, layout: &BindGroupLayout, shared: &SharedMemory) -> BindGroup {
+    device.create_bind_group(
+        "xenos shared memory",
+        layout,
+        &shared
+            .buffers
+            .iter()
+            .zip(bindings::SHARED_MEMORY_BINDING..)
+            .map(|(buffer, binding)| BindGroupEntry {
+                binding,
+                resource: BindingResource::Buffer { buffer, offset: 0, size: None },
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn layout_entry(binding: u32, visibility: ShaderStage, ty: BufferBindingType, size: u64) -> BindGroupLayoutEntry {
@@ -522,19 +541,7 @@ impl Executor {
                 })
                 .collect::<Vec<_>>(),
         );
-        let shared_group = device.create_bind_group(
-            "xenos shared memory",
-            &shared_layout,
-            &shared
-                .buffers
-                .iter()
-                .zip(bindings::SHARED_MEMORY_BINDING..)
-                .map(|(buffer, binding)| BindGroupEntry {
-                    binding,
-                    resource: BindingResource::Buffer { buffer, offset: 0, size: None },
-                })
-                .collect::<Vec<_>>(),
-        );
+        let shared_group = shared_memory_group(device, &shared_layout, &shared);
         Executor {
             stage_marks: [0.0; DRAW_STAGES.len() + 1],
             timing_sample: false,
@@ -550,6 +557,7 @@ impl Executor {
             indices,
             constants_group,
             floats,
+            shared_generation: 0,
             shared_group,
             constants_layout,
             shared_layout,
@@ -720,6 +728,10 @@ impl Executor {
             return;
         }
         let constants_group = self.constants_group.clone();
+        if self.shared_generation != self.shared.generation {
+            self.shared_group = shared_memory_group(&self.device, &self.shared_layout, &self.shared);
+            self.shared_generation = self.shared.generation;
+        }
         let shared_group = self.shared_group.clone();
         let index_buffer = self.indices.buffer.clone();
         let shared_buffers = self.shared.buffers.clone();

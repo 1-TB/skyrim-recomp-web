@@ -23,8 +23,15 @@ const PAGE: u32 = 4096;
 pub struct Conflict;
 
 pub struct SharedMemory {
-    /// One buffer per [`SHARED_MEMORY_BUFFER_BYTES`] of physical memory.
+    /// One buffer per [`SHARED_MEMORY_BUFFER_BYTES`] of physical memory, created when a range in
+    /// it is first synced; until then the slot holds a small placeholder (shader reads past a
+    /// buffer's end return zero). Titles rarely use all 512 MiB, and on phones GPU memory comes
+    /// out of the tab's budget.
     pub buffers: Vec<Buffer>,
+    /// Bumped whenever a placeholder in `buffers` is replaced: bind groups holding the old
+    /// buffers must be recreated.
+    pub generation: u64,
+    mirrored: Vec<bool>,
     /// Bytes mirrored per buffer: [`SHARED_MEMORY_BUFFER_BYTES`], or less when the device can't
     /// bind that much (shader reads past the end return zero).
     part: u64,
@@ -134,19 +141,16 @@ impl SharedMemory {
                 "shared memory: device binds at most {part:#X} bytes per buffer; some vertex data reads as zero"
             );
         }
-        let buffers = (0..SHARED_MEMORY_BUFFERS)
-            .map(|n| {
-                device.create_buffer(&BufferDescriptor {
-                    label: &format!("xenos shared memory {n}"),
-                    size: part,
-                    // Index: draws read guest index buffers from here directly.
-                    usage: BufferUsage::Storage | BufferUsage::Index | BufferUsage::CopyDst,
-                    mapped_at_creation: false,
-                })
-            })
-            .collect();
+        let placeholder = device.create_buffer(&BufferDescriptor {
+            label: "xenos shared memory placeholder",
+            size: 256,
+            usage: Self::usage(),
+            mapped_at_creation: false,
+        });
         SharedMemory {
-            buffers,
+            buffers: vec![placeholder; SHARED_MEMORY_BUFFERS as usize],
+            generation: 0,
+            mirrored: vec![false; SHARED_MEMORY_BUFFERS as usize],
             part,
             pages: vec![None; PAGES as usize],
             batch: PageSet::new(),
@@ -157,13 +161,42 @@ impl SharedMemory {
         }
     }
 
+    fn usage() -> BufferUsage {
+        // Index: draws read guest index buffers from here directly.
+        BufferUsage::Storage | BufferUsage::Index | BufferUsage::CopyDst
+    }
+
+    /// Creates the buffers mirroring `[addr, end)` that are still placeholders. Nothing recorded
+    /// can read a placeholder's range (reading it means syncing it first), so replacing one
+    /// mid-batch only needs new bind groups.
+    fn mirror(&mut self, device: &Device, addr: u32, end: u64) {
+        let first = u64::from(addr) / SHARED_MEMORY_BUFFER_BYTES;
+        let last = (end - 1) / SHARED_MEMORY_BUFFER_BYTES;
+        for n in first..=last {
+            let n = n as usize;
+            if self.mirrored[n] {
+                continue;
+            }
+            log::info!("shared memory: mirroring buffer {n} (first used at {addr:#010X})");
+            self.buffers[n] = device.create_buffer(&BufferDescriptor {
+                label: &format!("xenos shared memory {n}"),
+                size: self.part,
+                usage: Self::usage(),
+                mapped_at_creation: false,
+            });
+            self.mirrored[n] = true;
+            self.generation += 1;
+        }
+    }
+
     /// Makes `[addr, addr + len)` current for the batch being recorded. On a conflict nothing is
     /// uploaded; submit the batch, call [`SharedMemory::end_batch`] and retry.
     pub fn sync(&mut self, device: &Device, memory: &dyn PhysicalMemory, addr: u32, len: u32) -> Result<(), Conflict> {
-        if len == 0 {
+        if len == 0 || u64::from(addr) >= PHYSICAL_SIZE {
             return Ok(());
         }
         let end = (u64::from(addr) + u64::from(len)).min(PHYSICAL_SIZE);
+        self.mirror(device, addr, end);
         self.changed.clear();
         let mut page = u64::from(addr & !(PAGE - 1));
         while page < end {
