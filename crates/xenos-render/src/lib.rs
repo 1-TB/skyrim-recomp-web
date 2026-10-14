@@ -47,6 +47,19 @@ pub fn handheld_budgets() {
     default_mirror_limit(64);
 }
 
+/// Resolution scale of renderers started afterwards (see [`set_resolution_scale`]).
+pub(crate) static RESOLUTION_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// Renderers started afterwards draw at `scale` (1 to 3) times the guest resolution along each
+/// axis, like Xenia's draw resolution scaling: EDRAM render targets are that much larger.
+pub fn set_resolution_scale(scale: u32) -> Result<(), String> {
+    if !(1..=3).contains(&scale) {
+        return Err(format!("resolution scale {scale} is not 1, 2 or 3"));
+    }
+    RESOLUTION_SCALE.store(scale, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
 /// Guest physical memory, shared with the emulated CPU.
 pub trait PhysicalMemory: Send + Sync {
     /// Copies `out.len()` bytes starting at physical address `addr`. Unmapped bytes read as 0.

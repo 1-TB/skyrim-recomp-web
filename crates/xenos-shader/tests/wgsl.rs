@@ -454,7 +454,7 @@ fn system_constants_layout_matches_wgsl() {
         ),
         ("ps_param_gen_offset", std::mem::offset_of!(SystemConstants, ps_param_gen_offset)),
         ("ps_param_gen_register", std::mem::offset_of!(SystemConstants, ps_param_gen_register)),
-        ("padding_0", std::mem::offset_of!(SystemConstants, padding_0)),
+        ("resolution_scale", std::mem::offset_of!(SystemConstants, resolution_scale)),
         ("color_exp_bias", std::mem::offset_of!(SystemConstants, color_exp_bias)),
     ];
     assert_eq!(members.len(), rust_offsets.len());

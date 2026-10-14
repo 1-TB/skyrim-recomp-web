@@ -17,13 +17,22 @@ impl SrcKind {
     }
 }
 
-/// EDRAM addressing, format packing (host value -> EDRAM bits) and unpacking.
-const COMMON: &str = r#"
-const TILE_DWORDS: u32 = 1280u;
-const EDRAM_TILES: u32 = 2048u;
-const EDRAM_DWORDS: u32 = 2621440u;
+/// EDRAM addressing, format packing (host value -> EDRAM bits) and unpacking, for host render
+/// targets at resolution scale `scale` (see [`crate::EdramOptions::resolution_scale`]).
+fn common(scale: u32) -> String {
+    COMMON.replace("RES_SCALE_VALUE", &format!("{scale}u"))
+}
 
-// Guest sample coordinates (canonical EDRAM sample grid) of a pixel's sample.
+/// With resolution scaling (like Xenia's), a tile of a host render target has `scale` x `scale`
+/// host samples per guest sample; everything else (tiles, bases, pitches, ownership) stays in
+/// guest tiles. The EDRAM-layout buffer holds the scaled samples, tile by tile.
+const COMMON: &str = r#"
+const RES_SCALE: u32 = RES_SCALE_VALUE;
+const TILE_DWORDS: u32 = 1280u * RES_SCALE * RES_SCALE;
+const EDRAM_TILES: u32 = 2048u;
+const EDRAM_DWORDS: u32 = 2048u * TILE_DWORDS;
+
+// Sample coordinates (canonical EDRAM sample grid, scaled) of a host pixel's sample.
 fn guest_sample_coords(px: vec2<u32>, sample: u32, msaa: u32) -> vec2<u32> {
     if (msaa == 2u) {
         return vec2<u32>(((px.x & ~1u) << 1u) | (px.x & 1u) | ((sample & 1u) << 1u),
@@ -39,11 +48,12 @@ fn guest_sample_coords(px: vec2<u32>, sample: u32, msaa: u32) -> vec2<u32> {
 fn edram_dword(px: vec2<u32>, sample: u32, base_tiles: u32, pitch_tiles: u32, msaa: u32, is_depth: bool,
                is_64: bool) -> u32 {
     let s = guest_sample_coords(px, sample, msaa);
-    let tw = select(80u, 40u, is_64);
+    let tw = select(80u, 40u, is_64) * RES_SCALE;
+    let th = 16u * RES_SCALE;
     let tx = s.x / tw;
-    let ty = s.y / 16u;
+    let ty = s.y / th;
     var sx = s.x - tx * tw;
-    let sy = s.y - ty * 16u;
+    let sy = s.y - ty * th;
     if (is_depth) {
         let half = tw >> 1u;
         sx = select(sx + half, sx - half, sx >= half);
@@ -67,7 +77,7 @@ fn edram_locate(dword: u32, base_tiles: u32, pitch_tiles: u32, msaa: u32, is_dep
     let pitch = max(pitch_tiles, 1u);
     let ty = rel / pitch;
     let tx = rel - ty * pitch;
-    let tw = select(80u, 40u, is_64);
+    let tw = select(80u, 40u, is_64) * RES_SCALE;
     let idx = within >> u32(is_64);
     var loc: EdramLoc;
     loc.half = within & u32(is_64);
@@ -77,7 +87,7 @@ fn edram_locate(dword: u32, base_tiles: u32, pitch_tiles: u32, msaa: u32, is_dep
         let half = tw >> 1u;
         sx = select(sx + half, sx - half, sx >= half);
     }
-    let g = vec2<u32>(tx * tw + sx, ty * 16u + sy);
+    let g = vec2<u32>(tx * tw + sx, ty * 16u * RES_SCALE + sy);
     if (msaa == 2u) {
         loc.px = vec2<u32>(((g.x >> 2u) << 1u) | (g.x & 1u), ((g.y >> 2u) << 1u) | (g.y & 1u));
         loc.sample = ((g.x >> 1u) & 1u) | (((g.y >> 1u) & 1u) << 1u);
@@ -362,11 +372,12 @@ fn src_load(kind: SrcKind) -> String {
 }
 
 /// Ownership transfer: entry points `vs`, `fs_color`, `fs_depth`, `fs_stencil`.
-pub(crate) fn transfer_module(src: SrcKind, dest_multisampled: bool) -> String {
+pub(crate) fn transfer_module(src: SrcKind, dest_multisampled: bool, scale: u32) -> String {
     let (sample_param, sample) =
         if dest_multisampled { (", @builtin(sample_index) si: u32", "si") } else { ("", "0u") };
     format!(
-        "{COMMON}{decl}{load}{body}",
+        "{common}{decl}{load}{body}",
+        common = common(scale),
         decl = src_decl(src),
         load = src_load(src),
         body = TRANSFER_BODY.replace("SAMPLE_PARAM", sample_param).replace("SAMPLE_INDEX", sample),
@@ -453,8 +464,8 @@ fn fs_stencil(@builtin(position) pos: vec4<f32>SAMPLE_PARAM) {
 "#;
 
 /// Host render target -> EDRAM-layout storage buffer, one invocation per dword. Entry `main`.
-pub(crate) fn dump_module(src: SrcKind) -> String {
-    format!("{COMMON}{}{}{DUMP_BODY}", src_decl(src), src_load(src))
+pub(crate) fn dump_module(src: SrcKind, scale: u32) -> String {
+    format!("{}{}{}{DUMP_BODY}", common(scale), src_decl(src), src_load(src))
 }
 
 const DUMP_BODY: &str = r#"
@@ -477,11 +488,12 @@ struct DumpParams {
 @group(0) @binding(3) var<storage, read_write> edram: array<u32>;
 
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= p.count) {
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let i = gid.y * groups.x * 256u + gid.x;
+    if (i >= p.count) {
         return;
     }
-    let a = (p.start + gid.x) % EDRAM_DWORDS;
+    let a = (p.start + i) % EDRAM_DWORDS;
     let loc = edram_locate(a, p.base, p.pitch, p.msaa, (p.flags & 1u) != 0u, (p.flags & 2u) != 0u);
     if (loc.px.x >= p.width || loc.px.y >= p.height) {
         return;
@@ -492,8 +504,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 /// Clears a scissored area of a host target to an EDRAM-format value: `vs`, `fs_color`, `fs_depth`.
-pub(crate) fn clear_module() -> String {
-    format!("{COMMON}{CLEAR_BODY}")
+pub(crate) fn clear_module(scale: u32) -> String {
+    format!("{}{CLEAR_BODY}", common(scale))
 }
 
 const CLEAR_BODY: &str = r#"
@@ -522,9 +534,11 @@ fn fs_depth() -> @builtin(frag_depth) f32 {
 }
 "#;
 
-/// Resolve copy from the EDRAM-layout buffer into linear destination words. Entry `main`.
-pub(crate) fn resolve_module() -> String {
-    format!("{COMMON}{RESOLVE_BODY}")
+/// Resolve copy from the EDRAM-layout buffer into linear destination words, at the guest's
+/// resolution: with resolution scaling, converted colors average each guest pixel's scale x scale
+/// host pixels, and raw copies take the host pixel at its center. Entry `main`.
+pub(crate) fn resolve_module(scale: u32) -> String {
+    format!("{}{RESOLVE_BODY}", common(scale))
 }
 
 const RESOLVE_BODY: &str = r#"
@@ -557,12 +571,29 @@ struct ResolveParams {
 @group(0) @binding(1) var<storage, read> edram: array<u32>;
 @group(0) @binding(2) var<storage, read_write> out_words: array<u32>;
 
-fn src_addr(pos: vec2<u32>, sample: u32, depth: bool) -> u32 {
-    return edram_dword(pos, sample, p.base, p.pitch, p.msaa, depth, (p.flags & 2u) != 0u);
+// The host pixel at the center of guest pixel `pos`.
+fn center(pos: vec2<u32>) -> vec2<u32> {
+    return pos * RES_SCALE + vec2<u32>(RES_SCALE >> 1u);
 }
 
+// `host` is a host pixel.
+fn src_addr(host: vec2<u32>, sample: u32, depth: bool) -> u32 {
+    return edram_dword(host, sample, p.base, p.pitch, p.msaa, depth, (p.flags & 2u) != 0u);
+}
+
+// Guest pixel `pos`'s sample, averaged over its host pixels.
 fn load_rgba(pos: vec2<u32>, sample: u32) -> vec4<f32> {
-    let a = src_addr(pos, sample, false);
+    var sum = vec4<f32>(0.0);
+    for (var y = 0u; y < RES_SCALE; y++) {
+        for (var x = 0u; x < RES_SCALE; x++) {
+            sum += load_rgba_host(pos * RES_SCALE + vec2<u32>(x, y), sample);
+        }
+    }
+    return sum / f32(RES_SCALE * RES_SCALE);
+}
+
+fn load_rgba_host(host: vec2<u32>, sample: u32) -> vec4<f32> {
+    let a = src_addr(host, sample, false);
     var hi = 0u;
     if ((p.flags & 2u) != 0u) {
         hi = edram[a + 1u];
@@ -708,14 +739,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let swap = (p.flags & 4u) != 0u;
     switch (p.mode) {
         case 0u: {
-            var v = edram[src_addr(pos, first, (p.flags & 1u) != 0u)];
+            var v = edram[src_addr(center(pos), first, (p.flags & 1u) != 0u)];
             if (swap) {
                 v = swap_rb_32(v, p.src_format);
             }
             out_words[o] = v;
         }
         case 1u: {
-            let a = src_addr(pos, first, false);
+            let a = src_addr(center(pos), first, false);
             var lo = edram[a];
             var hi = edram[a + 1u];
             if (swap && (p.src_format == 5u || p.src_format == 7u)) {
@@ -727,7 +758,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             out_words[o + 1u] = hi;
         }
         case 3u: {
-            let v = edram[src_addr(pos, first, false)];
+            let v = edram[src_addr(center(pos), first, false)];
             out_words[o] = bit_1111(v, 0u) | (bit_1111(v, 1u) << 1u) | (bit_1111(v, 2u) << 2u)
                 | (bit_1111(v, 3u) << 3u);
         }

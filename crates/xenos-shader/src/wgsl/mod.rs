@@ -947,7 +947,7 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
                 m,
                 "    if ((xe_system.flags & {param_gen}u) != 0u) {{
         let flags = xe_system.flags;
-        let pixel = abs(floor(input.frag_coord.xy)) + xe_system.ps_param_gen_offset;
+        let pixel = abs(floor(input.frag_coord.xy / xe_system.resolution_scale)) + xe_system.ps_param_gen_offset;
         var x = pixel.x;
         if ((flags & {polygonal}u) != 0u && !input.front_facing) {{
             x = bitcast<f32>(bitcast<u32>(x) ^ 0x80000000u);

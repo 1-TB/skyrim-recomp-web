@@ -147,7 +147,9 @@ pub struct SystemConstants {
     /// Temporary register receiving the pixel parameters with `flags::PS_PARAM_GEN`
     /// (SQ_CONTEXT_MISC::PARAM_GEN_POS).
     pub ps_param_gen_register: u32,
-    pub padding_0: u32,
+    /// Host pixels per guest pixel along each axis (render targets drawn at a higher resolution
+    /// than the guest's; ps_param_gen reports guest pixels).
+    pub resolution_scale: f32,
     /// Multiplier for each color target (2^RB_COLOR_INFO::COLOR_EXP_BIAS).
     pub color_exp_bias: [f32; 4],
 }
@@ -171,7 +173,7 @@ impl Default for SystemConstants {
             point_screen_diameter_to_ndc_radius: [0.0; 2],
             ps_param_gen_offset: [0.0; 2],
             ps_param_gen_register: 0,
-            padding_0: 0,
+            resolution_scale: 1.0,
             color_exp_bias: [1.0; 4],
         }
     }
@@ -202,7 +204,7 @@ pub const SYSTEM_CONSTANTS_WGSL: &str = "struct XeSystemConstants {
     point_screen_diameter_to_ndc_radius: vec2<f32>,
     ps_param_gen_offset: vec2<f32>,
     ps_param_gen_register: u32,
-    padding_0: u32,
+    resolution_scale: f32,
     color_exp_bias: vec4<f32>,
 }
 ";

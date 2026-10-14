@@ -25,8 +25,11 @@ use crate::ownership::{OwnedRange, OwnershipMap};
 use crate::shaders::{self, STORE_DST_BUFFERS, SrcKind};
 use crate::{EdramError, GuestMemoryAccess};
 
+/// Dwords of a tile at resolution scale 1 (`scale`² times as many at `scale`).
 const TILE_DWORDS: u32 = EDRAM_TILE_WIDTH_SAMPLES * EDRAM_TILE_HEIGHT_SAMPLES;
 const EDRAM_BYTES: u64 = (EDRAM_TILE_COUNT * TILE_DWORDS * 4) as u64;
+/// Largest dispatch dimension WebGPU guarantees.
+const MAX_WORKGROUPS: u32 = 65535;
 /// Largest resolve output staged on the GPU (a 8192x8192 64bpp copy).
 const MAX_RESOLVE_OUTPUT_BYTES: u64 = 512 << 20;
 const READBACK_POOL_LIMIT: usize = 4;
@@ -41,6 +44,7 @@ struct HostRt {
     stencil: Option<TextureView>,
     format: TextureFormat,
     samples: u32,
+    /// Texture size in host pixels (guest pixels times the resolution scale).
     width: u32,
     height: u32,
     /// Frame ends since it was last bound or cleared, while owning no EDRAM tile.
@@ -85,7 +89,8 @@ fn host_samples(msaa: MsaaSamples) -> u32 {
 pub struct DrawTargets {
     pub colors: [Option<(TextureView, TextureFormat)>; 4],
     pub depth: Option<(TextureView, TextureFormat)>,
-    /// Attachment size (all attachments of a draw share it). Viewport/scissor are in guest pixels.
+    /// Attachment size in host pixels (all attachments of a draw share it): guest pixels times
+    /// [`EdramCache::resolution_scale`]; viewport and scissor must be scaled likewise.
     pub width: u32,
     pub height: u32,
     /// Host sample count: 1, or 4 for both 2x and 4x guest MSAA.
@@ -166,6 +171,8 @@ enum TransferOutput {
 
 #[derive(Default)]
 struct Pipelines {
+    /// Resolution scale the EDRAM shaders are built for.
+    scale: u32,
     transfer_layouts: HashMap<SrcKind, (BindGroupLayout, PipelineLayout)>,
     transfer_modules: HashMap<(SrcKind, bool), ShaderModule>,
     transfers: HashMap<(SrcKind, TextureFormat, u32, TransferOutput), RenderPipeline>,
@@ -249,7 +256,10 @@ impl Pipelines {
             .transfer_modules
             .entry((kind, samples > 1))
             .or_insert_with(|| {
-                device.create_shader_module_wgsl("edram transfer", &shaders::transfer_module(kind, samples > 1))
+                device.create_shader_module_wgsl(
+                    "edram transfer",
+                    &shaders::transfer_module(kind, samples > 1, self.scale),
+                )
             })
             .clone();
         let color_targets = [ColorTargetState::new(format)];
@@ -285,6 +295,7 @@ impl Pipelines {
     }
 
     fn dump(&mut self, device: &Device, kind: SrcKind) -> &(BindGroupLayout, ComputePipeline) {
+        let scale = self.scale;
         self.dumps.entry(kind).or_insert_with(|| {
             let mut entries = src_layout_entries(kind, ShaderStage::Compute);
             entries.push(BindGroupLayoutEntry {
@@ -298,7 +309,7 @@ impl Pipelines {
             });
             let bgl = device.create_bind_group_layout("edram dump", &entries);
             let pl = device.create_pipeline_layout("edram dump", &[&bgl]);
-            let module = device.create_shader_module_wgsl("edram dump", &shaders::dump_module(kind));
+            let module = device.create_shader_module_wgsl("edram dump", &shaders::dump_module(kind, scale));
             let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
                 label: "edram dump",
                 layout: Some(&pl),
@@ -312,10 +323,11 @@ impl Pipelines {
         if let Some(p) = self.clears.get(&(format, samples, depth)) {
             return p.clone();
         }
+        let scale = self.scale;
         let (_, layout, module) = self.clear.get_or_insert_with(|| {
             let bgl = device.create_bind_group_layout("edram clear", &[uniform_entry(ShaderStage::Fragment)]);
             let pl = device.create_pipeline_layout("edram clear", &[&bgl]);
-            let module = device.create_shader_module_wgsl("edram clear", &shaders::clear_module());
+            let module = device.create_shader_module_wgsl("edram clear", &shaders::clear_module(scale));
             (bgl, pl, module)
         });
         let color_targets = [ColorTargetState::new(format)];
@@ -374,6 +386,7 @@ impl Pipelines {
     }
 
     fn resolve(&mut self, device: &Device) -> &(BindGroupLayout, ComputePipeline) {
+        let scale = self.scale;
         self.resolve.get_or_insert_with(|| {
             let storage = |binding, ty| BindGroupLayoutEntry {
                 binding,
@@ -389,7 +402,7 @@ impl Pipelines {
                 ],
             );
             let pl = device.create_pipeline_layout("edram resolve", &[&bgl]);
-            let module = device.create_shader_module_wgsl("edram resolve", &shaders::resolve_module());
+            let module = device.create_shader_module_wgsl("edram resolve", &shaders::resolve_module(scale));
             let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
                 label: "edram resolve",
                 layout: Some(&pl),
@@ -498,6 +511,9 @@ type Cutout = [u32; 4];
 pub struct EdramCache {
     depth32_stencil8: bool,
     options: EdramOptions,
+    /// [`EdramOptions::resolution_scale`], clamped to 1..=3.
+    scale: u32,
+    /// Largest render target width or height in guest pixels (the host limit over `scale`).
     max_dimension: u32,
     max_output_bytes: u64,
     rts: HashMap<RenderTargetKey, HostRt>,
@@ -565,16 +581,18 @@ impl EdramCache {
 
     pub fn with_options(device: &Device, options: EdramOptions) -> Self {
         let limits = device.limits();
+        let scale = options.resolution_scale.clamp(1, 3);
         let shadow = device.create_buffer(&BufferDescriptor {
             label: "edram shadow",
-            size: EDRAM_BYTES,
+            size: EDRAM_BYTES * u64::from(scale * scale),
             usage: BufferUsage::Storage | BufferUsage::CopyDst,
             mapped_at_creation: false,
         });
         Self {
             depth32_stencil8: device.has_feature(FeatureName::Depth32FloatStencil8),
             options,
-            max_dimension: limits.maxTextureDimension2D.min(TEXTURE_2D_MAX_WIDTH_HEIGHT),
+            scale,
+            max_dimension: limits.maxTextureDimension2D.min(TEXTURE_2D_MAX_WIDTH_HEIGHT * scale) / scale,
             max_output_bytes: limits
                 .maxStorageBufferBindingSize
                 .min(limits.maxBufferSize)
@@ -586,7 +604,7 @@ impl EdramCache {
             shadow,
             resolve_out: None,
             readback_pool: Vec::new(),
-            pipelines: Pipelines::default(),
+            pipelines: Pipelines { scale, ..Default::default() },
             params: RefCell::new(ParamsArena {
                 buffer: device.create_buffer(&BufferDescriptor {
                     label: "edram params",
@@ -611,6 +629,11 @@ impl EdramCache {
     /// Current tile ownership (for diagnostics).
     pub fn ownership(&self) -> &[OwnedRange] {
         self.ownership.ranges()
+    }
+
+    /// Host pixels per guest pixel along each axis.
+    pub fn resolution_scale(&self) -> u32 {
+        self.scale
     }
 
     /// Number of host render targets alive.
@@ -699,7 +722,7 @@ impl EdramCache {
         if let Some(rt) = self.rts.get_mut(&key) {
             rt.idle_frames = 0;
             rt.idle_since = None;
-            if rt.height >= height {
+            if rt.height >= height * self.scale {
                 return Ok(());
             }
         }
@@ -712,6 +735,7 @@ impl EdramCache {
             return Err(EdramError::PitchTooLarge { width, max: self.max_dimension });
         }
         let samples = host_samples(key.msaa_samples);
+        let (width, height) = (width * self.scale, height * self.scale);
         let texture = device.create_texture(&TextureDescriptor {
             label: if key.is_depth { "edram depth" } else { "edram color" },
             size: extent(width, height, 1),
@@ -800,7 +824,7 @@ impl EdramCache {
         let mut common = rows_tiles * tile_h;
         for (_, key, ..) in &bound {
             self.host_format(key)?;
-            common = common.max(self.rts.get(key).map_or(0, |rt| rt.height));
+            common = common.max(self.rts.get(key).map_or(0, |rt| rt.height / self.scale));
         }
         for (_, key, ..) in &bound {
             self.ensure_rt(device, encoder, *key, common)?;
@@ -887,13 +911,14 @@ impl EdramCache {
             let (y0, y1) = if rel_end > EDRAM_TILE_COUNT {
                 (0, dest_height)
             } else {
-                ((rel_start / pitch) * tile_h, ((rel_end - 1) / pitch + 1) * tile_h)
+                let rows = (rel_start / pitch, (rel_end - 1) / pitch + 1);
+                (rows.0 * tile_h * self.scale, rows.1 * tile_h * self.scale)
             };
             let y1 = y1.min(dest_height);
             if y0 >= y1 {
                 continue;
             }
-            let cut = cutout.unwrap_or([0; 4]);
+            let cut = cutout.unwrap_or([0; 4]).map(|v| v * self.scale);
             let params = uniform(
                 &self.params,
                 device,
@@ -1315,7 +1340,7 @@ impl EdramCache {
         } else {
             encoder.begin_render_pass("edram clear", &color, None)
         };
-        let [x0, y0, x1, y1] = clear.rect;
+        let [x0, y0, x1, y1] = clear.rect.map(|v| v * self.scale);
         pass.set_scissor_rect(x0, y0, x1.min(rt.width) - x0, y1.min(rt.height) - y0);
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &params.dynamic_offset());
@@ -1347,12 +1372,13 @@ impl EdramCache {
                     continue;
                 };
                 let kind = rt.src_kind();
-                let count = (range.end - range.start) * TILE_DWORDS;
+                let tile_dwords = TILE_DWORDS * self.scale * self.scale;
+                let count = (range.end - range.start) * tile_dwords;
                 let params = uniform(
                     &self.params,
                     device,
                     &[
-                        range.start * TILE_DWORDS,
+                        range.start * tile_dwords,
                         count,
                         rt.key.base_tiles & (EDRAM_TILE_COUNT - 1),
                         rt.key.pitch_tiles(),
@@ -1373,7 +1399,11 @@ impl EdramCache {
                 ];
                 entries.extend(src_entries(rt));
                 let bind_group = cached_bind_group(&self.groups, device, "edram dump", layout, &entries);
-                dumps.push((pipeline.clone(), bind_group, params, count.div_ceil(256)));
+                let groups = count.div_ceil(256);
+                // Split in rows of at most MAX_WORKGROUPS (at scale 3 the whole EDRAM is ~92k
+                // groups); the shader numbers invocations across rows.
+                let grid = (groups.min(MAX_WORKGROUPS), groups.div_ceil(MAX_WORKGROUPS));
+                dumps.push((pipeline.clone(), bind_group, params, grid));
             }
         }
 
@@ -1500,10 +1530,10 @@ impl EdramCache {
         });
         {
             let mut pass = encoder.begin_compute_pass("edram resolve");
-            for (pipeline, bind_group, params, groups) in &dumps {
+            for (pipeline, bind_group, params, (gx, gy)) in &dumps {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bind_group, &params.dynamic_offset());
-                pass.dispatch_workgroups(*groups, 1, 1);
+                pass.dispatch_workgroups(*gx, *gy, 1);
             }
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &bind_group, &resolve_params.dynamic_offset());

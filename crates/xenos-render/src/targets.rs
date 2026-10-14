@@ -71,4 +71,10 @@ pub trait RenderTargetCache {
 
     /// Sends data the work recorded so far needs (call before submitting it).
     fn flush_uploads(&mut self, device: &Device);
+
+    /// Host pixels per guest pixel along each axis: attachments are this much larger than the
+    /// guest's render targets, and draws scale their viewport and scissor to match.
+    fn resolution_scale(&self) -> u32 {
+        1
+    }
 }

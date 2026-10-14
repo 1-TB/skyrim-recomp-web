@@ -350,6 +350,13 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// [`FS_8888`] drawn at a resolution scale: every host pixel of a guest pixel gets its value.
+fn fs_8888_scaled(scale: u32) -> String {
+    FS_8888
+        .replace("u32(pos.x)", &format!("u32(pos.x) / {scale}u"))
+        .replace("u32(pos.y)", &format!("u32(pos.y) / {scale}u"))
+}
+
 fn addr_2d(x: u32, y: u32, pitch_aligned: u32, bpp_log2: u32) -> u32 {
     DEST + tiled_2d(x as i32, y as i32, pitch_aligned, bpp_log2) as u32
 }
@@ -769,8 +776,77 @@ fn ownership_transfers_between_pitches_formats_and_depth() {
     let gpu = gpu();
     let mut cache = EdramCache::new(&gpu.device);
     ownership_transfers(&gpu, &mut cache);
-    let mut cache = EdramCache::with_options(&gpu.device, EdramOptions { d24s8_float_host: true });
+    let mut cache =
+        EdramCache::with_options(&gpu.device, EdramOptions { d24s8_float_host: true, ..Default::default() });
     ownership_transfers(&gpu, &mut cache);
+}
+
+/// At resolution scales 2 and 3, host targets are larger but transfers, raw copies, converted
+/// copies (averaging each guest pixel's host pixels) and clears give the guest the same results.
+#[test]
+fn resolution_scaled_targets_resolve_at_guest_resolution() {
+    let gpu = gpu();
+    for scale in [2, 3] {
+        let options = EdramOptions { d24s8_float_host: true, resolution_scale: scale };
+        let mut cache = EdramCache::with_options(&gpu.device, options);
+        assert_eq!(cache.resolution_scale(), scale);
+        ownership_transfers(&gpu, &mut cache);
+
+        // Converted copy: like full_conversion_565_with_exp_bias_and_8in16 at scale 1.
+        let mem = Mem::new();
+        let mut cache = EdramCache::with_options(&gpu.device, options);
+        let (w, h) = (320 * scale, 64 * scale);
+        let t = draw(
+            &gpu,
+            &mut cache,
+            &color_setup(256, MsaaSamples::X1, 0, C::K8888),
+            64,
+            &fs_8888_scaled(scale),
+            &[([0, 0, w, h], 0)],
+        );
+        assert_eq!((t.width, t.height % scale), (w, 0));
+        let info = Resolve {
+            rect: [0.0, 0.0, 64.0, 32.0],
+            dest_format: T::K565,
+            exp_bias: 1,
+            endian: Endian128::Swap8In16,
+            dest_pitch: 64,
+            dest_height: 32,
+            ..Default::default()
+        }
+        .info();
+        let mut expected = mem.snapshot();
+        run(&gpu, &mut cache, &info, &mem);
+        for y in 0..32 {
+            for x in 0..64 {
+                let v = pattern_8888(x, y);
+                let c = |shift: u32| unorm8((v >> shift) & 255) * 2.0;
+                let packed = pack_unorm(c(0), 5) | (pack_unorm(c(8), 6) << 5) | (pack_unorm(c(16), 5) << 11);
+                put(&mut expected, addr_2d(x, y, 64, 1), &(packed as u16).to_be_bytes());
+            }
+        }
+        assert_mem(&mem, &expected);
+
+        // A clear of part of the target, then a raw copy of all of it.
+        let clear = Resolve {
+            rect: [32.0, 16.0, 96.0, 48.0],
+            dest_format: T::Dxt1,
+            clear_color: true,
+            color_clear: [0, 0x1122_3344],
+            ..Default::default()
+        };
+        run(&gpu, &mut cache, &clear.info(), &mem);
+        let mut expected = mem.snapshot();
+        run(&gpu, &mut cache, &Resolve::default().info(), &mem);
+        for y in 0..64 {
+            for x in 0..256 {
+                let inside = (32..96).contains(&x) && (16..48).contains(&y);
+                let v = if inside { 0x1122_3344 } else { pattern_8888(x, y) };
+                put(&mut expected, addr_2d(x, y, 256, 2), &v.to_le_bytes());
+            }
+        }
+        assert_mem(&mem, &expected);
+    }
 }
 
 fn ownership_transfers(gpu: &Gpu, cache: &mut EdramCache) {
@@ -780,8 +856,17 @@ fn ownership_transfers(gpu: &Gpu, cache: &mut EdramCache) {
     };
     let mem = Mem::new();
     let device = &gpu.device;
+    let s = cache.resolution_scale();
     // 8888 at pitch 256 (4 tiles per row), 64 rows = 16 tiles.
-    draw(gpu, cache, &color_setup(256, MsaaSamples::X1, 10, C::K8888), 64, FS_8888, &[([0, 0, 320, 64], 0)]);
+    let t = draw(
+        gpu,
+        cache,
+        &color_setup(256, MsaaSamples::X1, 10, C::K8888),
+        64,
+        &fs_8888_scaled(s),
+        &[([0, 0, 320 * s, 64 * s], 0)],
+    );
+    assert_eq!(t.width, 320 * s);
     let a = key(10, 256, MsaaSamples::X1, false, C::K8888.raw());
     assert_eq!(cache.ownership(), &[OwnedRange { start: 10, end: 26, owner: a }]);
     let original = edram_map(10, 256, 320, 64, pattern_8888);

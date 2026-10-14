@@ -1,7 +1,7 @@
 //! [`RenderTargetCache`] over xenos-edram's host render targets and resolves.
 
 use gpu_webgpu::{CommandEncoder, Device};
-use xenos_edram::{EdramCache, GuestMemoryAccess, PendingResolve};
+use xenos_edram::{EdramCache, EdramOptions, GuestMemoryAccess, PendingResolve};
 use xenos_state::edram::RenderTargetSetup;
 use xenos_state::resolve::ResolveInfo;
 
@@ -27,7 +27,9 @@ pub struct EdramTargets {
 
 impl EdramTargets {
     pub fn new(device: &Device) -> Self {
-        EdramTargets { cache: EdramCache::new(device), pending: None }
+        let resolution_scale = crate::RESOLUTION_SCALE.load(std::sync::atomic::Ordering::Relaxed);
+        let options = EdramOptions { resolution_scale, ..Default::default() };
+        EdramTargets { cache: EdramCache::with_options(device, options), pending: None }
     }
 }
 
@@ -92,6 +94,10 @@ impl RenderTargetCache for EdramTargets {
 
     fn flush_uploads(&mut self, device: &Device) {
         self.cache.flush_uploads(device);
+    }
+
+    fn resolution_scale(&self) -> u32 {
+        self.cache.resolution_scale()
     }
 
     fn poll_resolve(&mut self, device: &Device, memory: &dyn PhysicalMemory) -> ResolveStatus {

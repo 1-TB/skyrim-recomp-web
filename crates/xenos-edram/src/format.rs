@@ -43,13 +43,23 @@ pub fn host_depth_format(format: DepthRenderTargetFormat, depth32_stencil8: bool
 }
 
 /// Host choices of an [`crate::EdramCache`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EdramOptions {
     /// Host D24S8 in depth32float-stencil8 (when available) instead of depth24plus-stencil8. The
     /// default keeps the unorm24 quantization of depth tests; where the implementation's unorm24
     /// loads aren't exact (lavapipe), depth leaving a depth24plus target (transfers, resolves) may
     /// be off by one unit in the last place. With float storage every EDRAM depth value survives.
     pub d24s8_float_host: bool,
+    /// Host pixels per guest pixel along each axis (1 to 3), like Xenia's draw resolution
+    /// scaling: host render targets are this many times wider and taller, and EDRAM tiles hold
+    /// `scale` x `scale` host samples per guest sample. Resolves downsample to guest resolution.
+    pub resolution_scale: u32,
+}
+
+impl Default for EdramOptions {
+    fn default() -> Self {
+        Self { d24s8_float_host: false, resolution_scale: 1 }
+    }
 }
 
 /// How the draw's pixel shader output for a color target maps to the host target.

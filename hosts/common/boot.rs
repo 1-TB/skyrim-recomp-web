@@ -29,6 +29,8 @@ options:
   --tap BUTTON@SECONDS     press a port-1 button at that time after boot (held for 200 ms
                            and two frames), e.g. START@20
                            (A B X Y START BACK LB RB LS RS UP DOWN LEFT RIGHT; repeatable)
+  --resolution-scale N     draw at N (1, 2 or 3) times the console's resolution along each axis
+                           (default 1)
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
                            scissor (shade one pixel per draw), nodraw (record but skip draw calls),
                            frames=N (let the renderer run N frames ahead of the GPU; default 2),
@@ -98,6 +100,10 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             "--vblank-hz" => o.vblank_hz = Some(value()?.parse().map_err(|e| format!("--vblank-hz: {e}"))?),
             "--tap" => o.taps.push(parse_tap(&value()?)?),
             "--render-debug" => xenos_render::debug::enable(&value()?)?,
+            "--resolution-scale" => {
+                let scale = value()?.parse().map_err(|e| format!("--resolution-scale: {e}"))?;
+                xenos_render::set_resolution_scale(scale)?;
+            }
             "--run-for" => {
                 let secs: f64 = value()?.parse().map_err(|e| format!("--run-for: {e}"))?;
                 o.run_for = Some(Duration::from_secs_f64(secs));

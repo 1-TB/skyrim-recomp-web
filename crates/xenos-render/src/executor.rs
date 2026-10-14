@@ -30,7 +30,7 @@ use xenos_state::primitive::{
 use xenos_state::resolve::{ResolveOptions, resolve_info};
 use xenos_state::shader::ShaderProgramSetup;
 use xenos_state::viewport::{
-    CullMode as GuestCull, FrontFace as GuestFrontFace, RasterizerState, ViewportArgs, ViewportRegisters,
+    CullMode as GuestCull, FrontFace as GuestFrontFace, RasterizerState, Scissor, ViewportArgs, ViewportRegisters,
     host_viewport_info, scissor,
 };
 use xenos_state::xenos::{self, EdramMode, SourceSelect};
@@ -376,6 +376,8 @@ pub struct Executor {
     trace_dumps: Vec<(TextureView, u32, u32, String)>,
     textures: TextureCache,
     targets: Box<dyn RenderTargetCache>,
+    /// `targets`' resolution scale (host pixels per guest pixel along each axis).
+    resolution_scale: u32,
     encoder: Option<CommandEncoder>,
     /// Recorded work closed into command buffers (to put texture loads after it), submitted
     /// before `encoder` with the batch.
@@ -537,6 +539,7 @@ enum Skip {
 impl Executor {
     pub fn new(device: &Device, memory: Arc<dyn PhysicalMemory>, targets: Box<dyn RenderTargetCache>) -> Self {
         let limits = device.limits();
+        let resolution_scale = targets.resolution_scale().max(1);
         let alignment = u64::from(limits.minUniformBufferOffsetAlignment.max(limits.minStorageBufferOffsetAlignment));
         let constants = Ring::new(
             device,
@@ -649,6 +652,7 @@ impl Executor {
                 TextureCache::with_config(device, xenos_texture_cache::host_caps(device), config)
             },
             targets,
+            resolution_scale,
             encoder: None,
             queued: Vec::new(),
             times: OpTimes::default(),
@@ -1178,17 +1182,26 @@ impl Executor {
         let back_faces_visible = rasterizer.polygonal && rasterizer.cull_mode != GuestCull::Back;
         let depth_stencil = GuestDepthStencil::from_registers(regs, depth_control, back_faces_visible);
         let viewport_regs = ViewportRegisters::from_registers(regs, depth_control.z_enable);
-        let viewport = host_viewport_info(&viewport_regs, &ViewportArgs::webgpu(self.max_texture_dimension));
+        let scale = self.resolution_scale;
+        let viewport_args = ViewportArgs {
+            draw_resolution_scale_x: scale,
+            draw_resolution_scale_y: scale,
+            ..ViewportArgs::webgpu(self.max_texture_dimension)
+        };
+        // In host pixels (guest pixels times the resolution scale).
+        let viewport = host_viewport_info(&viewport_regs, &viewport_args);
         let guest_scissor = scissor(regs, true, false);
         // Rows the draw can touch, which is how tall its render targets are made and how much
         // EDRAM it claims. With clipping, primitives stay inside the host viewport, so below it
         // nothing is drawn even when the scissor is the whole surface (as it often is). Without
         // clipping and with an 8192x8192 scissor (Direct3D 9's screen-space draws), the vertices
-        // themselves are run on the CPU to find out, like Xenia does.
-        let mut min_height = (guest_scissor.offset[1] + guest_scissor.extent[1]).min(self.max_texture_dimension);
+        // themselves are run on the CPU to find out, like Xenia does. In guest rows.
+        let mut min_height =
+            (guest_scissor.offset[1] + guest_scissor.extent[1]).min(self.max_texture_dimension / scale);
         if !viewport_regs.clip_cntl.clip_disable {
             let viewport_bottom = i64::from(viewport.xy_offset[1]) + i64::from(viewport.xy_extent[1]);
-            min_height = min_height.min(viewport_bottom.clamp(0, i64::from(u32::MAX)) as u32);
+            let viewport_bottom = (viewport_bottom.clamp(0, i64::from(u32::MAX)) as u32).div_ceil(scale);
+            min_height = min_height.min(viewport_bottom);
         } else {
             let unclamped = scissor(regs, false, false);
             if unclamped.offset[0] + unclamped.extent[0] >= xenos::TEXTURE_2D_MAX_WIDTH_HEIGHT
@@ -1259,7 +1272,7 @@ impl Executor {
 
         mark!(self, 5);
         // Render targets (encode the previous pass first if they change).
-        let reuse = self.pass.as_ref().is_some_and(|p| p.setup == setup && p.targets.height >= min_height);
+        let reuse = self.pass.as_ref().is_some_and(|p| p.setup == setup && p.targets.height >= min_height * scale);
         if !reuse {
             self.encode_pass();
             // A traced pass's targets are written out before later passes can change them.
@@ -1276,7 +1289,11 @@ impl Executor {
         };
 
         let viewport = viewport.crop_to_render_target(target_width, target_height, true);
-        let scissor = guest_scissor.clamp_to(target_width, target_height);
+        let scissor = Scissor {
+            offset: guest_scissor.offset.map(|v| v.saturating_mul(scale)),
+            extent: guest_scissor.extent.map(|v| v.saturating_mul(scale)),
+        }
+        .clamp_to(target_width, target_height);
         if viewport.xy_extent[0] == 0 || viewport.xy_extent[1] == 0 || scissor.extent[0] == 0 || scissor.extent[1] == 0
         {
             return Err(Skip::EmptyViewport);
@@ -1335,8 +1352,10 @@ impl Executor {
         system.point_constant_diameter = rasterizer.point_size;
         system.point_vertex_diameter_min = rasterizer.point_size_min_max[0];
         system.point_vertex_diameter_max = rasterizer.point_size_min_max[1];
+        // Diameters are in guest pixels, the viewport in host pixels.
         system.point_screen_diameter_to_ndc_radius =
-            [1.0 / viewport.xy_extent[0] as f32, 1.0 / viewport.xy_extent[1] as f32];
+            [scale as f32 / viewport.xy_extent[0] as f32, scale as f32 / viewport.xy_extent[1] as f32];
+        system.resolution_scale = scale as f32;
         for (i, binding) in setup.color.iter().enumerate() {
             if let Some(b) = binding {
                 system.color_exp_bias[i] = (b.exp_bias as f32).exp2();
@@ -1818,8 +1837,9 @@ impl Executor {
                     (CompareFunction::Always, StencilOperation::Keep, StencilOperation::Keep, StencilOperation::Keep)
                 }
             };
+            // Depth changes less per host pixel at higher resolution scales (Xenia scales it too).
             let (bias, slope) = if rasterizer.polygonal {
-                (rasterizer.depth_bias.constant, rasterizer.depth_bias.slope_scale)
+                (rasterizer.depth_bias.constant, rasterizer.depth_bias.slope_scale * self.resolution_scale as f32)
             } else {
                 (0, 0.0)
             };
