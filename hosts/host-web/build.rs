@@ -15,7 +15,10 @@ fn main() {
         // emcc warns that JS heap views are re-checked after growth with
         // pthreads; the runtime touches the heap from JS only for I/O proxying.
         "-Wno-pthreads-mem-growth",
-        "-sMAXIMUM_MEMORY=4GB",
+        // The guest never commits at or above 0xC0000000 (those physical views fold onto
+        // 0xA0000000, see runtime-core memory.rs), and iOS Safari refuses to reserve a 4 GiB
+        // shared memory (3 GiB works).
+        "-sMAXIMUM_MEMORY=3GB",
         "-sINITIAL_MEMORY=128MB",
         // Keep low addresses unused so stray guest null-pointer accesses land in
         // unused memory rather than on host data.

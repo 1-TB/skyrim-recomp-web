@@ -47,7 +47,7 @@ fn web_example_link_args() {
         "-sPROXY_TO_PTHREAD=1",
         "-sALLOW_MEMORY_GROWTH=1",
         "-Wno-pthreads-mem-growth",
-        "-sMAXIMUM_MEMORY=4GB",
+        "-sMAXIMUM_MEMORY=3GB",
         "-sINITIAL_MEMORY=128MB",
         "-sGLOBAL_BASE=1048576",
         "-sSTACK_SIZE=1MB",
