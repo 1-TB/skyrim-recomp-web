@@ -557,11 +557,11 @@ impl Vfs {
                 if (req.write || truncates) && read_only {
                     return Err(VfsError::AccessDenied);
                 }
-                let file = OpenOptions::new()
-                    .read(true)
-                    .write(req.write || truncates)
-                    .truncate(truncates)
-                    .open(&r.host_path)?;
+                let file = if !req.write && !truncates && cfg!(target_os = "emscripten") {
+                    open_for_reading(&r.host_path)?
+                } else {
+                    OpenOptions::new().read(true).write(req.write || truncates).truncate(truncates).open(&r.host_path)?
+                };
                 let action = match req.disposition {
                     Disposition::Supersede => CreateAction::Superseded,
                     Disposition::Overwrite | Disposition::OverwriteIf => CreateAction::Overwritten,
@@ -704,4 +704,14 @@ fn resolve_case_insensitive(root: &Path, components: &[&str]) -> PathBuf {
         path.push(c);
     }
     path
+}
+
+/// Opens a file the guest only reads. In the browser, WasmFS gives OPFS files opened read-only
+/// a Blob and serves each read with `blob.slice().arrayBuffer()`: a new JS buffer the size of
+/// the read, copied into wasm memory and then left to the worker's garbage collector. The title
+/// streams hundreds of MiB that way in its first seconds in game, and on iOS the garbage pushed
+/// the page past its memory limit. Opened for writing, WasmFS uses a sync access handle instead,
+/// which reads straight into wasm memory. Nothing is written: the VFS keeps the file read-only.
+fn open_for_reading(path: &Path) -> io::Result<File> {
+    OpenOptions::new().read(true).write(true).open(path).or_else(|_| File::open(path))
 }
