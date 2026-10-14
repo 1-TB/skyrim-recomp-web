@@ -4,6 +4,7 @@ members = [
     "crates/xex",
     "crates/runtime-core",
     "crates/kernel-hle",
+    "crates/d3d-hle",
     "crates/vfs",
     "crates/guest-sys",
     "crates/xenos-shader",
@@ -24,6 +25,7 @@ default-members = [
     "crates/xex",
     "crates/runtime-core",
     "crates/kernel-hle",
+    "crates/d3d-hle",
     "crates/vfs",
     "crates/xenos-shader",
     "crates/xenos-texture",
@@ -42,6 +44,7 @@ rustc-hash = "=1.1.0"
 xex = { path = "crates/xex" }
 runtime-core = { path = "crates/runtime-core" }
 kernel-hle = { path = "crates/kernel-hle" }
+d3d-hle = { path = "crates/d3d-hle" }
 vfs = { path = "crates/vfs" }
 guest-sys = { path = "crates/guest-sys" }
 xenos-shader = { path = "crates/xenos-shader" }

@@ -253,9 +253,9 @@ impl Gpu {
         self.progress_waiters.fetch_add(1, Ordering::SeqCst);
         let guard = self.progress_lock.lock().unwrap();
         if self.progress.load(Ordering::SeqCst) == seen {
-            let _ = self.progress_changed.wait_timeout_while(guard, timeout, |_| {
-                self.progress.load(Ordering::SeqCst) == seen
-            });
+            let _ = self
+                .progress_changed
+                .wait_timeout_while(guard, timeout, |_| self.progress.load(Ordering::SeqCst) == seen);
         }
         self.progress_waiters.fetch_sub(1, Ordering::SeqCst);
     }
@@ -452,6 +452,10 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         sync_wait: Duration::ZERO,
         frame_draws: 0,
         full_frame_seen: false,
+        d3d_marker: None,
+        d3d_writes: Vec::new(),
+        d3d_packet: (0, 0),
+        d3d_last_writer: std::collections::HashMap::new(),
     };
     let mut read_index = 0u32;
     let mut generation = 0u32;
@@ -542,6 +546,14 @@ struct CommandProcessor<'a> {
     /// a world load, for load-time measurements).
     frame_draws: u32,
     full_frame_seen: bool,
+    /// Sequence number of the last `--gpu d3d-verify` marker, until the draw after it, and the
+    /// register writes since.
+    d3d_marker: Option<u32>,
+    d3d_writes: Vec<(u32, u32)>,
+    /// `--gpu d3d-verify`: the packet being executed (type 0/1 as 0x100/0x101, else the type-3
+    /// opcode) and its address, and per register the last one that wrote it.
+    d3d_packet: (u32, u32),
+    d3d_last_writer: std::collections::HashMap<u32, (u32, u32)>,
 }
 
 /// Register-file base of each SET_CONSTANT / LOAD_ALU_CONSTANT type.
@@ -668,6 +680,11 @@ impl CommandProcessor<'_> {
         if packet == 0 || packet == 0x0BAD_F00D {
             return true;
         }
+        self.d3d_packet = match packet >> 30 {
+            0 => (0x100, start),
+            1 => (0x101, start),
+            _ => ((packet >> 8) & 0x7F, start),
+        };
         match packet >> 30 {
             0 => {
                 let count = ((packet >> 16) & 0x3FFF) + 1;
@@ -892,11 +909,20 @@ impl CommandProcessor<'_> {
             }
             pm4::DRAW_INDX => {
                 self.frame_draws += 1;
+                self.verify_d3d_draw();
                 self.draw(r, count, true)
             }
             pm4::DRAW_INDX_2 => {
                 self.frame_draws += 1;
+                self.verify_d3d_draw();
                 self.draw(r, count, false)
+            }
+            // A `--gpu d3d-verify` marker before a draw's packets (see crate::d3d).
+            pm4::NOP if count >= 2 && crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3dVerify => {
+                if r.read(mem) == d3d_hle::MARKER_SIGNATURE {
+                    self.d3d_marker = Some(r.read(mem));
+                    self.d3d_writes.clear();
+                }
             }
             pm4::SET_CONSTANT2 | pm4::SET_SHADER_CONSTANTS => {
                 let offset_type = r.read(mem);
@@ -955,11 +981,35 @@ impl CommandProcessor<'_> {
         self.k.gpu.read_register(self.mem, index)
     }
 
+    /// Compares the registers with the device shadow copied at the marker before this draw.
+    fn verify_d3d_draw(&mut self) {
+        if crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3dVerify && self.d3d_marker.is_none() {
+            crate::d3d::unmarked_draw(self.d3d_packet.1);
+        }
+        if let Some(seq) = self.d3d_marker.take() {
+            let writes = std::mem::take(&mut self.d3d_writes);
+            let writers = &self.d3d_last_writer;
+            crate::d3d::verify_draw(
+                seq,
+                &writes,
+                |index| self.k.gpu.read_register(self.mem, index),
+                |index| writers.get(&index).copied().unwrap_or((0, 0)),
+            );
+            self.d3d_writes = writes;
+        }
+    }
+
     /// Register write from the command stream, with the side effects of the
     /// registers that have them.
     fn write_register(&mut self, index: u32, value: u32) {
         if self.backend.is_some() {
             self.pending.push((index, value));
+        }
+        if self.d3d_marker.is_some() {
+            self.d3d_writes.push((index, value));
+        }
+        if crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3dVerify {
+            self.d3d_last_writer.insert(index, self.d3d_packet);
         }
         let gpu = &self.k.gpu;
         let mem = self.mem;

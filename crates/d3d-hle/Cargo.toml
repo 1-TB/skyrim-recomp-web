@@ -1,0 +1,9 @@
+[package]
+name = "d3d-hle"
+description = "Skyrim's Xbox 360 Direct3D device: hooked functions and the layout of its register shadow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

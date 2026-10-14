@@ -31,6 +31,9 @@ options:
   --tap BUTTON@SECONDS     press a port-1 button at that time after boot (held for 200 ms
                            and two frames), e.g. START@20
                            (A B X Y START BACK LB RB LS RS UP DOWN LEFT RIGHT; repeatable)
+  --gpu MODE               xenos (default: render the command stream), d3d-probe (also count the
+                           title's Direct3D calls), d3d-verify (also check the D3D device's
+                           register copy against the command stream at every draw)
   --resolution-scale N     draw at N (1, 2 or 3) times the console's resolution along each axis
                            (default 1)
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
@@ -108,6 +111,7 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             }
             "--tap" => o.taps.push(parse_tap(&value()?)?),
             "--render-debug" => xenos_render::debug::enable(&value()?)?,
+            "--gpu" => kernel_hle::d3d::set_gpu_mode(&value()?)?,
             "--resolution-scale" => {
                 let scale = value()?.parse().map_err(|e| format!("--resolution-scale: {e}"))?;
                 xenos_render::set_resolution_scale(scale)?;

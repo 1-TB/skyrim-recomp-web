@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+d3d-hle.workspace = true
 xma-decoder.workspace = true
 log.workspace = true
 runtime-core.workspace = true

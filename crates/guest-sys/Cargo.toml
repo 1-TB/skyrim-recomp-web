@@ -13,6 +13,7 @@ kernel-hle.workspace = true
 runtime-core.workspace = true
 
 [build-dependencies]
+d3d-hle.workspace = true
 kernel-hle.workspace = true
 runtime-core.workspace = true
 xex.workspace = true

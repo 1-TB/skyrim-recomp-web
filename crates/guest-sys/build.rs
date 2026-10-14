@@ -126,6 +126,35 @@ PPC_FUNC({f}) {{
             .unwrap();
         }
     }
+    // The title's Direct3D entry points (d3d-hle's list): each calls kernel-hle's d3d hook, which
+    // does nothing unless `--gpu` asks for probing, then runs the original.
+    if title == Some(d3d_hle::TITLE) {
+        let hooks: Vec<(usize, &d3d_hle::Hook)> =
+            d3d_hle::HOOKS.iter().enumerate().filter(|(_, h)| declared.contains(h.function)).collect();
+        if hooks.len() != d3d_hle::HOOKS.len() {
+            println!("cargo:warning=some D3D functions to hook are missing from the recompiled output");
+        }
+        cpp.push_str(
+            "\nextern \"C\" void skyrt_d3d_enter(uint32_t id, uint32_t r3, uint32_t r4, uint32_t r5, uint32_t r6, uint32_t lr);\n\
+             extern \"C\" void skyrt_d3d_leave(uint32_t id);\n",
+        );
+        for (id, hook) in hooks {
+            writeln!(
+                cpp,
+                r#"
+// {name}
+extern "C" PPC_FUNC(__imp__{f});
+PPC_FUNC({f}) {{
+    skyrt_d3d_enter({id}, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, uint32_t(ctx.lr));
+    __imp__{f}(ctx, base);
+    skyrt_d3d_leave({id});
+}}"#,
+                name = hook.name,
+                f = hook.function,
+            )
+            .unwrap();
+        }
+    }
     if skyrim && declared.contains(SKYRIM_RING_WAIT) {
         writeln!(
             cpp,

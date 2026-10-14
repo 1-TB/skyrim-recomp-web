@@ -367,6 +367,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
+name = "d3d-hle"
+version = "0.1.0"
+
+[[package]]
 name = "dasp_sample"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -593,6 +597,7 @@ dependencies = [
 name = "guest-sys"
 version = "0.1.0"
 dependencies = [
+ "d3d-hle",
  "kernel-hle",
  "runtime-core",
  "xex",
@@ -770,6 +775,7 @@ dependencies = [
 name = "kernel-hle"
 version = "0.1.0"
 dependencies = [
+ "d3d-hle",
  "log",
  "lzxd",
  "miniz_oxide 0.9.1",
