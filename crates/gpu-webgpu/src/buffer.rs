@@ -87,6 +87,7 @@ impl Device {
             raw = unsafe { ffi::wgpuDeviceCreateBuffer(self.raw(), &unmapped) };
         }
         assert!(!raw.is_null(), "wgpuDeviceCreateBuffer returned null");
+        crate::memory::track(raw as usize, "buffer", desc.label, desc.size);
         let state = Rc::new(State {
             size: desc.size,
             usage: desc.usage,
@@ -271,6 +272,7 @@ impl Buffer {
     pub fn destroy(&self) {
         self.state.generation.set(self.state.generation.get() + 1);
         self.state.map.set(Map::Unmapped);
+        crate::memory::untrack(self.raw as usize);
         unsafe { ffi::wgpuBufferDestroy(self.raw) };
     }
 }

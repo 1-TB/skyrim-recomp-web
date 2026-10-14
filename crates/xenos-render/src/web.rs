@@ -188,6 +188,7 @@ impl Running {
                 "perf: per frame: {}",
                 crate::renderer::calls_per_frame(&gpu_webgpu::counters::snapshot().since(&p.calls), n)
             );
+            log::info!("perf: {}", self.renderer.gpu_memory());
         }
         if p.start_ms == 0.0 || now - p.start_ms >= PERF_WINDOW_MS {
             *p = Perf {

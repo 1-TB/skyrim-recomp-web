@@ -32,8 +32,8 @@ fn main() {
         "-sEXIT_RUNTIME=1",
         "-sENVIRONMENT=web,worker,node",
         "-sEXPORTED_RUNTIME_METHODS=callMain,HEAPU8",
-        // Called by web/input.js with controller state.
-        "-sEXPORTED_FUNCTIONS=_main,_skyrt_set_pad,_skyrt_set_pad_connected,_skyrt_audio_ring",
+        // Called by web/input.js with controller state, and by tools/browser-run.mjs.
+        "-sEXPORTED_FUNCTIONS=_main,_skyrt_set_pad,_skyrt_set_pad_connected,_skyrt_audio_ring,_skyrt_swap_count,_skyrt_memory_bytes",
         // WebGPU: webgpu.h on top of the browser API (crates/gpu-webgpu).
         "--use-port=emdawnwebgpu:cpp_bindings=false",
         // Lets the renderer thread take the page's <canvas> as an OffscreenCanvas; the

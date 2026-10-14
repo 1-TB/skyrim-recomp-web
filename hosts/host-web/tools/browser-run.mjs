@@ -9,6 +9,9 @@
 //          --dist web-dist --game <game dir> --profile <browser profile dir> --out <output dir>
 //          [--seconds 120] [--shot-every 10] [--args "--log info"] [--port 8091] [--reload-after S]
 //          [--stacks-at S[,S...]] [--audio] [--profile-at S:SECONDS] [--stream] [--saves DIR]
+//          [--step "CONDITION => ACTIONS" ...] [--step-timeout S]
+//
+// `--shot-every 0` turns the periodic screenshots off.
 //
 // `--stream` skips the OPFS import and has the runtime stream the game from this server instead
 // (`--stream-game`), through the same /game/manifest and ranged /game/files/ endpoints as
@@ -29,8 +32,23 @@
 //
 // Without a GPU, Chromium's WebGPU runs on SwiftShader (see CHROME_ARGS). Headless Chromium
 // never composites a worker-owned OffscreenCanvas, so run headed (on Xvfb) for screenshots.
+//
+// Scripted runs: each `--step "CONDITION => ACTION; ACTION..."` waits for its condition, then
+// runs its actions; steps run in order and the run ends after the last one (with exit status 1
+// if a step's condition doesn't hold within `--step-timeout` seconds, default 300, or the run
+// exceeds `--seconds`). Conditions, joined with `&` (empty: at once):
+//   log:REGEX          a log line since the step became active matches (JS regex)
+//   fps>=N, draws>=N   the newest `perf:` report since the step became active (also <=, >, <)
+//   swaps>=N           frames presented since boot
+//   after:S            S seconds since the step became active
+// Actions: `tap BUTTON` (port 1, held for 200 ms and two presented frames), `tap BUTTON every S`
+// (repeats until the next step's condition holds), `shot NAME`, `measure S LABEL` (collects the
+// perf reports and memory use for S seconds into the summary), `wait S`, `exit`. E.g.
+//   --step "log:XamContentCreateEnumerator => measure 15 title" --step "=> exit"
+// The summary of every `measure` is printed at the end and written to OUT/summary.json.
 import { createServer } from 'node:http';
-import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { extname, join, relative, resolve, sep } from 'node:path';
 
@@ -42,6 +60,48 @@ function option(name, fallback) {
     process.exit(2);
   }
   return fallback;
+}
+
+function options(name) {
+  const values = [];
+  process.argv.forEach((a, i) => {
+    if (a === `--${name}` && i + 1 < process.argv.length) values.push(process.argv[i + 1]);
+  });
+  return values;
+}
+
+const XINPUT_BUTTONS = {
+  DPAD_UP: 0x0001, DPAD_DOWN: 0x0002, DPAD_LEFT: 0x0004, DPAD_RIGHT: 0x0008, UP: 0x0001, DOWN: 0x0002,
+  LEFT: 0x0004, RIGHT: 0x0008, START: 0x0010, BACK: 0x0020, LEFT_THUMB: 0x0040, RIGHT_THUMB: 0x0080,
+  LB: 0x0100, RB: 0x0200, A: 0x1000, B: 0x2000, X: 0x4000, Y: 0x8000,
+};
+
+/// Parses `CONDITION => ACTION; ACTION`.
+function parseStep(text) {
+  const [condText, actionText = ''] = text.split('=>').map((p) => p.trim());
+  const conditions = condText.split('&').map((c) => c.trim()).filter(Boolean).map((c) => {
+    if (c.startsWith('log:')) return { kind: 'log', re: new RegExp(c.slice(4)) };
+    if (c.startsWith('after:')) return { kind: 'after', seconds: Number(c.slice(6)) };
+    const m = /^(fps|draws|swaps)\s*(>=|<=|>|<)\s*([\d.]+)$/.exec(c);
+    if (!m) throw new Error(`--step ${text}: unknown condition ${c}`);
+    return { kind: m[1], op: m[2], value: Number(m[3]) };
+  });
+  const actions = actionText.split(';').map((a) => a.trim()).filter(Boolean).map((a) => {
+    const w = a.split(/\s+/);
+    switch (w[0]) {
+      case 'tap': {
+        const mask = XINPUT_BUTTONS[w[1]?.toUpperCase()];
+        if (mask === undefined) throw new Error(`--step ${text}: unknown button ${w[1]}`);
+        return { kind: 'tap', name: w[1].toUpperCase(), mask, every: w[2] === 'every' ? Number(w[3]) : 0 };
+      }
+      case 'shot': return { kind: 'shot', name: w[1] ?? 'shot' };
+      case 'measure': return { kind: 'measure', seconds: Number(w[1]), label: w[2] ?? `measure${w[1]}` };
+      case 'wait': return { kind: 'wait', seconds: Number(w[1]) };
+      case 'exit': return { kind: 'exit' };
+      default: throw new Error(`--step ${text}: unknown action ${a}`);
+    }
+  });
+  return { text, conditions, actions };
 }
 
 const dist = resolve(option('dist'));
@@ -60,6 +120,8 @@ const stream = process.argv.includes('--stream');
 const [profileAt, profileFor] = option('profile-at', '0:0').split(':').map(Number);
 const stacksAt = option('stacks-at', '').split(',').filter(Boolean).map(Number);
 const saves = process.argv.includes('--saves') ? resolve(option('saves')) : null;
+const steps = options('step').map(parseStep);
+const stepTimeout = Number(option('step-timeout', '300'));
 mkdirSync(out, { recursive: true });
 const logPath = join(out, 'log.txt');
 writeFileSync(logPath, '');
@@ -163,6 +225,8 @@ await context.addInitScript(() => {
   };
 });
 const page = context.pages()[0] ?? (await context.newPage());
+/// The runtime's log so far, for step conditions and measurements.
+const lines = [];
 const note = (line) => {
   console.log(line);
   appendFileSync(logPath, line + '\n');
@@ -244,15 +308,23 @@ note(`booted with ${runtimeArgs.join(' ')}`);
 const canvas = page.locator('#canvas');
 await canvas.scrollIntoViewIfNeeded();
 const start = Date.now();
+const elapsed = () => (Date.now() - start) / 1000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let nextShot = shotEvery;
 let reloaded = false;
 let stacksDumped = 0;
 let profiled = false;
-while ((Date.now() - start) / 1000 < seconds) {
-  await new Promise((r) => setTimeout(r, 1000));
-  for (const l of await page.evaluate(() => window.__lines.splice(0))) note(l);
-  const t = (Date.now() - start) / 1000;
-  if (audio && Math.round(t) % 5 === 0) {
+let lastAudio = 0;
+
+/// Moves the runtime's log into `lines` and runs the time-based options; called every 250 ms.
+async function pump() {
+  for (const l of await page.evaluate(() => window.__lines.splice(0))) {
+    lines.push(l);
+    note(l);
+  }
+  const t = elapsed();
+  if (audio && t - lastAudio >= 5) {
+    lastAudio = t;
     const positions = await page.evaluate(() => {
       if (!window.__audioHeader) return null;
       const view = new Uint32Array(window.Module.HEAPU8.buffer, window.__audioHeader, 2);
@@ -275,17 +347,271 @@ while ((Date.now() - start) / 1000 < seconds) {
     stacksDumped += 1;
     await dumpWorkerStacks();
   }
-  if (t >= nextShot) {
-    const shot = join(out, `canvas_${String(Math.round(t)).padStart(4, '0')}s.png`);
-    await canvas.screenshot({ path: shot, timeout: 30000 }).then(
-      () => note(`screenshot ${shot}`),
-      (e) => note(`screenshot failed: ${e.message.split('\n')[0]}`),
-    );
+  if (shotEvery > 0 && t >= nextShot) {
+    await screenshot(`canvas_${String(Math.round(t)).padStart(4, '0')}s.png`);
     nextShot += shotEvery;
   }
 }
+
+async function pumpFor(seconds) {
+  const until = Date.now() + seconds * 1000;
+  while (Date.now() < until) {
+    await sleep(Math.min(250, Math.max(0, until - Date.now())));
+    await pump();
+  }
+}
+
+async function screenshot(name) {
+  const shot = join(out, name.endsWith('.png') ? name : `${name}.png`);
+  await canvas.screenshot({ path: shot, timeout: 30000 }).then(
+    () => note(`screenshot ${shot}`),
+    (e) => note(`screenshot failed: ${e.message.split('\n')[0]}`),
+  );
+}
+
+const swapCount = () => page.evaluate(() => window.Module?._skyrt_swap_count?.() ?? 0);
+const setPad = (mask) => page.evaluate((m) => window.Module._skyrt_set_pad(0, m, 0, 0, 0, 0, 0, 0), mask);
+
+/// Presses `mask` on port 1 for 200 ms and at least two presented frames (titles poll input once
+/// a frame), giving up on the frames after 5 s, like `--tap`.
+async function tap(name, mask) {
+  note(`[${elapsed().toFixed(1)} s] step: tap ${name}`);
+  const frames = await swapCount();
+  await setPad(mask);
+  const pressed = Date.now();
+  while (Date.now() - pressed < 200 || ((await swapCount()) < frames + 2 && Date.now() - pressed < 5000)) {
+    await sleep(20);
+  }
+  await setPad(0);
+}
+
+const PERF = /perf: ([\d.]+) fps, (\d+) draws\/frame; renderer thread: (\d+)% executing, (\d+)% waiting for the GPU, (\d+)% waiting for the game/;
+const PER_FRAME = /perf: per frame: .*?(\d+) submits, (\d+) write_buffer \((\d+) KiB\), (\d+) write_texture/;
+const GPU_MEMORY = /perf: GPU memory ([\d.]+) MiB in (\d+) objects; texture cache ([\d.]+) MiB in (\d+) textures; largest: (.*)/;
+
+/// This browser's processes: the one started with the profile and its descendants, with each
+/// one's `--type` (the page's renderer, the GPU process, ...; none for the browser itself).
+function browserProcesses() {
+  const procs = [];
+  for (const pid of readdirSync('/proc').filter((d) => /^\d+$/.test(d))) {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const ppid = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1];
+      // Chromium rewrites its children's command lines into one space-separated string.
+      procs.push({ pid, ppid, cmd: readFileSync(`/proc/${pid}/cmdline`, 'utf8').split(/[\0 ]+/) });
+    } catch {
+      // The process exited meanwhile.
+    }
+  }
+  const root = (p) => p.pid !== String(process.pid) && p.cmd.some((a) => a.includes(profile)) && !p.cmd.some((a) => a.startsWith('--type='));
+  const ours = new Set(procs.filter(root).map((p) => p.pid));
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const p of procs) {
+      if (!ours.has(p.pid) && ours.has(p.ppid)) {
+        ours.add(p.pid);
+        grew = true;
+      }
+    }
+  }
+  return procs
+    .filter((p) => ours.has(p.pid))
+    .map((p) => ({ pid: p.pid, type: (p.cmd.find((a) => a.startsWith('--type=')) ?? '--type=browser').slice(7) }));
+}
+
+/// Proportional set size (KiB) of this browser's processes by type, from /proc.
+function processMemory() {
+  const byType = {};
+  for (const { pid, type } of browserProcesses()) {
+    try {
+      const pss = /^Pss:\s+(\d+) kB/m.exec(readFileSync(`/proc/${pid}/smaps_rollup`, 'utf8'));
+      byType[type] = (byType[type] ?? 0) + Number(pss?.[1] ?? 0);
+    } catch {
+      // Gone.
+    }
+  }
+  return byType;
+}
+
+/// GPU memory the driver attributes to this browser's processes (NVIDIA only), in MiB.
+function driverGpuMemory() {
+  try {
+    const pids = new Set(browserProcesses().map((p) => p.pid));
+    const out = execFileSync('nvidia-smi', ['--query-compute-apps=pid,used_memory', '--format=csv,noheader,nounits'], { encoding: 'utf8' });
+    let total = 0;
+    for (const line of out.split('\n')) {
+      const [pid, mib] = line.split(',').map((v) => v.trim());
+      if (pids.has(pid)) total += Number(mib);
+    }
+    return total || null;
+  } catch {
+    return null;
+  }
+}
+
+const measurements = [];
+
+/// Averages the perf reports logged while measuring and samples the memory use at the end.
+async function measure(seconds, label) {
+  note(`[${elapsed().toFixed(1)} s] step: measuring "${label}" for ${seconds} s`);
+  const from = lines.length;
+  // Resolves after a garbage collection (Chromium forces one within about 20 s), so it is
+  // started now and collected at the end if done by then.
+  await page.evaluate(() => {
+    window.__uaMemory = null;
+    performance.measureUserAgentSpecificMemory?.().then((m) => { window.__uaMemory = m; }, () => {});
+  });
+  await pumpFor(seconds);
+  const window_ = lines.slice(from);
+  const perf = window_.map((l) => PERF.exec(l)).filter(Boolean).map((m) => m.slice(1).map(Number));
+  const perFrame = window_.map((l) => PER_FRAME.exec(l)).filter(Boolean).map((m) => m.slice(1).map(Number));
+  const gpu = window_.map((l) => GPU_MEMORY.exec(l)).filter(Boolean).at(-1);
+  const mean = (rows, i) => (rows.length ? rows.reduce((a, r) => a + r[i], 0) / rows.length : null);
+  const page_ = await page.evaluate(() => {
+    const r = {
+      wasmBytes: window.Module?._skyrt_memory_bytes?.() ?? window.Module?.HEAPU8?.buffer.byteLength,
+      jsHeapBytes: performance.memory?.usedJSHeapSize ?? null,
+    };
+    const m = window.__uaMemory;
+    if (m) {
+      r.uaBytes = m.bytes;
+      r.uaBreakdown = m.breakdown
+        .filter((b) => b.bytes > 0)
+        .sort((a, b) => b.bytes - a.bytes)
+        .slice(0, 6)
+        .map((b) => ({ bytes: b.bytes, types: b.types.join(','), scope: b.attribution.map((a) => a.scope).join(',') }));
+    }
+    return r;
+  });
+  const row = {
+    label,
+    at: Number(elapsed().toFixed(1)),
+    reports: perf.length,
+    fps: mean(perf, 0),
+    drawsPerFrame: mean(perf, 1),
+    rendererExecutingPct: mean(perf, 2),
+    rendererGpuWaitPct: mean(perf, 3),
+    rendererGameWaitPct: mean(perf, 4),
+    submitsPerFrame: mean(perFrame, 0),
+    writeBuffersPerFrame: mean(perFrame, 1),
+    writeBufferKiBPerFrame: mean(perFrame, 2),
+    writeTexturesPerFrame: mean(perFrame, 3),
+    gpuLiveMiB: gpu ? Number(gpu[1]) : null,
+    gpuLiveObjects: gpu ? Number(gpu[2]) : null,
+    textureCacheMiB: gpu ? Number(gpu[3]) : null,
+    textureCacheTextures: gpu ? Number(gpu[4]) : null,
+    gpuLargest: gpu?.[5] ?? null,
+    wasmMiB: page_.wasmBytes ? page_.wasmBytes / 2 ** 20 : null,
+    jsHeapMiB: page_.jsHeapBytes != null ? page_.jsHeapBytes / 2 ** 20 : null,
+    uaSpecificMiB: page_.uaBytes != null ? page_.uaBytes / 2 ** 20 : null,
+    uaBreakdown: page_.uaBreakdown ?? null,
+    processPssMiB: Object.fromEntries(Object.entries(processMemory()).map(([k, v]) => [k, v / 1024])),
+    driverGpuMiB: driverGpuMemory(),
+  };
+  measurements.push(row);
+  note(`[${elapsed().toFixed(1)} s] measured "${label}": ${JSON.stringify(row)}`);
+}
+
+function writeSummary(status) {
+  const f = (v, d = 1) => (v == null ? '-' : Number(v).toFixed(d));
+  const table = [
+    ['', ...measurements.map((m) => m.label)],
+    ['fps', ...measurements.map((m) => f(m.fps))],
+    ['draws/frame', ...measurements.map((m) => f(m.drawsPerFrame, 0))],
+    ['renderer executing %', ...measurements.map((m) => f(m.rendererExecutingPct, 0))],
+    ['renderer waiting for GPU %', ...measurements.map((m) => f(m.rendererGpuWaitPct, 0))],
+    ['submits/frame', ...measurements.map((m) => f(m.submitsPerFrame, 0))],
+    ['write_buffer/frame', ...measurements.map((m) => f(m.writeBuffersPerFrame, 0))],
+    ['write_buffer KiB/frame', ...measurements.map((m) => f(m.writeBufferKiBPerFrame, 0))],
+    ['write_texture/frame', ...measurements.map((m) => f(m.writeTexturesPerFrame, 0))],
+    ['GPU objects live MiB', ...measurements.map((m) => f(m.gpuLiveMiB))],
+    ['texture cache MiB', ...measurements.map((m) => f(m.textureCacheMiB))],
+    ['wasm memory MiB', ...measurements.map((m) => f(m.wasmMiB, 0))],
+    ['JS heap MiB', ...measurements.map((m) => f(m.jsHeapMiB))],
+    // measureUserAgentSpecificMemory counts the shared wasm memory once per worker: show one realm.
+    ['largest JS realm MiB', ...measurements.map((m) => f(m.uaBreakdown?.[0]?.bytes / 2 ** 20, 0))],
+    ['all processes PSS MiB', ...measurements.map((m) => f(Object.values(m.processPssMiB).reduce((a, b) => a + b, 0), 0))],
+    ['renderer process PSS MiB', ...measurements.map((m) => f(m.processPssMiB.renderer, 0))],
+    ['GPU process PSS MiB', ...measurements.map((m) => f(m.processPssMiB['gpu-process'], 0))],
+    ['driver GPU MiB', ...measurements.map((m) => f(m.driverGpuMiB, 0))],
+  ];
+  const widths = table[0].map((_, c) => Math.max(...table.map((r) => String(r[c]).length)));
+  const text = table.map((r) => r.map((v, c) => String(v).padStart(widths[c])).join('  ')).join('\n');
+  note(`summary (${status}):\n${text}`);
+  writeFileSync(join(out, 'summary.json'), JSON.stringify({ status, steps: steps.map((s) => s.text), measurements }, null, 2));
+}
+
+/// Whether `step`'s conditions hold, looking at log lines from index `from` on.
+async function holds(step, from, since) {
+  for (const c of step.conditions) {
+    if (c.kind === 'log') {
+      if (!lines.slice(from).some((l) => c.re.test(l))) return false;
+    } else if (c.kind === 'after') {
+      if (elapsed() - since < c.seconds) return false;
+    } else {
+      let v;
+      if (c.kind === 'swaps') {
+        v = await swapCount();
+      } else {
+        const report = lines.slice(from).map((l) => PERF.exec(l)).filter(Boolean).at(-1);
+        if (!report) return false;
+        v = Number(c.kind === 'fps' ? report[1] : report[2]);
+      }
+      const ok = { '>=': v >= c.value, '<=': v <= c.value, '>': v > c.value, '<': v < c.value }[c.op];
+      if (!ok) return false;
+    }
+  }
+  return true;
+}
+
+let status = 'ok';
+if (steps.length === 0) {
+  await pumpFor(seconds);
+} else {
+  // A `tap ... every` of the step before, repeated until this step's condition holds.
+  let repeat = null;
+  run: for (const [i, step] of steps.entries()) {
+    const from = lines.length;
+    const since = elapsed();
+    note(`[${since.toFixed(1)} s] step ${i + 1}: waiting for ${step.text}`);
+    while (!(await holds(step, from, since))) {
+      if (elapsed() - since > stepTimeout || elapsed() > seconds) {
+        status = `step ${i + 1} (${step.text}) did not happen within ${elapsed() - since > stepTimeout ? `${stepTimeout} s` : `the run's ${seconds} s`}`;
+        break run;
+      }
+      if (repeat && elapsed() >= repeat.next) {
+        await tap(repeat.name, repeat.mask);
+        repeat.next = elapsed() + repeat.every;
+      }
+      await sleep(250);
+      await pump();
+    }
+    repeat = null;
+    note(`[${elapsed().toFixed(1)} s] step ${i + 1} reached`);
+    for (const a of step.actions) {
+      if (a.kind === 'tap') {
+        await tap(a.name, a.mask);
+        if (a.every > 0) repeat = { ...a, next: elapsed() + a.every };
+      } else if (a.kind === 'shot') {
+        await screenshot(a.name);
+      } else if (a.kind === 'measure') {
+        await measure(a.seconds, a.label);
+      } else if (a.kind === 'wait') {
+        await pumpFor(a.seconds);
+      } else if (a.kind === 'exit') {
+        break run;
+      }
+    }
+  }
+}
+if (status !== 'ok') note(`FAILED: ${status}`);
+if (steps.length > 0) {
+  await screenshot('final');
+  writeSummary(status);
+}
 await context.close();
 server.close();
+process.exit(status === 'ok' ? 0 : 1);
 
 /// Samples every worker's CPU for `seconds` and logs its top functions by self time.
 async function profileWorkers(seconds) {

@@ -49,6 +49,7 @@ mod error;
 mod ext;
 mod handle;
 mod instance;
+pub mod memory;
 mod pending;
 mod resource;
 mod surface;

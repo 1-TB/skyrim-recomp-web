@@ -121,6 +121,21 @@ pub extern "C" fn skyrt_set_pad_connected(user: u32, connected: u32) {
     if connected != 0 { k.input.connect(user as usize) } else { k.input.disconnect(user as usize) }
 }
 
+/// Frames the title has presented so far (for test scripts that wait for rendering to advance).
+/// A double: the count passes through JS as a number.
+#[cfg(target_os = "emscripten")]
+#[unsafe(no_mangle)]
+pub extern "C" fn skyrt_swap_count() -> f64 {
+    kernel_hle::Kernel::try_global().map_or(0.0, |k| k.gpu.swap_count() as f64)
+}
+
+/// Size of the wasm linear memory in bytes (the page's `HEAPU8` view can be stale after growth).
+#[cfg(target_os = "emscripten")]
+#[unsafe(no_mangle)]
+pub extern "C" fn skyrt_memory_bytes() -> f64 {
+    (core::arch::wasm32::memory_size(0) as f64) * 65536.0
+}
+
 #[cfg(not(target_os = "emscripten"))]
 fn main() {
     eprintln!("host-web targets wasm32-unknown-emscripten (cargo xtask build-web); use skyrim-native on this host");

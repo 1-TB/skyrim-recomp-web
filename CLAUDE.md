@@ -86,7 +86,14 @@ It listens on 127.0.0.1 only and is exposed to the owner's devices with `tailsca
 
 `PW_DIR=<scratchpad>/pw xvfb-run -a -s "-screen 0 1600x1200x24" node hosts/host-web/tools/browser-run.mjs
 --dist web-dist --game game --profile target/browser-profile --out DIR --seconds N [--args "..."]
-[--stream] [--audio] [--profile-at S:D] [--stacks-at S] [--reload-after S]`. Chrome here only has
+[--stream] [--audio] [--profile-at S:D] [--stacks-at S] [--reload-after S] [--saves DIR]
+[--step "COND => ACTIONS" ...]`. Steps wait for log lines / perf conditions / swap counts and
+then tap, screenshot, `measure S LABEL` or exit (grammar in the script's header); each run ends
+with a summary table (fps, renderer busy %, uploads/frame, live GPU bytes by label, texture cache,
+wasm memory, process PSS, driver GPU memory) also written to `OUT/summary.json`, and exits 1 if a
+step times out. Title signal: the first `XamContentCreateEnumerator` call; main menu:
+`XamContentCreateEnumerator: type 0x1, N item(s)`; Continue: `Savegame.dat` opens; in game:
+`draws>=1000`. Chrome here only has
 SwiftShader, so it checks correctness, not GPU performance (the owner measures on an NVIDIA desktop
 and an Android phone).
 

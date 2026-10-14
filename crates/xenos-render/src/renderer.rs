@@ -142,6 +142,7 @@ impl Renderer {
                         let calls = gpu_webgpu::counters::snapshot();
                         let frames = self.presenter.frames - self.calls_at.0;
                         log::info!("renderer: per frame: {}", calls_per_frame(&calls.since(&self.calls_at.1), frames));
+                        log::info!("renderer: {}", self.gpu_memory());
                         self.calls_at = (self.presenter.frames, calls);
                     }
                     on_swap(self, size);
@@ -167,6 +168,30 @@ impl Renderer {
         if let Some(seq) = done {
             handle.complete(seq);
         }
+    }
+}
+
+impl Renderer {
+    /// GPU memory held: buffers and textures not yet destroyed (largest groups by label), and
+    /// the texture cache's share.
+    pub(crate) fn gpu_memory(&self) -> String {
+        let groups = gpu_webgpu::memory::live_by_label();
+        let mib = |b: u64| b as f64 / (1u64 << 20) as f64;
+        let total: u64 = groups.iter().map(|g| g.bytes).sum();
+        let top: Vec<String> = groups
+            .iter()
+            .take(8)
+            .map(|g| format!("{} \"{}\" {:.1} MiB ({})", g.kind, g.label, mib(g.bytes), g.count))
+            .collect();
+        let cache = self.executor.texture_stats();
+        format!(
+            "GPU memory {:.1} MiB in {} objects; texture cache {:.1} MiB in {} textures; largest: {}",
+            mib(total),
+            groups.iter().map(|g| g.count).sum::<u64>(),
+            mib(cache.host_bytes),
+            cache.textures,
+            top.join(", ")
+        )
     }
 }
 

@@ -377,8 +377,19 @@ impl Device {
             viewFormats: desc.view_formats.as_ptr(),
             ..Default::default()
         };
-        Texture::from_created(unsafe { ffi::wgpuDeviceCreateTexture(self.raw(), &raw) }, "texture")
-            .expect("wgpuDeviceCreateTexture returned null")
+        let texture = Texture::from_created(unsafe { ffi::wgpuDeviceCreateTexture(self.raw(), &raw) }, "texture")
+            .expect("wgpuDeviceCreateTexture returned null");
+        let s = desc.size;
+        let bytes = crate::memory::texture_bytes(
+            desc.format,
+            s.width,
+            s.height,
+            s.depthOrArrayLayers,
+            desc.mip_level_count,
+            desc.sample_count,
+        );
+        crate::memory::track(texture.raw() as usize, "texture", desc.label, bytes);
+        texture
     }
 
     pub fn create_sampler(&self, desc: &SamplerDescriptor<'_>) -> Sampler {
@@ -691,6 +702,7 @@ impl Texture {
     }
 
     pub fn destroy(&self) {
+        crate::memory::untrack(self.raw() as usize);
         unsafe { ffi::wgpuTextureDestroy(self.raw()) };
     }
 }
