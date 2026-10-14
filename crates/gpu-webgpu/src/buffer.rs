@@ -33,6 +33,8 @@ enum Map {
 /// Map state is tracked here rather than queried: wgpu-native lacks `wgpuBufferGetMapState` and
 /// aborts (instead of returning null) on mapped-range calls outside a mapping.
 struct State {
+    /// For per-label upload counts.
+    label: Rc<str>,
     size: u64,
     usage: BufferUsage,
     map: Cell<Map>,
@@ -89,6 +91,7 @@ impl Device {
         assert!(!raw.is_null(), "wgpuDeviceCreateBuffer returned null");
         crate::memory::track(raw as usize, "buffer", desc.label, desc.size);
         let state = Rc::new(State {
+            label: desc.label.into(),
             size: desc.size,
             usage: desc.usage,
             map: Cell::new(Map::Unmapped),
@@ -128,6 +131,10 @@ impl Buffer {
 
     pub fn size(&self) -> u64 {
         self.state.size
+    }
+
+    pub fn label(&self) -> &str {
+        &self.state.label
     }
 
     pub fn usage(&self) -> BufferUsage {

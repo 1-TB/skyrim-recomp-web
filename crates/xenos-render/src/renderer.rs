@@ -265,10 +265,15 @@ pub(crate) fn calls_per_frame(c: &gpu_webgpu::counters::Counters, frames: u64) -
         .take(6)
         .map(|(kind, label, n)| format!("{kind} \"{label}\" {}", n / f))
         .collect();
+    let uploads: Vec<String> = gpu_webgpu::counters::take_written_by_label()
+        .into_iter()
+        .take(6)
+        .map(|(label, bytes)| format!("\"{label}\" {} KiB", bytes / f / 1024))
+        .collect();
     format!(
         "{} draws, {} set_pipeline, {} set_bind_group, {} render passes, {} compute passes ({} dispatches), \
          {} submits, {} write_buffer ({} KiB), {} write_texture, {} copies; created: {} buffers, {} textures, \
-         {} views, {} bind groups, {} samplers, {} pipelines (most: {})",
+         {} views, {} bind groups, {} samplers, {} pipelines (most: {}); uploads: {}",
         c.draws / f,
         c.set_pipelines / f,
         c.set_bind_groups / f,
@@ -287,5 +292,6 @@ pub(crate) fn calls_per_frame(c: &gpu_webgpu::counters::Counters, frames: u64) -
         c.samplers / f,
         c.pipelines / f,
         by_label.join(", "),
+        uploads.join(", "),
     )
 }

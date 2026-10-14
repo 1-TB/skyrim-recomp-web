@@ -465,6 +465,7 @@ impl Queue {
     pub fn write_buffer(&self, buffer: &Buffer, offset: u64, data: &[u8]) {
         crate::counters::add(&crate::counters::count::write_buffer_bytes, data.len() as u64);
         crate::counters::add(&crate::counters::count::write_buffers, 1);
+        crate::counters::written(buffer.label(), data.len() as u64);
         unsafe { ffi::wgpuQueueWriteBuffer(self.raw(), buffer.raw(), offset, data.as_ptr().cast(), data.len()) };
     }
 
