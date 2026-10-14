@@ -1,6 +1,7 @@
 // Fork of XenonRecomp's XenonUtils/ppc_context.h (commit ddd128b).
 // Pass this file as XenonRecomp's second argument; it is copied verbatim into the
-// generated ppc_context.h. Differences from upstream:
+// generated ppc_context.h. guest-sys builds against this file rather than that copy,
+// so changes that keep the macros' interface take effect without recompiling. Differences from upstream:
 //   * SKYRT_PPC_CONTEXT_FORK marks generated output built against this header.
 //   * A WebAssembly branch for PPCFPSCRRegister. Wasm has no dynamic rounding
 //     mode or flush-to-zero control, so the guest's requested mode is tracked in
@@ -83,10 +84,14 @@
 // ahead: 0xE0000000 + x is physical x + 0x1000). Wasm can't map one memory at
 // several addresses, so physical memory lives once, at 0xA0000000 + physical
 // address, and the other two views are folded onto it here. Must match
-// runtime-core's memory::fold_view.
+// runtime-core's memory::fold_view, which also builds the table: the views are
+// 16 MiB-aligned, so the fold is one offset per 16 MiB (a load and an add, cheaper
+// than comparing and selecting on every access).
+extern "C" const int32_t skyrt_ea_offset[256];
+
 static inline __attribute__((always_inline)) uint32_t skyrt_ea(uint32_t ea)
 {
-    return ea < 0xC0000000u ? ea : (ea & 0x1FFFFFFFu) + (ea < 0xE0000000u ? 0xA0000000u : 0xA0001000u);
+    return ea + (uint32_t)skyrt_ea_offset[ea >> 24];
 }
 
 #define PPC_EA(x) (base + skyrt_ea((uint32_t)(x)))

@@ -69,7 +69,8 @@ fn main() {
     if !simde.join("x86/avx.h").exists() {
         fail(format!("{} has no simde headers; clone XenonRecomp with --recursive", xenon_dir.display()));
     }
-    let lib_dir = build_cmake(&cpp_dir, &out_dir, &recomp_out, &simde, &shim);
+    let overlay = overlay_context_header(&recomp_out, &cpp_dir, &out_dir);
+    let lib_dir = build_cmake(&cpp_dir, &out_dir, &overlay, &simde, &shim);
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=skyrim_guest");
     if !env::var("TARGET").unwrap().contains("emscripten") {
@@ -106,6 +107,43 @@ fn check_generated(dir: &Path) {
              (runtime-core's PPCContext mirrors the all-in-context layout)"
         ));
     }
+}
+
+/// A copy of the recompiler output (symlinks) whose ppc_context.h is cpp/ppc_context.h.
+///
+/// XenonRecomp copies the header into its output when it runs, and the generated sources include
+/// it from there; building against the current file instead lets the header's helpers (memory
+/// access, view folding, dirty marking) change without recompiling the title, as long as the
+/// macros the generated code uses stay the same (`SKYRT_PPC_CONTEXT_FORK`, checked above).
+fn overlay_context_header(recomp_out: &Path, cpp_dir: &Path, out_dir: &Path) -> PathBuf {
+    // Files are only replaced when they change, so unchanged sources aren't rebuilt.
+    let overlay = out_dir.join("recomp-overlay");
+    fs::create_dir_all(&overlay).unwrap_or_else(|e| fail(format!("{}: {e}", overlay.display())));
+    let entries = fs::read_dir(recomp_out).unwrap_or_else(|e| fail(format!("{}: {e}", recomp_out.display())));
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|e| fail(format!("{}: {e}", recomp_out.display())));
+        let name = entry.file_name();
+        if name == "ppc_context.h" {
+            continue;
+        }
+        let target = recomp_out.join(&name).canonicalize().unwrap_or_else(|e| fail(format!("{name:?}: {e}")));
+        let link = overlay.join(&name);
+        if fs::read_link(&link).is_ok_and(|t| t == target) {
+            continue;
+        }
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link)
+            .unwrap_or_else(|e| fail(format!("linking {}: {e}", target.display())));
+    }
+    // XenonRecomp prepends these two lines to its copy.
+    let header = cpp_dir.join("ppc_context.h");
+    let text = fs::read_to_string(&header).unwrap_or_else(|e| fail(format!("{}: {e}", header.display())));
+    let text = format!("#pragma once\n#include \"ppc_config.h\"\n\n{text}");
+    let copy = overlay.join("ppc_context.h");
+    if fs::read_to_string(&copy).ok().as_deref() != Some(text.as_str()) {
+        fs::write(&copy, text).unwrap_or_else(|e| fail(format!("{}: {e}", copy.display())));
+    }
+    overlay
 }
 
 fn declared_symbols(dir: &Path) -> HashSet<String> {

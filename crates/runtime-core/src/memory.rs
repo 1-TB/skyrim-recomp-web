@@ -581,3 +581,32 @@ pub fn host_heap_guard() -> Result<(), MemoryError> {
 pub fn host_heap_guard() -> Result<(), MemoryError> {
     Ok(())
 }
+
+/// [`fold_view`] as a table for recompiled code: `skyrt_ea(ea)` in cpp/ppc_context.h is
+/// `ea + skyrt_ea_offset[ea >> 24]`. A load and an add per access measured ~25% fewer cycles in
+/// guest worker threads than the compare-and-select form (natively, at the main menu), and the
+/// views are 16 MiB-aligned, so one entry per 16 MiB covers them.
+#[unsafe(no_mangle)]
+pub static skyrt_ea_offset: [i32; 256] = {
+    let mut t = [0i32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let ea = (i as u32) << 24;
+        t[i] = fold_view(ea).wrapping_sub(ea) as i32;
+        i += 1;
+    }
+    t
+};
+
+#[cfg(test)]
+mod ea_table_tests {
+    use super::*;
+
+    #[test]
+    fn table_matches_fold_view() {
+        for ea in (0..=u32::MAX).step_by(0x1000).chain([0xBFFF_FFFF, 0xC000_0000, 0xDFFF_FFFF, 0xE000_0000, 0xFFFF_FFFF]) {
+            let folded = ea.wrapping_add(skyrt_ea_offset[(ea >> 24) as usize] as u32);
+            assert_eq!(folded, fold_view(ea), "{ea:#010X}");
+        }
+    }
+}
