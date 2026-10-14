@@ -119,6 +119,36 @@ async function sendLog() {
 // Often: a phone closing the tab for using too much memory loses whatever wasn't sent.
 setInterval(sendLog, 1000);
 addEventListener('pagehide', sendLog);
+
+// Crash breadcrumbs: iOS kills a page that uses too much memory without any event, and up to a
+// second of log is lost with it. The last lines go to localStorage four times a second; the
+// next page load sends them as "previous session ended: ..." (a clean unload is marked).
+const CRUMBS_KEY = 'skyrt-crumbs';
+try {
+  const previous = JSON.parse(localStorage.getItem(CRUMBS_KEY) ?? 'null');
+  localStorage.removeItem(CRUMBS_KEY);
+  if (previous?.lines?.length) {
+    // Not through log(): an old panic line must not raise this page's error banner.
+    const lines = [`previous session ended: ${previous.session}, ${previous.clean ? 'unloaded normally' : 'killed or crashed (no unload)'}, `
+      + `${(previous.up / 1000).toFixed(1)} s after page load, at ${new Date(previous.at).toISOString()}; its last lines:`]
+      .concat(previous.lines.map((l) => `  | ${l}`));
+    fullLog.push(...lines);
+    unsent.push(...lines);
+    logEl.textContent += lines.join('\n') + '\n';
+  }
+} catch {}
+function saveCrumbs(clean = false) {
+  if (!running) return;
+  try {
+    const wasm = window.Module?.HEAPU8?.buffer.byteLength;
+    const heap = performance.memory?.usedJSHeapSize;
+    const lines = fullLog.slice(-40);
+    lines.push(`(crumb: wasm ${wasm ? (wasm / 2 ** 20).toFixed(0) : '?'} MiB${heap ? `, JS heap ${(heap / 2 ** 20).toFixed(0)} MiB` : ''})`);
+    localStorage.setItem(CRUMBS_KEY, JSON.stringify({ session: logSession, at: Date.now(), up: performance.now(), clean, lines }));
+  } catch {}
+}
+setInterval(saveCrumbs, 250);
+addEventListener('pagehide', () => saveCrumbs(true));
 // Uncaught errors (e.g. host-web.js failing to create its memory) would otherwise leave no trace.
 addEventListener('error', (e) => {
   log(`Error: ${e.message} (${e.filename}:${e.lineno})`);
