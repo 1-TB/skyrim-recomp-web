@@ -700,6 +700,32 @@ fn invalidated_textures_reload_in_place_from_gpu_memory() {
 }
 
 #[test]
+fn eviction_by_time_at_low_frame_rates() {
+    let gpu = gpu(true);
+    let mut mem = vec![0u8; MEMORY_SIZE];
+    let a = texture_2d(GuestFormat::k_8_8_8_8, 32, 32, 0x10000, true);
+    write_level(&mut mem, &a, 0, |x, y, _| rgba_pattern(x, y, 0).to_vec());
+    let fc = constants(&[(0, &a)]);
+    // Frame counts alone would keep it for 1000 frames.
+    let config = CacheConfig {
+        max_unused_frames: 1000,
+        max_unused_time: std::time::Duration::from_millis(50),
+        ..Default::default()
+    };
+    let mut cache = TextureCache::with_config(&gpu.device, host_caps(&gpu.device), config);
+    cache.bind(&gpu.device, &mem, &fc, &binding(0, TextureBindingDimension::D2));
+    cache.end_frame();
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    // Unused for one frame only: kept however long that took.
+    cache.end_frame();
+    assert_eq!(cache.stats().textures, 1);
+    // Unused for two frames, the first of which ended long enough ago: dropped.
+    cache.end_frame();
+    assert_eq!(cache.stats().textures, 0);
+    assert_no_errors(&gpu);
+}
+
+#[test]
 fn eviction_by_age_and_budget() {
     let gpu = gpu(true);
     let mut mem = vec![0u8; MEMORY_SIZE];

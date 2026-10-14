@@ -40,8 +40,8 @@ pub use shared_memory::{MirrorStats, default_mirror_limit, set_mirror_limit};
 pub(crate) static HANDHELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Phone and tablet browsers close tabs long before desktop ones: renderers started afterwards
-/// keep less in GPU memory (a 64 MiB guest memory mirror unless set explicitly, and textures
-/// dropped after 4 seconds unused instead of 10).
+/// keep less in GPU memory (a 64 MiB guest memory mirror unless set explicitly; textures within
+/// 56 MiB plus 16 MiB kept for reuse, dropped after 4 seconds unused instead of 10).
 pub fn handheld_budgets() {
     HANDHELD.store(true, std::sync::atomic::Ordering::Relaxed);
     default_mirror_limit(64);

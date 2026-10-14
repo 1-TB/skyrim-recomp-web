@@ -45,12 +45,16 @@ struct HostRt {
     height: u32,
     /// Frame ends since it was last bound or cleared, while owning no EDRAM tile.
     idle_frames: u32,
+    /// When it became idle.
+    idle_since: Option<std::time::Instant>,
 }
 
 /// Frames a host render target may go unused while owning no EDRAM tile before
 /// [`EdramCache::end_frame`] destroys it. Most targets are used every frame but lose their tiles
 /// to later passes before it ends, so ownership alone would recreate them over and over.
 const RT_MAX_IDLE_FRAMES: u32 = 60;
+/// ... or this long (and two frames): a phone loading a world runs at ~1 fps.
+const RT_MAX_IDLE_TIME: std::time::Duration = std::time::Duration::from_secs(4);
 
 /// Render target heights are multiples of this many tile rows (see [`EdramCache::ensure_rt`]).
 const RT_HEIGHT_GRANULARITY_TILES: u32 = 8;
@@ -621,17 +625,17 @@ impl EdramCache {
 
     /// Destroys host render targets that no longer own any EDRAM tile.
     pub fn trim(&mut self) {
-        self.trim_unowned(0);
+        self.trim_unowned(0, std::time::Duration::ZERO);
     }
 
     /// Frame boundary, with everything recorded submitted: destroys host render targets that
-    /// own no EDRAM tile and were not used for [`RT_MAX_IDLE_FRAMES`] frames (their contents
-    /// are unreachable; a later use starts a new one).
+    /// own no EDRAM tile and were not used for [`RT_MAX_IDLE_FRAMES`] frames or
+    /// [`RT_MAX_IDLE_TIME`] (their contents are unreachable; a later use starts a new one).
     pub fn end_frame(&mut self) {
-        self.trim_unowned(RT_MAX_IDLE_FRAMES);
+        self.trim_unowned(RT_MAX_IDLE_FRAMES, RT_MAX_IDLE_TIME);
     }
 
-    fn trim_unowned(&mut self, max_idle_frames: u32) {
+    fn trim_unowned(&mut self, max_idle_frames: u32, max_idle_time: std::time::Duration) {
         for texture in self.outgrown.drain(..) {
             texture.destroy();
         }
@@ -642,10 +646,12 @@ impl EdramCache {
         self.rts.retain(|key, rt| {
             if ranges.iter().any(|r| r.owner == *key) {
                 rt.idle_frames = 0;
+                rt.idle_since = None;
                 return true;
             }
             rt.idle_frames += 1;
-            let keep = rt.idle_frames <= max_idle_frames;
+            let since = *rt.idle_since.get_or_insert_with(std::time::Instant::now);
+            let keep = rt.idle_frames <= max_idle_frames && (rt.idle_frames < 2 || since.elapsed() <= max_idle_time);
             if !keep {
                 rt.texture.destroy();
             }
@@ -692,6 +698,7 @@ impl EdramCache {
         let height = self.grown_height(&key, min_height);
         if let Some(rt) = self.rts.get_mut(&key) {
             rt.idle_frames = 0;
+            rt.idle_since = None;
             if rt.height >= height {
                 return Ok(());
             }
@@ -720,7 +727,19 @@ impl EdramCache {
         } else {
             (attachment.clone(), None)
         };
-        let rt = HostRt { key, texture, attachment, read, stencil, format, samples, width, height, idle_frames: 0 };
+        let rt = HostRt {
+            key,
+            texture,
+            attachment,
+            read,
+            stencil,
+            format,
+            samples,
+            width,
+            height,
+            idle_frames: 0,
+            idle_since: None,
+        };
         match self.rts.insert(key, rt) {
             None => log::debug!("edram: new {width}x{height}x{samples} {format:?} render target for {key:?}"),
             Some(old) => {

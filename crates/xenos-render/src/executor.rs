@@ -616,8 +616,16 @@ impl Executor {
                     gpu_conversion: !crate::debug::CPU_TEXTURES.load(std::sync::atomic::Ordering::Relaxed),
                     ..Default::default()
                 };
+                // Phones: a hard texture budget (least recently used ones go first) and short
+                // lifetimes, in time as well as frames (a phone loads a world at ~1 fps).
                 let config = if crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed) {
-                    xenos_texture_cache::CacheConfig { max_unused_frames: 120, ..config }
+                    xenos_texture_cache::CacheConfig {
+                        max_unused_frames: 120,
+                        max_unused_time: std::time::Duration::from_secs(4),
+                        max_host_bytes: 56 << 20,
+                        pool_max_bytes: 16 << 20,
+                        ..config
+                    }
                 } else {
                     config
                 };

@@ -29,7 +29,8 @@ mod hash;
 
 pub use gpu_load::GpuSource;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use rustc_hash::FxHashMap;
 
@@ -87,9 +88,15 @@ pub const NATIVE_TEXTURE_FORMAT_16BIT_NORM: FeatureName = FeatureName(0x0003_000
 pub struct CacheConfig {
     /// Textures not bound for more than this many frames are dropped at [`TextureCache::end_frame`].
     pub max_unused_frames: u64,
+    /// ... or for this long (and two frames): at the frame rate of a phone loading a world (~1
+    /// fps), frame counts alone keep textures for minutes.
+    pub max_unused_time: Duration,
     /// Soft budget for uploaded texture data; least recently used textures not bound in the
     /// last frame are dropped while it is exceeded.
     pub max_host_bytes: u64,
+    /// Budget of the dropped textures kept for reuse (`TexturePool`), and how long they wait.
+    pub pool_max_bytes: u64,
+    pub pool_max_time: Duration,
     /// Load fetch constants of type `InvalidTexture` too (Xenia's
     /// `gpu_allow_invalid_fetch_constants`); otherwise they bind the fallback.
     pub allow_invalid_fetch_constants: bool,
@@ -104,7 +111,10 @@ impl Default for CacheConfig {
     fn default() -> Self {
         CacheConfig {
             max_unused_frames: 300,
+            max_unused_time: Duration::from_secs(10),
             max_host_bytes: 512 << 20,
+            pool_max_bytes: 256 << 20,
+            pool_max_time: Duration::from_secs(2),
             allow_invalid_fetch_constants: false,
             gpu_conversion: true,
             reuse_textures: true,
@@ -321,9 +331,8 @@ struct Pooled {
     bytes: u64,
 }
 
-/// Textures kept for reuse at most per key, and in all.
+/// Textures kept for reuse at most per key.
 const POOL_PER_KEY: usize = 4;
-const POOL_MAX_BYTES: u64 = 256 << 20;
 /// Frames a pooled texture waits for reuse before it's destroyed. Reloads of resolved render
 /// targets take theirs back within a frame or two; without a limit the pool keeps the textures
 /// of every shape seen once (~130 MiB of GPU memory in Skyrim's Helgen) until it's full.
@@ -342,9 +351,9 @@ struct TexturePool {
 
 impl TexturePool {
     /// Keeps `p` (dropped in `frame`) if there's room; otherwise destroys it.
-    fn give(&mut self, p: Pooled, frame: u64) {
+    fn give(&mut self, p: Pooled, frame: u64, max_bytes: u64) {
         let list = self.free.entry(p.key).or_default();
-        if list.len() >= POOL_PER_KEY || self.bytes + p.bytes > POOL_MAX_BYTES {
+        if list.len() >= POOL_PER_KEY || self.bytes + p.bytes > max_bytes {
             p.texture.destroy();
             return;
         }
@@ -358,12 +367,12 @@ impl TexturePool {
         Some(p)
     }
 
-    /// Destroys the textures pooled before `oldest`.
-    fn expire(&mut self, oldest: u64) {
+    /// Destroys the textures pooled in frames `expired` says are too long ago.
+    fn expire(&mut self, expired: impl Fn(u64) -> bool) {
         let bytes = &mut self.bytes;
         self.free.retain(|_, list| {
             list.retain(|(p, frame)| {
-                let keep = *frame >= oldest;
+                let keep = !expired(*frame);
                 if !keep {
                     p.texture.destroy();
                     *bytes -= p.bytes;
@@ -372,6 +381,31 @@ impl TexturePool {
             });
             !list.is_empty()
         });
+    }
+}
+
+/// When recent frames ended, to turn frame numbers into ages.
+#[derive(Default)]
+struct FrameClock {
+    /// (frame, when it ended), oldest first.
+    ends: VecDeque<(u64, Instant)>,
+}
+
+impl FrameClock {
+    /// Frames remembered (older ones count as ended when the oldest remembered one did).
+    const REMEMBERED: usize = 4096;
+
+    fn ended(&mut self, frame: u64) {
+        if self.ends.len() == Self::REMEMBERED {
+            self.ends.pop_front();
+        }
+        self.ends.push_back((frame, Instant::now()));
+    }
+
+    /// How long ago frame `frame` ended (zero if it hasn't).
+    fn age(&self, frame: u64) -> Duration {
+        let i = self.ends.partition_point(|&(f, _)| f < frame);
+        self.ends.get(i).map_or(Duration::ZERO, |&(_, at)| at.elapsed())
     }
 }
 
@@ -467,6 +501,7 @@ pub struct TextureCache {
     /// The stale texture offered to the load in progress (taken by `new_texture`).
     reload_into: Option<Pooled>,
     pool: TexturePool,
+    clock: FrameClock,
     warned: HashSet<([u32; 6], u8)>,
     scratch: Vec<u8>,
     stats: CacheStats,
@@ -513,6 +548,7 @@ impl TextureCache {
             stale: FxHashMap::default(),
             reload_into: None,
             pool: TexturePool::default(),
+            clock: FrameClock::default(),
             warned: HashSet::new(),
             scratch: Vec::new(),
             stats: CacheStats::default(),
@@ -651,11 +687,14 @@ impl TextureCache {
         self.retired.extend(self.stale.drain().map(|(_, p)| p));
         let ended = self.frame;
         self.frame += 1;
-        let max_unused = self.config.max_unused_frames;
+        self.clock.ended(ended);
+        let config = self.config;
         let before = self.textures.len();
-        let retired = &mut self.retired;
+        let (retired, clock) = (&mut self.retired, &self.clock);
         self.textures.retain(|_, e| {
-            let keep = ended - e.last_used <= max_unused;
+            let unused = ended - e.last_used;
+            let keep =
+                unused <= config.max_unused_frames && (unused < 2 || clock.age(e.last_used) <= config.max_unused_time);
             if !keep {
                 retired.push(e.pooled());
             }
@@ -698,13 +737,15 @@ impl TextureCache {
     pub fn destroy_retired(&mut self) {
         for p in self.retiring.drain(..) {
             if self.config.reuse_textures {
-                self.pool.give(p, self.frame);
+                self.pool.give(p, self.frame, self.config.pool_max_bytes);
             } else {
                 p.texture.destroy();
             }
         }
         std::mem::swap(&mut self.retiring, &mut self.retired);
-        self.pool.expire(self.frame.saturating_sub(POOL_MAX_FRAMES));
+        let (clock, oldest, max_time) =
+            (&self.clock, self.frame.saturating_sub(POOL_MAX_FRAMES), self.config.pool_max_time);
+        self.pool.expire(|frame| frame < oldest || clock.age(frame) > max_time);
     }
 
     /// Drops every texture and sampler (e.g. after the device was lost and recreated, together
