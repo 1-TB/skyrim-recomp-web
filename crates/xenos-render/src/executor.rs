@@ -151,6 +151,22 @@ struct PipelineKey {
     alpha_to_coverage: bool,
 }
 
+/// Time spent in renderer operations that are rare per frame but may be slow on some devices
+/// (phones loading a world), for the perf log.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OpTimes {
+    /// Creating pipelines (natively synchronous; on the web the call that starts it).
+    pub pipelines: std::time::Duration,
+    /// Translating shaders and creating their modules.
+    pub shaders: std::time::Duration,
+    /// Binding textures for a new combination of fetch constants (where textures are loaded).
+    pub texture_sets: std::time::Duration,
+    /// Recording resolves.
+    pub resolves: std::time::Duration,
+    /// Submitting batches (with their uploads).
+    pub submits: std::time::Duration,
+}
+
 /// Pipelines are checked for validation errors before use: wgpu-native aborts the process when a
 /// submission contains an invalid one.
 enum PipelineEntry {
@@ -366,8 +382,8 @@ pub struct Executor {
     queued: Vec<CommandBuffer>,
     /// Guest memory ranges a draw reads (kept to reuse the allocation).
     vertex_ranges: Vec<(u32, u32)>,
-    /// Time spent creating pipelines synchronously (native).
-    pipeline_time: std::time::Duration,
+    /// Time spent in operations that may be slow on some devices (see [`OpTimes`]).
+    times: OpTimes,
     pass: Option<Pass>,
     constant_cache: ConstantCache,
     resolving: bool,
@@ -634,7 +650,7 @@ impl Executor {
             targets,
             encoder: None,
             queued: Vec::new(),
-            pipeline_time: std::time::Duration::ZERO,
+            times: OpTimes::default(),
             vertex_ranges: Vec::new(),
             pass: None,
             constant_cache: ConstantCache::default(),
@@ -699,7 +715,12 @@ impl Executor {
     /// Time spent translating shaders, creating their modules and (natively, where it's
     /// synchronous) creating pipelines so far.
     pub fn shader_times(&self) -> [std::time::Duration; 3] {
-        [self.shaders.translate_time, self.shaders.module_time, self.pipeline_time]
+        [self.shaders.translate_time, self.shaders.module_time, self.times.pipelines]
+    }
+
+    /// Time spent so far in the operations [`OpTimes`] tracks.
+    pub fn times(&self) -> OpTimes {
+        OpTimes { shaders: self.shaders.translate_time + self.shaders.module_time, ..self.times }
     }
 
     pub fn mirror_stats(&self) -> crate::shared_memory::MirrorStats {
@@ -769,6 +790,12 @@ impl Executor {
 
     /// Encodes and submits everything recorded.
     pub fn flush(&mut self) {
+        let started = std::time::Instant::now();
+        self.submit_batch();
+        self.times.submits += started.elapsed();
+    }
+
+    fn submit_batch(&mut self) {
         self.encode_pass();
         self.stats.constant_upload_bytes += self.constants.upload(&self.device);
         self.stats.index_upload_bytes += self.indices.upload(&self.device);
@@ -961,6 +988,12 @@ impl Executor {
     }
 
     fn resolve(&mut self) {
+        let started = std::time::Instant::now();
+        self.record_resolve();
+        self.times.resolves += started.elapsed();
+    }
+
+    fn record_resolve(&mut self) {
         // Stored into the GPU copy of guest memory, a resolve is recorded into the batch after
         // the rendering before it; read back, it needs that rendering submitted.
         let gpu_store = !crate::debug::CPU_RESOLVES.load(std::sync::atomic::Ordering::Relaxed);
@@ -1620,6 +1653,7 @@ impl Executor {
         {
             return set.clone();
         }
+        let started = std::time::Instant::now();
         let fetch: [u32; 192] = *fetch;
         let texture_memory = TextureMemory(self.memory.clone());
         let mut layout_key = Vec::new();
@@ -1658,6 +1692,7 @@ impl Executor {
         if self.texture_sets.len() >= MAX_TEXTURE_SETS {
             self.texture_sets.clear();
         }
+        self.times.texture_sets += started.elapsed();
         self.texture_sets.insert(hash, set.clone());
         set
     }
@@ -1899,13 +1934,18 @@ impl Executor {
                 Ok(Some(e)) => Err(gpu_webgpu::Error::Invalid(e.to_string())),
                 Err(e) => Err(e),
             };
-            self.pipeline_time += started.elapsed();
+            self.times.pipelines += started.elapsed();
             result
         };
         // On the web: compiled in the background (a synchronous pipeline would be compiled on
         // first use, stalling the GPU process); validation errors come back as a failed result.
         #[cfg(target_os = "emscripten")]
-        let pending = self.device.create_render_pipeline_async(&desc);
+        let pending = {
+            let started = std::time::Instant::now();
+            let pending = self.device.create_render_pipeline_async(&desc);
+            self.times.pipelines += started.elapsed();
+            pending
+        };
         #[cfg(target_os = "emscripten")]
         let result = match pending.try_take() {
             Some(r) => r,

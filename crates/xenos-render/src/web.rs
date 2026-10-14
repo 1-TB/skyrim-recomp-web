@@ -162,6 +162,7 @@ struct Perf {
     frames: u64,
     draws: u64,
     calls: gpu_webgpu::counters::Counters,
+    times: crate::executor::OpTimes,
 }
 
 const PERF_WINDOW_MS: f64 = 5000.0;
@@ -191,6 +192,17 @@ impl Running {
                 "perf: per frame: {}",
                 crate::renderer::calls_per_frame(&gpu_webgpu::counters::snapshot().since(&p.calls), n)
             );
+            let times = self.renderer.executor.times();
+            let ms = |now: std::time::Duration, then: std::time::Duration| (now - then).as_secs_f64() * 1000.0;
+            log::info!(
+                "perf: renderer time: {:.0} ms binding new texture sets, {:.0} ms creating pipelines, {:.0} ms on \
+                 shaders, {:.0} ms recording resolves, {:.0} ms submitting",
+                ms(times.texture_sets, p.times.texture_sets),
+                ms(times.pipelines, p.times.pipelines),
+                ms(times.shaders, p.times.shaders),
+                ms(times.resolves, p.times.resolves),
+                ms(times.submits, p.times.submits),
+            );
             log::info!("perf: {}", self.renderer.gpu_memory());
             log::info!("perf: {}", crate::renderer::pacing(&mut self.presents, &mut self.renderer.swap_timings));
         }
@@ -201,6 +213,7 @@ impl Running {
                 frames,
                 draws,
                 calls: gpu_webgpu::counters::snapshot(),
+                times: self.renderer.executor.times(),
                 ..Perf::default()
             };
         }
