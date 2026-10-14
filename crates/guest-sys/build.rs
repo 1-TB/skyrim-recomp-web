@@ -92,23 +92,39 @@ fn title_overrides(title: Option<(u32, u32)>, declared: &HashSet<String>) -> Str
     // until the command processor writes the read pointer back (or 1 ms passes).
     const SKYRIM_RING_WAIT: &str = "sub_82C8B818";
     let skyrim = title == Some((0x4253_07E6, 0x0000_0A02));
-    // zlib's deflateInit_ (level in r4; -1 = default, 6). The title compresses buffers with it
-    // while playing (one call took 330 ms natively, ~550 ms in the browser, and the frame
-    // waits for it: a visible hitch). Level 1 (deflate_fast) produces a valid stream for the
-    // title's own inflate several times faster.
-    const SKYRIM_DEFLATE_INIT: &str = "sub_82CA7930";
-    if skyrim && declared.contains(SKYRIM_DEFLATE_INIT) {
-        writeln!(
-            cpp,
+    // zlib's deflate in the title: deflateInit2_, deflate, deflateEnd. The title compresses
+    // buffers with it while playing (one call took ~330 ms natively, ~560 ms in the browser,
+    // and the frame waits for it); kernel-hle's zlib module does it on the host. Each override
+    // falls back to the recompiled function for streams the host doesn't handle.
+    const SKYRIM_ZLIB: [(&str, &str); 3] = [
+        ("sub_82CA7688", "skyrt_deflate_init(ctx.r3.u32, ctx.r4.s32, ctx.r5.s32, ctx.r6.s32, ctx.r8.s32)"),
+        ("sub_82CA5798", "skyrt_deflate(ctx.r3.u32, ctx.r4.s32)"),
+        ("sub_82CA6360", "skyrt_deflate_end(ctx.r3.u32)"),
+    ];
+    if skyrim && SKYRIM_ZLIB.iter().all(|(f, _)| declared.contains(*f)) {
+        cpp.push_str(
             r#"
+extern "C" int32_t skyrt_deflate_init(uint32_t strm, int32_t level, int32_t method, int32_t window_bits, int32_t strategy);
+extern "C" int32_t skyrt_deflate(uint32_t strm, int32_t flush);
+extern "C" int32_t skyrt_deflate_end(uint32_t strm);
+"#,
+        );
+        for (f, host) in SKYRIM_ZLIB {
+            writeln!(
+                cpp,
+                r#"
 extern "C" PPC_FUNC(__imp__{f});
 PPC_FUNC({f}) {{
-    if (ctx.r4.s32 != 0) ctx.r4.s64 = 1;
-    __imp__{f}(ctx, base);
-}}"#,
-            f = SKYRIM_DEFLATE_INIT
-        )
-        .unwrap();
+    int32_t r = {host};
+    if (r == INT32_MIN) {{
+        __imp__{f}(ctx, base);
+        return;
+    }}
+    ctx.r3.s64 = r;
+}}"#
+            )
+            .unwrap();
+        }
     }
     if skyrim && declared.contains(SKYRIM_RING_WAIT) {
         writeln!(

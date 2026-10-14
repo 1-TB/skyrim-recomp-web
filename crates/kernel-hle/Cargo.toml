@@ -13,3 +13,4 @@ runtime-core.workspace = true
 vfs.workspace = true
 xex.workspace = true
 lzxd = "0.2.7"
+miniz_oxide = "0.9"

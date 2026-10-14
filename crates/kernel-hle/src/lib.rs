@@ -25,6 +25,7 @@ pub mod xam;
 pub mod xboxkrnl;
 pub mod xconfig;
 pub mod xma;
+pub mod zlib;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
