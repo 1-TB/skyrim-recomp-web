@@ -371,7 +371,8 @@ fn src_load(kind: SrcKind) -> String {
     )
 }
 
-/// Ownership transfer: entry points `vs`, `fs_color`, `fs_depth`, `fs_stencil`.
+/// Ownership transfer: entry points `vs`, `fs_color`, and `fs_depth_scratch` (depth, plus the
+/// stencil byte | 0x100 in a `u32` color output for [`stencil_bits_module`]).
 pub(crate) fn transfer_module(src: SrcKind, dest_multisampled: bool, scale: u32) -> String {
     let (sample_param, sample) =
         if dest_multisampled { (", @builtin(sample_index) si: u32", "si") } else { ("", "0u") };
@@ -406,9 +407,6 @@ struct TransferParams {
 }
 
 @group(0) @binding(0) var<uniform> p: TransferParams;
-
-// Stencil can't be exported, so it is written bit by bit by passes with one write-mask bit each.
-override STENCIL_BIT: u32 = 0u;
 
 fn src_dword(a: u32) -> u32 {
     let loc = edram_locate(a, p.src_base, p.src_pitch, p.src_msaa, (p.src_flags & 1u) != 0u, (p.src_flags & 2u) != 0u);
@@ -448,20 +446,45 @@ fn fs_color(@builtin(position) pos: vec4<f32>SAMPLE_PARAM) -> @location(0) vec4<
     return unpack_color(v.x, v.y, p.dst_format);
 }
 
-@fragment
-fn fs_depth(@builtin(position) pos: vec4<f32>SAMPLE_PARAM) -> @builtin(frag_depth) f32 {
-    let v = fetch(pos, SAMPLE_INDEX);
-    return unpack_depth(v.x, p.dst_format);
+struct DepthScratch {
+    @builtin(frag_depth) depth: f32,
+    @location(0) stencil: u32,
 }
 
 @fragment
-fn fs_stencil(@builtin(position) pos: vec4<f32>SAMPLE_PARAM) {
+fn fs_depth_scratch(@builtin(position) pos: vec4<f32>SAMPLE_PARAM) -> DepthScratch {
     let v = fetch(pos, SAMPLE_INDEX);
-    if (((v.x >> STENCIL_BIT) & 1u) == 0u) {
-        discard;
-    }
+    return DepthScratch(unpack_depth(v.x, p.dst_format), (v.x & 0xFFu) | 0x100u);
 }
 "#;
+
+/// Writes one stencil bit (override `STENCIL_BIT`) from the scratch texture `fs_depth_scratch`
+/// filled: fragments it didn't write (0) or whose bit is clear are discarded. Entries `vs`, `fs`.
+/// Stencil can't be exported from shaders, and these passes only load one texel each instead of
+/// fetching the source through the EDRAM layout eight more times.
+pub(crate) fn stencil_bits_module(multisampled: bool) -> String {
+    let (ty, param, sample) = if multisampled {
+        ("texture_multisampled_2d<u32>", ", @builtin(sample_index) si: u32", "i32(si)")
+    } else {
+        ("texture_2d<u32>", "", "0")
+    };
+    format!(
+        "@group(0) @binding(0) var scratch: {ty};\n\
+         override STENCIL_BIT: u32 = 0u;\n\
+         @vertex\n\
+         fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n    \
+             let uv = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));\n    \
+             return vec4<f32>(uv * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0), 0.0, 1.0);\n\
+         }}\n\
+         @fragment\n\
+         fn fs(@builtin(position) pos: vec4<f32>{param}) {{\n    \
+             let v = textureLoad(scratch, vec2<i32>(pos.xy), {sample}).r;\n    \
+             if ((v & 0x100u) == 0u || ((v >> STENCIL_BIT) & 1u) == 0u) {{\n        \
+                 discard;\n    \
+             }}\n\
+         }}\n"
+    )
+}
 
 /// Host render target -> EDRAM-layout storage buffer, one invocation per dword. Entry `main`.
 pub(crate) fn dump_module(src: SrcKind, scale: u32) -> String {

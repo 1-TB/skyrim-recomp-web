@@ -165,8 +165,18 @@ impl PendingResolve {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum TransferOutput {
     Color,
-    Depth,
-    StencilBit(u32),
+    /// Depth, with the stencil byte written to a scratch color target for [`Pipelines::stencil_bit`].
+    DepthScratch,
+}
+
+/// Format of the scratch target holding transferred stencil bytes (bit 8 marks texels written).
+const STENCIL_SCRATCH_FORMAT: TextureFormat = TextureFormat::R16Uint;
+
+/// A scratch color target the size of a depth render target, for its stencil transfers.
+struct StencilScratch {
+    texture: Texture,
+    view: TextureView,
+    idle_frames: u32,
 }
 
 #[derive(Default)]
@@ -181,6 +191,9 @@ struct Pipelines {
     clears: HashMap<(TextureFormat, u32, bool), RenderPipeline>,
     resolve: Option<(BindGroupLayout, ComputePipeline)>,
     store: [Option<(BindGroupLayout, ComputePipeline)>; 2],
+    /// By multisampling: the stencil bit layout, pipeline layout and module.
+    stencil_bit_modules: [Option<(BindGroupLayout, PipelineLayout, ShaderModule)>; 2],
+    stencil_bits: HashMap<(TextureFormat, u32, u32), RenderPipeline>,
 }
 
 fn uniform_entry(visibility: ShaderStage) -> BindGroupLayoutEntry {
@@ -263,16 +276,13 @@ impl Pipelines {
             })
             .clone();
         let color_targets = [ColorTargetState::new(format)];
+        let scratch_targets = [ColorTargetState::new(STENCIL_SCRATCH_FORMAT)];
         let (entry, targets, depth_stencil): (&str, &[ColorTargetState], _) = match output {
             TransferOutput::Color => ("fs_color", &color_targets, None),
-            TransferOutput::Depth => ("fs_depth", &[], Some(depth_state(format, true, 0xFF))),
-            TransferOutput::StencilBit(bit) => ("fs_stencil", &[], Some(depth_state(format, false, 1 << bit))),
+            TransferOutput::DepthScratch => {
+                ("fs_depth_scratch", &scratch_targets, Some(depth_state(format, true, 0xFF)))
+            }
         };
-        let bit = match output {
-            TransferOutput::StencilBit(bit) => bit,
-            _ => 0,
-        };
-        let constants = [("STENCIL_BIT", bit as f64)];
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: "edram transfer",
             layout: Some(&layout),
@@ -281,16 +291,60 @@ impl Pipelines {
             primitive: PrimitiveState::default(),
             depth_stencil,
             multisample: MultisampleState { count: samples, ..Default::default() },
-            fragment: Some(FragmentState {
-                stage: ProgrammableStage {
-                    module: &module,
-                    entry_point: entry,
-                    constants: if entry == "fs_stencil" { &constants } else { &[] },
-                },
-                targets,
-            }),
+            fragment: Some(FragmentState { stage: ProgrammableStage::new(&module, entry), targets }),
         });
         self.transfers.insert((kind, format, samples, output), pipeline.clone());
+        pipeline
+    }
+
+    /// Bind group layout of the stencil bit passes reading a scratch target with `samples`.
+    fn stencil_bit_layout(
+        &mut self,
+        device: &Device,
+        samples: u32,
+    ) -> &(BindGroupLayout, PipelineLayout, ShaderModule) {
+        let multisampled = samples > 1;
+        self.stencil_bit_modules[multisampled as usize].get_or_insert_with(|| {
+            let bgl = device.create_bind_group_layout(
+                "edram stencil bits",
+                &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStage::Fragment,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Uint,
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled,
+                    },
+                }],
+            );
+            let pl = device.create_pipeline_layout("edram stencil bits", &[&bgl]);
+            let module =
+                device.create_shader_module_wgsl("edram stencil bits", &shaders::stencil_bits_module(multisampled));
+            (bgl, pl, module)
+        })
+    }
+
+    /// Writes stencil bit `bit` of a `format` target with `samples` from the stencil scratch.
+    fn stencil_bit(&mut self, device: &Device, format: TextureFormat, samples: u32, bit: u32) -> RenderPipeline {
+        if let Some(p) = self.stencil_bits.get(&(format, samples, bit)) {
+            return p.clone();
+        }
+        let (_, layout, module) = self.stencil_bit_layout(device, samples).clone();
+        let constants = [("STENCIL_BIT", bit as f64)];
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "edram stencil bit",
+            layout: Some(&layout),
+            vertex: ProgrammableStage::new(&module, "vs"),
+            vertex_buffers: &[],
+            primitive: PrimitiveState::default(),
+            depth_stencil: Some(depth_state(format, false, 1 << bit)),
+            multisample: MultisampleState { count: samples, ..Default::default() },
+            fragment: Some(FragmentState {
+                stage: ProgrammableStage { module: &module, entry_point: "fs", constants: &constants },
+                targets: &[],
+            }),
+        });
+        self.stencil_bits.insert((format, samples, bit), pipeline.clone());
         pipeline
     }
 
@@ -528,6 +582,8 @@ pub struct EdramCache {
     shadow: Buffer,
     resolve_out: Option<Buffer>,
     readback_pool: Vec<Buffer>,
+    /// Stencil transfer scratch targets by (width, height, samples).
+    stencil_scratch: HashMap<(u32, u32, u32), StencilScratch>,
     pipelines: Pipelines,
     params: RefCell<ParamsArena>,
     groups: RefCell<GroupCache>,
@@ -604,6 +660,7 @@ impl EdramCache {
             shadow,
             resolve_out: None,
             readback_pool: Vec::new(),
+            stencil_scratch: HashMap::new(),
             pipelines: Pipelines { scale, ..Default::default() },
             params: RefCell::new(ParamsArena {
                 buffer: device.create_buffer(&BufferDescriptor {
@@ -665,6 +722,14 @@ impl EdramCache {
         for buffer in self.retired_buffers.drain(..) {
             buffer.destroy();
         }
+        self.stencil_scratch.retain(|_, s| {
+            s.idle_frames += 1;
+            let keep = s.idle_frames <= max_idle_frames;
+            if !keep {
+                s.texture.destroy();
+            }
+            keep
+        });
         let ranges = self.ownership.ranges();
         self.rts.retain(|key, rt| {
             if ranges.iter().any(|r| r.owner == *key) {
@@ -889,7 +954,7 @@ impl EdramCache {
         outgrown: Option<&HostRt>,
     ) {
         struct Draw {
-            pipelines: Vec<(RenderPipeline, u32)>,
+            pipeline: RenderPipeline,
             bind_group: BindGroup,
             params: Params,
             scissor: [u32; 4],
@@ -945,17 +1010,10 @@ impl EdramCache {
                     cut[3],
                 ],
             );
-            let outputs: Vec<TransferOutput> = if dest_key.is_depth {
-                std::iter::once(TransferOutput::Depth).chain((0..8).map(TransferOutput::StencilBit)).collect()
-            } else {
-                vec![TransferOutput::Color]
-            };
-            let mut pipelines = Vec::new();
-            for output in outputs {
-                let pipeline = self.pipelines.transfer(device, kind, dest_format, dest_samples, output);
-                let reference = if matches!(output, TransferOutput::StencilBit(_)) { 0xFF } else { 0 };
-                pipelines.push((pipeline, reference));
-            }
+            // Depth targets get their stencil bytes in a scratch target, written into the
+            // stencil one bit per pass afterwards.
+            let output = if dest_key.is_depth { TransferOutput::DepthScratch } else { TransferOutput::Color };
+            let pipeline = self.pipelines.transfer(device, kind, dest_format, dest_samples, output);
             let layout = &self.pipelines.transfer_layout(device, kind).0;
             let mut entries = vec![BindGroupEntry { binding: 0, resource: params.binding() }];
             entries.extend(src_entries(src));
@@ -968,43 +1026,99 @@ impl EdramCache {
                 if outgrown.is_some() { " (grown)" } else { "" },
                 if cutout.is_some() { " (clear)" } else { "" },
             );
-            draws.push(Draw { pipelines, bind_group, params, scissor: [0, y0, dest_width, y1 - y0] });
+            draws.push(Draw { pipeline, bind_group, params, scissor: [0, y0, dest_width, y1 - y0] });
         }
         if draws.is_empty() {
             return;
         }
-        let dest = &self.rts[&dest_key];
-        let color;
-        let depth;
-        let (colors, depth_attachment): (&[Option<RenderPassColorAttachment<'_>>], _) = if dest_key.is_depth {
-            depth = RenderPassDepthStencilAttachment {
-                view: &dest.attachment,
-                depth_load_op: LoadOp::Load,
-                depth_store_op: StoreOp::Store,
-                depth_clear_value: 0.0,
-                depth_read_only: false,
-                stencil_load_op: LoadOp::Load,
-                stencil_store_op: StoreOp::Store,
-                stencil_clear_value: 0,
-                stencil_read_only: false,
-            };
-            (&[], Some(&depth))
+        // The stencil scratch (cleared: texels the transfer discards stay unwritten), and the bit
+        // pipelines and bind group reading it.
+        let stencil = if dest_key.is_depth {
+            let key = (dest_width, dest_height, dest_samples);
+            let scratch = self.stencil_scratch.entry(key).or_insert_with(|| {
+                let texture = device.create_texture(&TextureDescriptor {
+                    label: "edram stencil scratch",
+                    size: extent(dest_width, dest_height, 1),
+                    sample_count: dest_samples,
+                    format: STENCIL_SCRATCH_FORMAT,
+                    usage: TextureUsage::RenderAttachment | TextureUsage::TextureBinding,
+                    ..Default::default()
+                });
+                let view = texture.create_view(None);
+                StencilScratch { texture, view, idle_frames: 0 }
+            });
+            scratch.idle_frames = 0;
+            let view = scratch.view.clone();
+            let bits: Vec<RenderPipeline> =
+                (0..8).map(|bit| self.pipelines.stencil_bit(device, dest_format, dest_samples, bit)).collect();
+            let layout = self.pipelines.stencil_bit_layout(device, dest_samples).0.clone();
+            let group = cached_bind_group(
+                &self.groups,
+                device,
+                "edram stencil bits",
+                &layout,
+                &[BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&view) }],
+            );
+            Some((view, bits, group))
         } else {
-            color = [Some(RenderPassColorAttachment::load(&dest.attachment))];
-            (&color, None)
+            None
         };
-        let mut pass = encoder.begin_render_pass("edram transfer", colors, depth_attachment);
-        for draw in &draws {
-            let [x, y, w, h] = draw.scissor;
-            pass.set_scissor_rect(x, y, w, h);
-            pass.set_bind_group(0, &draw.bind_group, &draw.params.dynamic_offset());
-            for (pipeline, reference) in &draw.pipelines {
-                pass.set_pipeline(pipeline);
-                pass.set_stencil_reference(*reference);
+        let dest = &self.rts[&dest_key];
+        let depth_attachment = |stencil_load_op| RenderPassDepthStencilAttachment {
+            view: &dest.attachment,
+            depth_load_op: LoadOp::Load,
+            depth_store_op: StoreOp::Store,
+            depth_clear_value: 0.0,
+            depth_read_only: false,
+            stencil_load_op,
+            stencil_store_op: StoreOp::Store,
+            stencil_clear_value: 0,
+            stencil_read_only: false,
+        };
+        {
+            let depth;
+            let colors: Vec<Option<RenderPassColorAttachment<'_>>> = match &stencil {
+                Some((scratch, ..)) => {
+                    vec![Some(RenderPassColorAttachment::clear(
+                        scratch,
+                        gpu_webgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+                    ))]
+                }
+                None => vec![Some(RenderPassColorAttachment::load(&dest.attachment))],
+            };
+            let depth_attachment = if stencil.is_some() {
+                depth = depth_attachment(LoadOp::Load);
+                Some(&depth)
+            } else {
+                None
+            };
+            let mut pass = encoder.begin_render_pass("edram transfer", &colors, depth_attachment);
+            for draw in &draws {
+                let [x, y, w, h] = draw.scissor;
+                pass.set_scissor_rect(x, y, w, h);
+                pass.set_bind_group(0, &draw.bind_group, &draw.params.dynamic_offset());
+                pass.set_pipeline(&draw.pipeline);
+                // The depth pass replaces stencil with 0; the bit passes set the 1 bits.
+                pass.set_stencil_reference(0);
                 pass.draw(3, 1, 0, 0);
             }
+            pass.end();
         }
-        pass.end();
+        if let Some((_, bits, group)) = &stencil {
+            let depth = depth_attachment(LoadOp::Load);
+            let mut pass = encoder.begin_render_pass("edram transfer stencil", &[], Some(&depth));
+            pass.set_bind_group(0, group, &[]);
+            pass.set_stencil_reference(0xFF);
+            for draw in &draws {
+                let [x, y, w, h] = draw.scissor;
+                pass.set_scissor_rect(x, y, w, h);
+                for pipeline in bits {
+                    pass.set_pipeline(pipeline);
+                    pass.draw(3, 1, 0, 0);
+                }
+            }
+            pass.end();
+        }
     }
 
     /// Starts a resolve: copies the source rectangle out of EDRAM (converted to the destination
