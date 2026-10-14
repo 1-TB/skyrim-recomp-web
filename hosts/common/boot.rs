@@ -114,7 +114,11 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             }
             "--tap" => o.taps.push(parse_tap(&value()?)?),
             "--render-debug" => xenos_render::debug::enable(&value()?)?,
-            "--gpu" => kernel_hle::d3d::set_gpu_mode(&value()?)?,
+            "--gpu" => {
+                let mode = value()?;
+                kernel_hle::d3d::set_gpu_mode(&mode)?;
+                xenos_render::set_d3d_mode(mode == "d3d");
+            }
             "--resolution-scale" => {
                 let scale = value()?.parse().map_err(|e| format!("--resolution-scale: {e}"))?;
                 xenos_render::set_resolution_scale(scale)?;

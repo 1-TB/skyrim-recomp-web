@@ -314,10 +314,6 @@ impl Gpu {
         self.backend.set(backend).is_ok()
     }
 
-    pub(crate) fn backend(&self) -> Option<&Arc<dyn GpuBackend>> {
-        self.backend.get()
-    }
-
     pub fn swap_count(&self) -> u64 {
         self.swaps.load(Ordering::Relaxed)
     }
@@ -458,9 +454,7 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         bin_mask: 0xFFFF_FFFF,
         bin_select: 0xFFFF_FFFF,
         zpd_samples: 0,
-        // With `--gpu d3d` the renderer takes the title's D3D calls instead (crate::d3d); the
-        // command processor only keeps the fences, interrupts and swaps going.
-        backend: k.gpu.backend.get().cloned().filter(|_| crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3d),
+        backend: k.gpu.backend.get().cloned(),
         pending: Vec::new(),
         syncs: [0; 128],
         sync_wait: Duration::ZERO,
@@ -470,6 +464,9 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         d3d_writes: Vec::new(),
         d3d_packet: (0, 0),
         d3d_last_writer: std::collections::HashMap::new(),
+        d3d_draw_next: false,
+        d3d_last_draw: 0,
+        d3d_draws: (0, 0),
     };
     let mut read_index = 0u32;
     let mut generation = 0u32;
@@ -568,6 +565,13 @@ struct CommandProcessor<'a> {
     /// opcode) and its address, and per register the last one that wrote it.
     d3d_packet: (u32, u32),
     d3d_last_writer: std::collections::HashMap<u32, (u32, u32)>,
+    /// `--gpu d3d`: draw packets are the title's (a draw marker with a new sequence number came
+    /// before them, and no D3D call or indirect buffer since: one call can emit several draw
+    /// packets), and the last draw sequence number seen.
+    d3d_draw_next: bool,
+    d3d_last_draw: u32,
+    /// `--gpu d3d`: draw packets run and left out since the last report.
+    d3d_draws: (u64, u64),
 }
 
 /// Register-file base of each SET_CONSTANT / LOAD_ALU_CONSTANT type.
@@ -770,7 +774,16 @@ impl CommandProcessor<'_> {
                 }
                 let (fb, w, h) = (r.read(mem), r.read(mem), r.read(mem));
                 self.flush_registers();
-                if let Some(b) = &self.backend {
+                if crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d {
+                    // The present is a D3D call of its own (calls whose marker didn't fit go
+                    // with the next marker: the title queues calls ahead of this point, so
+                    // they can't all be delivered here).
+                    let n = self.k.gpu.swaps.load(Ordering::Relaxed) + 1;
+                    if n.is_multiple_of(600) {
+                        let (run, left) = std::mem::take(&mut self.d3d_draws);
+                        log::info!("GPU: d3d: {run} draw packets run, {left} left out over 600 swaps");
+                    }
+                } else if let Some(b) = &self.backend {
                     let fetch = std::array::from_fn(|i| self.read_register(reg::SHADER_CONSTANT_FETCH_00_0 + i as u32));
                     b.swap(fetch, w, h);
                 }
@@ -783,6 +796,7 @@ impl CommandProcessor<'_> {
                 self.frame_draws = 0;
             }
             pm4::INDIRECT_BUFFER | pm4::INDIRECT_BUFFER_PFD => {
+                self.d3d_draw_next = false;
                 let ptr = r.read(mem) & 0x1FFF_FFFF;
                 let length = r.read(mem) & 0xF_FFFF;
                 log::trace!("indirect buffer {ptr:#010X}, {length} dwords");
@@ -921,15 +935,28 @@ impl CommandProcessor<'_> {
                 let code: Vec<u32> = (0..size).map(|_| r.read(mem)).collect();
                 self.load_shader(shader_type & 3 == 1, code);
             }
+            pm4::DRAW_INDX | pm4::DRAW_INDX_2 if !self.d3d_title_draw() => {
+                self.d3d_draws.1 += 1;
+                r.skip(count);
+            }
             pm4::DRAW_INDX => {
+                self.d3d_draws.0 += 1;
                 self.frame_draws += 1;
                 self.verify_d3d_draw();
                 self.draw(r, count, true)
             }
             pm4::DRAW_INDX_2 => {
+                self.d3d_draws.0 += 1;
                 self.frame_draws += 1;
                 self.verify_d3d_draw();
                 self.draw(r, count, false)
+            }
+            // A `--gpu d3d` marker (see crate::d3d).
+            pm4::NOP if count >= 3 && crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d => {
+                if r.read(mem) == crate::d3d::CALL_MARKER_SIGNATURE {
+                    let (kind, value) = (r.read(mem), r.read(mem));
+                    self.d3d_marker_reached(kind, value);
+                }
             }
             // A `--gpu d3d-verify` marker before a draw's packets (see crate::d3d).
             pm4::NOP if count >= 2 && crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3dVerify => {
@@ -993,6 +1020,44 @@ impl CommandProcessor<'_> {
 
     fn read_register(&self, index: u32) -> u32 {
         self.k.gpu.read_register(self.mem, index)
+    }
+
+    /// `--gpu d3d`: whether the draw packet at hand is one of the title's. Other modes run every
+    /// draw.
+    fn d3d_title_draw(&self) -> bool {
+        crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3d || self.d3d_draw_next
+    }
+
+    fn d3d_marker_reached(&mut self, kind: u32, value: u32) {
+        match kind {
+            crate::d3d::MARKER_DRAW => {
+                // Tile replays bring old numbers back: those draws already ran.
+                self.d3d_draw_next = value.wrapping_sub(self.d3d_last_draw) as i32 > 0;
+                if self.d3d_draw_next {
+                    self.d3d_last_draw = value;
+                }
+            }
+            crate::d3d::MARKER_CALL => {
+                self.d3d_draw_next = false;
+                self.d3d_deliver(value);
+            }
+            _ => {}
+        }
+    }
+
+    /// Sends the queued D3D calls up to `id` to the renderer, after the register writes before
+    /// them.
+    fn d3d_deliver(&mut self, id: u32) {
+        let calls = crate::d3d::take_calls(id);
+        if calls.is_empty() {
+            return;
+        }
+        self.flush_registers();
+        if let Some(b) = &self.backend {
+            for call in calls {
+                b.d3d(call);
+            }
+        }
     }
 
     /// Compares the registers with the device shadow copied at the marker before this draw.

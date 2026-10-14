@@ -75,8 +75,8 @@ pub(crate) struct Renderer {
     /// Per swap executed since the host last took them: when the title submitted it, and how long
     /// it waited in the queue before the renderer got to it.
     pub swap_timings: Vec<(std::time::Instant, Duration)>,
-    /// `--gpu d3d`: the renderer of the title's D3D calls (made on the first one).
-    d3d: Option<crate::d3d::D3dRenderer>,
+    /// `--gpu d3d`: executes the title's D3D calls and holds the surfaces draws render to.
+    d3d: Option<std::rc::Rc<std::cell::RefCell<crate::d3d::D3dRenderer>>>,
 }
 
 impl Renderer {
@@ -86,7 +86,15 @@ impl Renderer {
         present_format: TextureFormat,
         targets: TargetsFactory,
     ) -> Self {
-        let targets = targets(device);
+        // With `--gpu d3d` the render targets are the D3D surfaces, shared with the code that
+        // executes the D3D calls.
+        let d3d = crate::D3D_MODE
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .then(|| std::rc::Rc::new(std::cell::RefCell::new(crate::d3d::D3dRenderer::new(device))));
+        let targets: Box<dyn crate::targets::RenderTargetCache> = match &d3d {
+            Some(d3d) => Box::new(crate::d3d::D3dTargets(d3d.clone())),
+            None => targets(device),
+        };
         if crate::debug::GPU_TIME.load(std::sync::atomic::Ordering::Relaxed) {
             if gpu_webgpu::timing::enable(device) {
                 log::info!("renderer: measuring GPU time per pass");
@@ -102,7 +110,7 @@ impl Renderer {
             blocked: None,
             calls_at: (0, gpu_webgpu::counters::snapshot()),
             swap_timings: Vec::new(),
-            d3d: None,
+            d3d,
         }
     }
 
@@ -194,13 +202,29 @@ impl Renderer {
                     }
                     on_swap(self, size);
                 }
+                Command::D3d(_) if self.d3d.is_none() => log::warn!("renderer: D3D call without --gpu d3d"),
                 Command::D3d(cmd) => {
                     let present = matches!(cmd, d3d_hle::command::Command::Present { .. });
-                    let device = self.device.clone();
-                    let d3d = self.d3d.get_or_insert_with(|| crate::d3d::D3dRenderer::new(&device));
-                    let front = d3d.execute(&device, cmd);
+                    let d3d = self.d3d.clone().expect("checked above");
+                    // The draws recorded so far go first (and the next draw starts a new pass:
+                    // the call may change what the targets are).
+                    if present {
+                        self.executor.end_frame();
+                    } else {
+                        self.executor.flush();
+                    }
+                    let front = d3d.borrow_mut().execute(&self.device, cmd);
                     if present {
                         let size = self.presenter.swap(&self.device, front);
+                        gpu_webgpu::timing::collect();
+                        if self.presenter.frames == 1 || self.presenter.frames.is_multiple_of(300) {
+                            log::info!("renderer: frame {}: {:?}", self.presenter.frames, self.executor.stats);
+                            let frames = self.presenter.frames - self.calls_at.0;
+                            if let Some(times) = gpu_times(frames) {
+                                log::info!("renderer: {times}");
+                            }
+                            self.calls_at = (self.presenter.frames, gpu_webgpu::counters::snapshot());
+                        }
                         on_swap(self, size);
                     }
                 }

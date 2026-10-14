@@ -224,19 +224,108 @@ pub extern "C" fn skyrt_d3d_enter(id: u32, ctx: &PPCContext) {
     }
     if mode == GpuMode::D3d {
         drop(guard);
-        forward(k, hook.kind, &call);
+        d3d_enter(k, hook.kind, &call);
     }
 }
 
-/// Presents queued for the renderer but not shown yet, oldest first (their sequence numbers).
-static PRESENTS: Mutex<VecDeque<u64>> = Mutex::new(VecDeque::new());
-/// Frames the title may run ahead of the renderer.
-const MAX_FRAMES_AHEAD: usize = 2;
+/// `--gpu d3d`. The title's draws reach the renderer through the command stream, and D3D calls
+/// must stay in order with them: each call is queued here and a marker with its id goes into
+/// the command buffer; the command processor delivers the queued calls up to that id when it
+/// gets there ([`take_calls`]). Draws get markers too, with a sequence number: the command
+/// processor executes a draw only right after a marker with a new number, which leaves out the
+/// draws D3D itself makes for clears, resolves and tiling (and tile replays of the title's own).
+struct Calls {
+    queue: VecDeque<(u32, d3d_hle::command::Command)>,
+    next_call: u32,
+    next_draw: u32,
+}
 
-/// `--gpu d3d`: sends the call to the renderer.
-fn forward(k: &Kernel, kind: HookKind, call: &Call<'_>) {
+static CALLS: Mutex<Calls> = Mutex::new(Calls { queue: VecDeque::new(), next_call: 0, next_draw: 0 });
+
+/// Marker kinds of `--gpu d3d` (payload: signature, kind, value).
+pub(crate) const MARKER_DRAW: u32 = 1;
+pub(crate) const MARKER_CALL: u32 = 2;
+/// First payload word of `--gpu d3d` markers ('SKDC').
+pub(crate) const CALL_MARKER_SIGNATURE: u32 = 0x534B_4443;
+
+thread_local! {
+    /// Depth of D3D calls on this thread whose own draws are not the title's (Clear, Resolve,
+    /// Begin/EndTiling).
+    static INTERNAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+fn internal_call(kind: HookKind) -> bool {
+    matches!(kind, HookKind::Clear | HookKind::Resolve | HookKind::BeginTiling | HookKind::EndTiling)
+}
+
+/// Writes a `--gpu d3d` marker into the device's command buffer, if it fits.
+fn put_call_marker(k: &Kernel, dev: u32, kind: u32, value: u32) -> bool {
+    let mem = k.mem();
+    let write = mem.read_u32(dev + device::COMMAND_WRITE);
+    let limit = mem.read_u32(dev + device::COMMAND_LIMIT);
+    let end = mem.read_u32(dev + device::COMMAND_END);
+    if write == 0 || write + 16 > limit || write + 16 >= end {
+        return false;
+    }
+    mem.write_u32(write + 4, d3d_hle::nop_header(3));
+    mem.write_u32(write + 8, CALL_MARKER_SIGNATURE);
+    mem.write_u32(write + 12, kind);
+    mem.write_u32(write + 16, value);
+    mem.write_u32(dev + device::COMMAND_WRITE, write + 16);
+    true
+}
+
+fn d3d_enter(k: &Kernel, kind: HookKind, call: &Call<'_>) {
+    let dev = call.gpr(3);
+    if kind == HookKind::DrawLeaf {
+        if INTERNAL.with(|d| d.get()) == 0 {
+            let seq = {
+                let mut c = CALLS.lock().unwrap();
+                c.next_draw = c.next_draw.wrapping_add(1);
+                c.next_draw
+            };
+            put_call_marker(k, dev, MARKER_DRAW, seq);
+        }
+        return;
+    }
+    if internal_call(kind) {
+        INTERNAL.with(|d| d.set(d.get() + 1));
+    }
+    let Some(cmd) = d3d_command(k, kind, call) else { return };
+    let id = {
+        let mut c = CALLS.lock().unwrap();
+        c.next_call = c.next_call.wrapping_add(1);
+        let id = c.next_call;
+        c.queue.push_back((id, cmd));
+        id
+    };
+    // Without room the call is delivered with the next marker (or at the next swap).
+    put_call_marker(k, dev, MARKER_CALL, id);
+}
+
+/// `--gpu d3d`: the hook of an internal call returned.
+fn d3d_leave(kind: HookKind) {
+    if internal_call(kind) {
+        INTERNAL.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+/// Command processor: the D3D calls queued up to marker `id`.
+pub(crate) fn take_calls(id: u32) -> Vec<d3d_hle::command::Command> {
+    let mut c = CALLS.lock().unwrap();
+    let mut out = Vec::new();
+    while let Some((call, _)) = c.queue.front() {
+        if call.wrapping_sub(id) as i32 > 0 {
+            break;
+        }
+        out.push(c.queue.pop_front().expect("checked").1);
+    }
+    out
+}
+
+/// The renderer's command for a D3D call.
+fn d3d_command(k: &Kernel, kind: HookKind, call: &Call<'_>) -> Option<d3d_hle::command::Command> {
     use d3d_hle::command::{Command, Surface};
-    let Some(backend) = k.gpu.backend() else { return };
     let mem = k.mem();
     let surface = |address: u32, depth: bool| {
         (address != 0).then(|| Surface { address, header: SurfaceHeader::read(address, |a| mem.read_u32(a)), depth })
@@ -254,21 +343,9 @@ fn forward(k: &Kernel, kind: HookKind, call: &Call<'_>) {
             Command::Resolve { args, dest }
         }
         HookKind::Present => Command::Present { front: texture(call.arg(1)) },
-        _ => return,
+        _ => return None,
     };
-    let present = matches!(cmd, Command::Present { .. });
-    let seq = backend.d3d(cmd);
-    if present {
-        // Keep the title at most MAX_FRAMES_AHEAD frames ahead of the renderer.
-        let wait = {
-            let mut presents = PRESENTS.lock().unwrap();
-            presents.push_back(seq);
-            (presents.len() > MAX_FRAMES_AHEAD).then(|| presents.pop_front()).flatten()
-        };
-        if let Some(seq) = wait {
-            backend.wait_for(seq);
-        }
-    }
+    Some(cmd)
 }
 
 thread_local! {
@@ -282,6 +359,12 @@ thread_local! {
 /// Called by the hook of `HOOKS[id]` after the original function returned.
 #[unsafe(no_mangle)]
 pub extern "C" fn skyrt_d3d_leave(id: u32, _ctx: &PPCContext) {
+    if gpu_mode() == GpuMode::D3d
+        && let Some(hook) = HOOKS.get(id as usize)
+    {
+        d3d_leave(hook.kind);
+        return;
+    }
     if gpu_mode() != GpuMode::D3dVerify {
         return;
     }

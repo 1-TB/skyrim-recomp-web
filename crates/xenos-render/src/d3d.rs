@@ -23,6 +23,8 @@ struct HostSurface {
     width: u32,
     height: u32,
     depth: bool,
+    /// D24FS8: the host depth holds half the guest value (as the executor's viewport maps it).
+    float24: bool,
     /// The surface header it was made for (a different one replaces it).
     header: [u32; d3d_hle::args::SURFACE_WORDS],
 }
@@ -336,10 +338,19 @@ impl D3dRenderer {
         });
         let view = texture.create_view(None);
         log::debug!("d3d renderer: surface {:#010X} {width}x{height} {format:?}", s.address);
-        if let Some(old) = self
-            .surfaces
-            .insert(key, HostSurface { texture, view, format, width, height, depth: s.depth, header: s.header.words })
-        {
+        if let Some(old) = self.surfaces.insert(
+            key,
+            HostSurface {
+                texture,
+                view,
+                format,
+                width,
+                height,
+                depth: s.depth,
+                float24: s.depth && s.format() & 1 != 0,
+                header: s.header.words,
+            },
+        ) {
             old.texture.destroy();
         }
         key
@@ -373,7 +384,7 @@ impl D3dRenderer {
                 view: &s.view,
                 depth_load_op: if keep_depth { LoadOp::Load } else { LoadOp::Clear },
                 depth_store_op: StoreOp::Store,
-                depth_clear_value: args.z.clamp(0.0, 1.0),
+                depth_clear_value: if s.float24 { args.z.clamp(0.0, 2.0) * 0.5 } else { args.z.clamp(0.0, 1.0) },
                 depth_read_only: false,
                 stencil_load_op: if keep_stencil { LoadOp::Load } else { LoadOp::Clear },
                 stencil_store_op: StoreOp::Store,
@@ -475,4 +486,75 @@ impl D3dRenderer {
             swizzle: [0, 1, 2, 3],
         })
     }
+}
+
+/// The executor's render targets under `--gpu d3d`: the D3D surfaces bound to each slot.
+pub(crate) struct D3dTargets(pub std::rc::Rc<std::cell::RefCell<D3dRenderer>>);
+
+impl crate::targets::RenderTargetCache for D3dTargets {
+    fn targets(
+        &mut self,
+        _device: &Device,
+        _encoder: &mut CommandEncoder,
+        setup: &xenos_state::edram::RenderTargetSetup,
+        _min_height: u32,
+    ) -> Option<crate::targets::DrawTargets> {
+        let mut r = self.0.borrow_mut();
+        // Attachments of a pass must share their size: the first bound one decides.
+        let mut size = None;
+        let mut warning = None;
+        let mut pick = |key: Option<SurfaceKey>, r: &D3dRenderer| {
+            let s = r.surfaces.get(&key?)?;
+            match size {
+                None => size = Some((s.width, s.height)),
+                Some(wh) if wh != (s.width, s.height) => {
+                    warning = Some(format!(
+                        "surfaces of different sizes bound together: {wh:?} and {}x{}",
+                        s.width, s.height
+                    ));
+                    return None;
+                }
+                Some(_) => {}
+            }
+            Some((s.view.clone(), s.format))
+        };
+        let colors: [Option<(TextureView, TextureFormat)>; 4] =
+            std::array::from_fn(|i| setup.color[i].as_ref().and_then(|_| pick(r.targets[i], &r)));
+        let depth = setup.depth.as_ref().and_then(|_| pick(r.depth, &r));
+        if let Some(w) = warning {
+            r.warn_once(w);
+        }
+        let (width, height) = size?;
+        Some(crate::targets::DrawTargets {
+            blendable: colors.each_ref().map(|c| {
+                c.as_ref().is_none_or(|(_, f)| !matches!(*f, TextureFormat::R32Float | TextureFormat::RG32Float))
+            }),
+            colors,
+            depth,
+            width,
+            height,
+            sample_count: 1,
+            sample_mask: !0,
+        })
+    }
+
+    fn resolve(
+        &mut self,
+        _device: &Device,
+        _info: &xenos_state::resolve::ResolveInfo,
+        _memory: &dyn crate::PhysicalMemory,
+        _shared: Option<&crate::targets::SharedMemoryTarget<'_>>,
+        _encoder: Option<&mut CommandEncoder>,
+    ) -> crate::targets::ResolveStatus {
+        // Resolves are D3D calls here; the command stream's copies never reach the executor.
+        crate::targets::ResolveStatus::Done { written: None, in_gpu_memory: false }
+    }
+
+    fn poll_resolve(&mut self, _device: &Device, _memory: &dyn crate::PhysicalMemory) -> crate::targets::ResolveStatus {
+        crate::targets::ResolveStatus::Done { written: None, in_gpu_memory: false }
+    }
+
+    fn end_frame(&mut self) {}
+
+    fn flush_uploads(&mut self, _device: &Device) {}
 }

@@ -48,6 +48,15 @@ pub fn handheld_budgets() {
     default_mirror_limit(64);
 }
 
+/// Renderers started afterwards render from the title's D3D calls (`--gpu d3d`): see `d3d.rs`.
+pub(crate) static D3D_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes renderers started afterwards render from D3D calls: render targets are the D3D
+/// surfaces (no EDRAM), and clears, resolves and presents come as [`Command::D3d`].
+pub fn set_d3d_mode(on: bool) {
+    D3D_MODE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Resolution scale of renderers started afterwards (see [`set_resolution_scale`]).
 pub(crate) static RESOLUTION_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
