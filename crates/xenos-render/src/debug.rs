@@ -50,6 +50,11 @@ pub fn enable(mode: &str) -> Result<(), String> {
         TRACE_EVERY.store(n, Ordering::Relaxed);
         return Ok(());
     }
+    if let Some(n) = mode.strip_prefix("mirror=") {
+        let mib: u32 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
+        crate::set_mirror_limit(mib);
+        return Ok(());
+    }
     if let Some(n) = mode.strip_prefix("frames=") {
         let n: usize = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
         MAX_FRAMES_IN_FLIGHT.store(n.clamp(1, 16), Ordering::Relaxed);
@@ -66,7 +71,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "no-bc" => &NO_BC,
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, frames=N, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, frames=N, mirror=MIB, trace-frame=N, trace-every=K)"
             ));
         }
     };

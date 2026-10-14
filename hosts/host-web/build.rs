@@ -61,4 +61,8 @@ fn main() {
     let http_files = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib/http_files.js");
     println!("cargo:rerun-if-changed={}", http_files.display());
     println!("cargo:rustc-link-arg=--js-library={}", http_files.display());
+    // Device kind for memory budgets (src/main.rs).
+    let device = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib/device.js");
+    println!("cargo:rerun-if-changed={}", device.display());
+    println!("cargo:rustc-link-arg=--js-library={}", device.display());
 }

@@ -32,6 +32,8 @@ options:
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
                            scissor (shade one pixel per draw), nodraw (record but skip draw calls),
                            frames=N (let the renderer run N frames ahead of the GPU; default 2),
+                           mirror=MIB (GPU memory for mirroring guest memory, 32-128; default
+                           128, or 64 on phones and tablets in the browser),
                            nopool (never reuse textures), nomemo (bind textures per draw),
                            cpu-resolve (read resolves back to guest memory), cpu-texture (convert
                            textures on the CPU), trace-frame=N (log frame N's draws and, natively,

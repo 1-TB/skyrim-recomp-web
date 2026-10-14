@@ -66,7 +66,15 @@ impl HttpRanges {
                     // SAFETY: valid C strings (kept alive by the job, which `done` releases);
                     // the reading thread keeps `dst` valid until the job finishes.
                     unsafe {
-                        skyrt_fetch_range(files.as_ptr(), path, offset, dst, len, done, Arc::into_raw(job).cast_mut().cast())
+                        skyrt_fetch_range(
+                            files.as_ptr(),
+                            path,
+                            offset,
+                            dst,
+                            len,
+                            done,
+                            Arc::into_raw(job).cast_mut().cast(),
+                        )
                     };
                 }
                 Next::OnChange { addr: &thread_queue.posted, value: seen, timeout_ms: 1000 }

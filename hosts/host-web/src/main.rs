@@ -77,6 +77,16 @@ fn main() {
         }
         audio::install(kernel);
         gpu::start_memory_report();
+        unsafe extern "C" {
+            /// lib/device.js.
+            fn skyrt_handheld() -> i32;
+        }
+        // SAFETY: no arguments; proxied to the page's thread.
+        if unsafe { skyrt_handheld() } != 0 {
+            // Browsers on phones and tablets close tabs long before desktop ones.
+            log::info!("phone or tablet: smaller GPU memory budgets");
+            xenos_render::default_mirror_limit(64);
+        }
         let memory = std::sync::Arc::new(gpu::GuestPhysical(kernel));
         match xenos_render::web::start(memory, "#canvas", gpu::render_targets()) {
             Ok(handle) => gpu::install(kernel, handle),

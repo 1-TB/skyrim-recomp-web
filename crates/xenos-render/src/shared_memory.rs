@@ -16,6 +16,8 @@
 //! that changes after a draw of the same not-yet-submitted batch read it is a conflict: the
 //! executor must submit first. The same holds for slots: a block the batch reads keeps its slot.
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use gpu_webgpu::{Buffer, BufferDescriptor, BufferUsage, CommandEncoder, Device};
 use xenos_shader::bindings::{
     SHARED_MEMORY_BLOCK_BYTES, SHARED_MEMORY_BLOCKS, SHARED_MEMORY_CHUNK_BYTES, SHARED_MEMORY_CHUNKS,
@@ -31,6 +33,20 @@ pub const BLOCK: u32 = SHARED_MEMORY_BLOCK_BYTES;
 const PAGES_PER_BLOCK: u32 = BLOCK / PAGE;
 const SLOTS_PER_CHUNK: u32 = SHARED_MEMORY_CHUNK_BYTES / BLOCK;
 const SLOTS: u32 = SLOTS_PER_CHUNK * SHARED_MEMORY_CHUNKS;
+
+/// Most GPU memory for slots in MiB, or 0 for all [`SHARED_MEMORY_CHUNKS`] buffers.
+static LIMIT_MIB: AtomicU32 = AtomicU32::new(0);
+
+/// Caps the GPU memory of the guest memory mirror at `mib` (whole slot buffers, at least one)
+/// for renderers started afterwards. Fewer slots mean more blocks dropped and uploaded again.
+pub fn set_mirror_limit(mib: u32) {
+    LIMIT_MIB.store(mib.max(1), Ordering::Relaxed);
+}
+
+/// [`set_mirror_limit`], unless a limit was set already (explicitly, for testing).
+pub fn default_mirror_limit(mib: u32) {
+    let _ = LIMIT_MIB.compare_exchange(0, mib.max(1), Ordering::Relaxed, Ordering::Relaxed);
+}
 
 /// Counters for the stats log; `slot_bytes` and `blocks` are current, the rest totals.
 #[derive(Clone, Copy, Debug, Default)]
@@ -60,6 +76,8 @@ pub struct SharedMemory {
     /// be recreated.
     pub generation: u64,
     chunks_created: u32,
+    /// Slot buffers allowed (see [`set_mirror_limit`]).
+    max_chunks: u32,
     /// Per block: its slot + 1, or 0 when it isn't mirrored.
     slot_of: Vec<u32>,
     /// Per slot: its block + 1, or 0 when it's free.
@@ -172,6 +190,14 @@ impl SharedMemory {
     }
 
     pub fn new(device: &Device) -> Self {
+        let max_chunks = match LIMIT_MIB.load(Ordering::Relaxed) {
+            0 => SHARED_MEMORY_CHUNKS,
+            mib => (mib / (SHARED_MEMORY_CHUNK_BYTES >> 20)).clamp(1, SHARED_MEMORY_CHUNKS),
+        };
+        log::info!(
+            "shared memory: at most {} MiB of slots for guest memory blocks",
+            max_chunks * (SHARED_MEMORY_CHUNK_BYTES >> 20)
+        );
         let chunks = (0..SHARED_MEMORY_CHUNKS)
             .map(|_| {
                 device.create_buffer(&BufferDescriptor {
@@ -193,6 +219,7 @@ impl SharedMemory {
             table,
             generation: 0,
             chunks_created: 0,
+            max_chunks,
             slot_of: vec![0; SHARED_MEMORY_BLOCKS as usize],
             owner: vec![0; SLOTS as usize],
             last_used: vec![0; SLOTS as usize],
@@ -241,7 +268,7 @@ impl SharedMemory {
 
     /// Creates the next slot buffer, if there is one left; returns its first slot.
     fn add_chunk(&mut self, device: &Device) -> Option<u32> {
-        if self.chunks_created == SHARED_MEMORY_CHUNKS {
+        if self.chunks_created == self.max_chunks {
             return None;
         }
         let n = self.chunks_created;
