@@ -163,16 +163,19 @@ fn check_generated(dir: &Path) {
             "the output was not produced by the skyrt-patched XenonRecomp; run `cargo xtask setup-xenonrecomp` and `cargo xtask recompile`",
         );
     }
+    // Registers the recompiler may keep in C++ locals: cpp/ppc_context.h keeps every field in
+    // PPCContext regardless, so runtime-core's layout holds, and the kernel only reads the
+    // argument registers, r1, r13 and LR, which stay in the context. Skipping LR or MSR would
+    // drop state the runtime and the skyrt patch rely on (blrl, guest backtraces).
+    const ALLOWED: [&str; 6] =
+        ["CTR_AS_LOCAL", "XER_AS_LOCAL", "RESERVED_AS_LOCAL", "CR_AS_LOCAL", "NON_ARGUMENT_AS_LOCAL", "NON_VOLATILE_AS_LOCAL"];
     let flags: Vec<&str> = config
         .lines()
         .filter_map(|l| l.trim().strip_prefix("#define PPC_CONFIG_"))
-        .filter(|f| !f.starts_with("H_INCLUDED"))
+        .filter(|f| !f.starts_with("H_INCLUDED") && !ALLOWED.contains(f))
         .collect();
     if !flags.is_empty() {
-        fail(format!(
-            "the recompiler config enables {flags:?}; set every *_as_local / skip_* option to false \
-             (runtime-core's PPCContext mirrors the all-in-context layout)"
-        ));
+        fail(format!("the recompiler config enables {flags:?}; set skip_lr and skip_msr to false"));
     }
 }
 
