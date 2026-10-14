@@ -741,10 +741,36 @@ impl Pool {
         (first..first + n).all(|i| self.is_free(i))
     }
 
-    /// Where a run of `n` frames with no mapped guest neighbour goes: the middle of the
-    /// largest free gap, which leaves room on both sides for the guest frames around it
-    /// to be committed later next to it (right after another run, they couldn't be).
+    /// The largest free run (first pool index, length).
+    fn largest_free_run(&self) -> Option<(u32, u32)> {
+        let mut best: Option<(u32, u32)> = None;
+        let mut i = 0;
+        while i < linear_map::POOL_FRAMES {
+            if !self.is_free(i) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < linear_map::POOL_FRAMES && self.is_free(i) {
+                i += 1;
+            }
+            if best.is_none_or(|(_, len)| i - start > len) {
+                best = Some((start, i - start));
+            }
+        }
+        best
+    }
+
+    /// Where a run of `n` frames with no mapped guest neighbour goes. Small runs go to the
+    /// middle of the largest free gap, which leaves room on both sides for the guest frames
+    /// around them to be committed later next to them (right after another run, they
+    /// couldn't be); big ones (a buffer committed whole) go first-fit, so the pool doesn't
+    /// end up in halves too small for the next big one.
     fn fresh_run(&self, n: u32) -> Option<u32> {
+        const SMALL_RUN: u32 = 4;
+        if n > SMALL_RUN {
+            return (0..linear_map::POOL_FRAMES.saturating_sub(n - 1)).find(|&p| self.run_free(p, n));
+        }
         let (mut best, mut gap) = (None, 0u32);
         let mut i = 0;
         while i < linear_map::POOL_FRAMES {
@@ -785,7 +811,9 @@ fn pool_index(f: usize) -> Option<u32> {
 
 /// Gives the unmapped guest frames of `[first, last]` linear frames: each run of unmapped
 /// frames gets one contiguous linear run, placed right after its guest predecessor's (or right
-/// before its successor's) when that is free.
+/// before its successor's) when that is free. When no contiguous run is left for a large
+/// commit, it is split over the largest free runs: only scalar accesses straddling a frame
+/// boundary need neighbouring frames to be adjacent, which inside one big buffer is rare.
 fn map_frames(first: usize, last: usize) -> Result<(), MemoryError> {
     let mut pool = POOL.lock().unwrap();
     let mut f = first;
@@ -805,33 +833,45 @@ fn map_frames(first: usize, last: usize) -> Result<(), MemoryError> {
             .into_iter()
             .flatten()
             .find(|&p| pool.run_free(p, n))
-            .or_else(|| pool.fresh_run(n))
-            .ok_or(MemoryError::LinearPoolFull { frames: pool.count, wanted: n })?;
-        pool.take(start, n);
-        for (k, g) in (f..=end).enumerate() {
-            let lin = linear_map::POOL_BASE + (start + k as u32) * FRAME_SIZE;
-            skyrt_ea_offset[g].store(lin.wrapping_sub((g as u32) << FRAME_SHIFT) as i32, Ordering::Release);
+            .or_else(|| pool.fresh_run(n));
+        // (guest frame, pool index) pieces covering [f, end].
+        let mut pieces = Vec::new();
+        match start {
+            Some(start) => pieces.push((f, start, n)),
+            None => {
+                let mut g = f;
+                let mut left = n;
+                while left > 0 {
+                    let (run, len) = pool
+                        .largest_free_run()
+                        .ok_or(MemoryError::LinearPoolFull { frames: pool.count, wanted: left })?;
+                    let take = len.min(left);
+                    pool.take(run, take);
+                    pieces.push((g, run, take));
+                    g += take as usize;
+                    left -= take;
+                }
+                log::warn!(
+                    "guest frames {:#X}..={:#X}: no contiguous run of {n} linear frames left, split in {} pieces",
+                    f << FRAME_SHIFT,
+                    end << FRAME_SHIFT,
+                    pieces.len()
+                );
+            }
+        }
+        for &(g0, run, count) in &pieces {
+            if start.is_some() {
+                pool.take(run, count);
+            }
+            for k in 0..count {
+                let g = g0 + k as usize;
+                let lin = linear_map::POOL_BASE + (run + k) * FRAME_SIZE;
+                skyrt_ea_offset[g].store(lin.wrapping_sub((g as u32) << FRAME_SHIFT) as i32, Ordering::Release);
+            }
         }
         f = end + 1;
     }
     Ok(())
-}
-
-/// Called by recompiled code built with `SKYRT_CHECK_FRAMES=1` for a scalar access at `ea`
-/// that straddles two frames not adjacent in linear memory: logs the first few and then every
-/// 1000th.
-#[unsafe(no_mangle)]
-pub extern "C" fn skyrt_frame_crossing(ea: u32, size: u32) {
-    static COUNT: AtomicU64 = AtomicU64::new(0);
-    let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    if n <= 32 || n.is_multiple_of(1000) {
-        log::warn!(
-            "guest access of {size} bytes at {ea:#010X} straddles non-adjacent linear frames \
-             ({:#010X}, {:#010X}; #{n})",
-            linear(ea),
-            linear(ea.wrapping_add(size - 1))
-        );
-    }
 }
 
 /// Linear frames given to guest memory outside physical memory (used, available).
@@ -903,6 +943,16 @@ mod translation_tests {
         let mut runs = 0;
         linear_runs(base, u64::from(4 * FRAME_SIZE), |_, _, _| runs += 1);
         assert_eq!(runs, 1);
+    }
+
+    #[test]
+    fn pool_split_and_largest_run() {
+        let mut p = Pool { used: [0; POOL_WORDS], count: 0 };
+        p.take(10, 5);
+        p.take(100, 1);
+        assert_eq!(p.largest_free_run(), Some((101, linear_map::POOL_FRAMES - 101)));
+        assert_eq!(p.fresh_run(50), Some(15));
+        assert!(p.fresh_run(2).is_some_and(|s| s > 101));
     }
 
     #[test]

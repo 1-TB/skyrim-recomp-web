@@ -31,6 +31,9 @@ pub struct KThread {
     pub is_main: bool,
     /// Set by the title through the MSVC thread-naming exception.
     pub name: Mutex<Option<String>>,
+    /// The thread's PPCContext while it runs, for the progress watchdog (racy reads of its
+    /// LR and stack pointer; diagnostics only).
+    context: std::sync::atomic::AtomicPtr<PPCContext>,
 }
 
 impl KThread {
@@ -155,6 +158,7 @@ impl Kernel {
             kernel_calls: Arc::new(AtomicU64::new(0)),
             is_main,
             name: Mutex::new(None),
+            context: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
         });
         self.threads.lock().unwrap().insert(t.tid(), t.clone());
         t
@@ -244,6 +248,7 @@ impl Kernel {
         mem.write_u8(t.block.kthread + kthread::THREAD_STATE, kthread::STATE_RUNNING);
 
         let mut ctx = self.rt.new_context(&t.block);
+        t.context.store(&mut *ctx, Ordering::Release);
         let entry = if t.xapi_startup != 0 {
             ctx.set_gpr(3, t.start_address as u64);
             ctx.set_gpr(4, t.start_context as u64);
@@ -262,6 +267,7 @@ impl Kernel {
         );
 
         let outcome = catch_unwind(AssertUnwindSafe(|| self.rt.call(&mut ctx, entry)));
+        t.context.store(std::ptr::null_mut(), Ordering::Release);
         let code = match outcome {
             Ok(Ok(())) => {
                 // Without XAPI startup the entry's return value is the exit code.
@@ -331,5 +337,87 @@ impl Kernel {
             *call.ctx = saved;
         }
         apcs.len()
+    }
+}
+
+/// Per guest thread: (kernel calls at the last change, when they last changed, reported).
+static PROGRESS: Mutex<Vec<(u32, u64, Instant, bool)>> = Mutex::new(Vec::new());
+
+/// A thread that makes no kernel calls for this long is reported (once per stall).
+const NO_PROGRESS_REPORT_AFTER: Duration = Duration::from_secs(10);
+
+impl Kernel {
+    /// Progress watchdog, called about once a second by the host: reports a guest thread that
+    /// has made no kernel call for [`NO_PROGRESS_REPORT_AFTER`] while not blocked in a wait (a
+    /// spin, a livelock or a very long computation), and the title's main thread even when it
+    /// is blocked, with its guest return address and stack. Frames can keep coming (a video
+    /// playing on another thread) while the title itself is stuck.
+    pub fn check_progress(&self) {
+        let threads: Vec<Arc<KThread>> = self.threads.lock().unwrap().values().cloned().collect();
+        let mut progress = PROGRESS.lock().unwrap();
+        progress.retain(|p| threads.iter().any(|t| t.tid() == p.0));
+        let now = Instant::now();
+        for t in &threads {
+            let calls = t.kernel_calls.load(Ordering::Relaxed);
+            let entry = match progress.iter_mut().find(|p| p.0 == t.tid()) {
+                Some(e) => e,
+                None => {
+                    progress.push((t.tid(), calls, now, false));
+                    continue;
+                }
+            };
+            if entry.1 != calls {
+                *entry = (t.tid(), calls, now, false);
+                continue;
+            }
+            if entry.3 || now - entry.2 < NO_PROGRESS_REPORT_AFTER {
+                continue;
+            }
+            let waiting = self.objects.waiters().into_iter().find(|w| w.tid == t.tid());
+            if waiting.is_some() && !t.is_main {
+                continue;
+            }
+            entry.3 = true;
+            let name = t.name.lock().unwrap().clone().unwrap_or_default();
+            let what = match &waiting {
+                Some(w) => {
+                    let objects: Vec<String> = w.objects.iter().map(|(p, s)| format!("{p:#010X} {s:?}")).collect();
+                    format!("blocked waiting on [{}] from {:08X?}", objects.join(", "), w.site)
+                }
+                None => "running without kernel calls (spinning or computing)".to_string(),
+            };
+            let ctx = t.context.load(Ordering::Acquire);
+            let (lr, sp) = if ctx.is_null() {
+                (0, 0)
+            } else {
+                // SAFETY: the context outlives the thread's run (cleared before it is freed);
+                // the values may be torn, which only affects this report.
+                unsafe { ((*ctx).lr as u32, (*ctx).gpr32(1)) }
+            };
+            log::warn!(
+                "thread {:#X}{}{} made no kernel call for {:.0} s: {what}; lr {lr:#010X}, sp {sp:#010X}, stack {:08X?}",
+                t.tid(),
+                if t.is_main { " (main)" } else { "" },
+                if name.is_empty() { String::new() } else { format!(" \"{name}\"") },
+                (now - entry.2).as_secs_f64(),
+                self.stack_return_addresses(t, sp, 12)
+            );
+        }
+    }
+
+    /// Saved return addresses on the back chain from `sp` (as `Call::guest_backtrace`).
+    fn stack_return_addresses(&self, t: &KThread, mut sp: u32, depth: usize) -> Vec<u32> {
+        let mem = self.mem();
+        let stack = t.block.stack;
+        let mut out = Vec::new();
+        while out.len() < depth && sp >= stack.limit && sp < stack.base {
+            let next = mem.read_u32(sp);
+            if next <= sp || next > stack.base {
+                break;
+            }
+            out.push(mem.read_u32(next - 8));
+            sp = next;
+        }
+        out
     }
 }

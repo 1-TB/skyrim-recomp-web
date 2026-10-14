@@ -265,6 +265,7 @@ fn wait_for_title(kernel: &'static Kernel, limit: Option<Duration>) -> Option<u3
         if limit.is_some_and(|l| start.elapsed() >= l) {
             return None;
         }
+        kernel.check_progress();
         let swaps = kernel.gpu.swap_count();
         if swaps != last_swaps {
             last_swaps = swaps;
