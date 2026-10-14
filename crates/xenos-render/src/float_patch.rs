@@ -164,6 +164,31 @@ impl FloatPatcher {
         offset as u32
     }
 
+    /// Like [`FloatPatcher::push`] for a block of `count` vec4s whose changed vec4s (in `mask`,
+    /// with their bytes in index order in `values`) are already known: the others are the
+    /// stage's previous block's, which must cover them.
+    pub fn push_masked(
+        &mut self,
+        stage: u32,
+        count: usize,
+        mask: [u32; INDICES / 32],
+        values: &[u8],
+        window: u64,
+    ) -> u32 {
+        debug_assert!(
+            count <= INDICES && values.len() == mask.iter().map(|m| m.count_ones() as usize).sum::<usize>() * 16
+        );
+        let offset = self.cursor.next_multiple_of(self.alignment);
+        assert!(offset + window <= BLOCK_BUFFER_BYTES, "float constant blocks full");
+        self.cursor = offset + (count as u64 * 16).max(16);
+        let first_value = self.values.len() / 16;
+        self.values.extend_from_slice(values);
+        self.records.extend([stage, (offset / 16) as u32, count as u32, first_value as u32]);
+        self.records.extend(mask);
+        self.records[0] += 1;
+        offset as u32
+    }
+
     /// Uploads the patches and returns the command buffer that applies them (to submit before
     /// the draws that read the blocks), with the bytes uploaded; `None` if there are none.
     pub fn encode(&mut self, device: &Device) -> Option<(CommandBuffer, u64)> {

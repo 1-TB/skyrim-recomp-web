@@ -31,11 +31,14 @@ const PIXEL_FLOAT_CONSTANTS: usize = FLOAT_CONSTANTS + 256 * 4;
 pub struct RegisterFile {
     values: Box<[u32]>,
     dirty: u8,
+    /// Per float constant vec4 (512): written since the renderer last compared it with what it
+    /// uploaded (see [`RegisterFile::float_written`]).
+    float_written: [u64; 8],
 }
 
 impl Default for RegisterFile {
     fn default() -> Self {
-        RegisterFile { values: vec![0; REGISTER_COUNT].into_boxed_slice(), dirty: !0 }
+        RegisterFile { values: vec![0; REGISTER_COUNT].into_boxed_slice(), dirty: !0, float_written: [!0; 8] }
     }
 }
 
@@ -44,6 +47,10 @@ impl RegisterFile {
         let i = index as usize;
         if let Some(r) = self.values.get_mut(i) {
             *r = value;
+            if (FLOAT_CONSTANTS..FETCH_CONSTANTS).contains(&i) {
+                let v = (i - FLOAT_CONSTANTS) / 4;
+                self.float_written[v / 64] |= 1 << (v % 64);
+            }
             self.dirty |= match i {
                 FLOAT_CONSTANTS..PIXEL_FLOAT_CONSTANTS => dirty::FLOAT_VS,
                 PIXEL_FLOAT_CONSTANTS..FETCH_CONSTANTS => dirty::FLOAT_PS,
@@ -62,6 +69,37 @@ impl RegisterFile {
     /// Marks constant ranges as changed (e.g. their uploaded copies were discarded).
     pub fn mark_dirty(&mut self, bits: u8) {
         self.dirty |= bits;
+        if bits & (dirty::FLOAT_VS | dirty::FLOAT_PS) != 0 {
+            self.float_written = [!0; 8];
+        }
+    }
+
+    /// Bits of the 256 float constant vec4s of stage `stage` (0 vertex, 1 pixel) written since
+    /// [`RegisterFile::clear_float_written`] cleared them.
+    pub fn float_written(&self, stage: usize) -> [u64; 4] {
+        self.float_written[stage * 4..stage * 4 + 4].try_into().expect("4 words")
+    }
+
+    /// Clears the written bits of stage `stage`'s vec4s `[0, count)`.
+    pub fn clear_float_written(&mut self, stage: usize, count: usize) {
+        for (w, word) in self.float_written[stage * 4..stage * 4 + 4].iter_mut().enumerate() {
+            let first = w * 64;
+            if count >= first + 64 {
+                *word = 0;
+            } else if count > first {
+                *word &= !0u64 << (count - first);
+            }
+        }
+    }
+
+    /// Float constant vec4 `index` (0..512) as its little-endian bytes.
+    pub fn float_vec4(&self, index: usize) -> [u8; 16] {
+        let c = FLOAT_CONSTANTS + index * 4;
+        let mut out = [0u8; 16];
+        for (k, w) in self.values[c..c + 4].iter().enumerate() {
+            out[k * 4..k * 4 + 4].copy_from_slice(&w.to_le_bytes());
+        }
+        out
     }
 
     pub fn as_slice(&self) -> &[u32] {
@@ -99,7 +137,7 @@ impl RegisterFile {
     }
 
     pub fn set_float_constant_dirty(&mut self) {
-        self.dirty |= dirty::FLOAT_VS | dirty::FLOAT_PS;
+        self.mark_dirty(dirty::FLOAT_VS | dirty::FLOAT_PS);
     }
 }
 
@@ -124,5 +162,31 @@ impl ActiveShaders {
             ShaderStage::Vertex => self.vertex = Some((code, hash)),
             ShaderStage::Pixel => self.pixel = Some((code, hash)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn float_writes_are_tracked_per_vec4_and_stage() {
+        let mut regs = RegisterFile::default();
+        regs.clear_float_written(0, 256);
+        regs.clear_float_written(1, 256);
+        assert_eq!(regs.float_written(0), [0; 4]);
+        // c5.y (vertex) and c256 + 70 (pixel c70).
+        regs.write(FLOAT_CONSTANTS as u32 + 5 * 4 + 1, 7);
+        regs.write(FLOAT_CONSTANTS as u32 + (256 + 70) * 4, 9);
+        assert_eq!(regs.float_written(0), [1 << 5, 0, 0, 0]);
+        assert_eq!(regs.float_written(1), [0, 1 << 6, 0, 0]);
+        assert_eq!(regs.float_vec4(5)[4..8], 7u32.to_le_bytes());
+        // Clearing the first `count` vec4s keeps the rest.
+        regs.clear_float_written(1, 70);
+        assert_eq!(regs.float_written(1), [0, 1 << 6, 0, 0]);
+        regs.clear_float_written(1, 71);
+        assert_eq!(regs.float_written(1), [0; 4]);
+        regs.mark_dirty(dirty::FLOAT_PS);
+        assert_eq!(regs.float_written(0), [!0; 4]);
     }
 }

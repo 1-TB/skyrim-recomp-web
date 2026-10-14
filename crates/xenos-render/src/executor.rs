@@ -268,6 +268,8 @@ struct ConstantCache {
     fetch: Option<ConstantBlock>,
     system: Option<ConstantBlock>,
     scratch: Vec<u8>,
+    /// Changed float constant vec4s of a block being pushed.
+    values: Vec<u8>,
 }
 
 /// A block of constants in the ring and its contents.
@@ -781,7 +783,8 @@ impl Executor {
         self.shared.end_batch();
         // The ring rewound: nothing pushed before can be reused.
         let scratch = std::mem::take(&mut self.constant_cache.scratch);
-        self.constant_cache = ConstantCache { scratch, ..Default::default() };
+        let values = std::mem::take(&mut self.constant_cache.values);
+        self.constant_cache = ConstantCache { scratch, values, ..Default::default() };
     }
 
     fn encoder(&mut self) -> &mut CommandEncoder {
@@ -1391,52 +1394,74 @@ impl Executor {
         // Like Xenia's renderers, pixel shaders read c256.. regardless of SQ_PS_CONST (titles
         // leave the SQ_*_CONST windows unset).
         let mut float = [0u32; 2];
-        for (stage, (base, dirty_bit)) in [(0, dirty::FLOAT_VS), (256, dirty::FLOAT_PS)].into_iter().enumerate() {
-            let read = float_reads[stage] as usize * 16;
+        let mut values = std::mem::take(&mut cache.values);
+        for stage in 0..2 {
+            let count = float_reads[stage] as usize;
             let slot = &mut cache.float[stage];
-            if read == 0 {
+            if count == 0 {
                 // Nothing read: any offset will do.
                 float[stage] = slot.as_ref().map_or(0, |b| b.offset);
                 continue;
             }
-            if dirty_bits & dirty_bit == 0
-                && let Some(b) = slot.as_ref()
-                && b.data.len() >= read
-            {
-                float[stage] = b.offset;
+            let base = stage * 256;
+            let Some(block) = slot.as_mut() else {
+                // The stage's first block in this submission: all of it is sent.
+                scratch.clear();
+                self.regs.float_constants_window(base as u32, count as u32, &mut scratch);
+                let offset = self.floats.push(stage as u32, None, &scratch, FLOAT_CONSTANTS_SIZE);
+                *slot = Some(ConstantBlock { offset, data: scratch.clone() });
+                self.regs.clear_float_written(stage, 256);
+                float[stage] = offset;
+                self.stats.float_vec4s_changed[stage] += count as u64;
+                self.stats.float_upload_bytes[stage] += count as u64 * 16 + 48;
                 continue;
-            }
-            scratch.clear();
-            self.regs.float_constants_window(base, float_reads[stage], &mut scratch);
-            if let Some(b) = slot.as_ref()
-                && b.data.starts_with(&scratch)
-            {
-                self.stats.constant_blocks_reused += 1;
-                float[stage] = b.offset;
-                continue;
-            }
-            // A new block: only what differs from the stage's previous block is sent (see
-            // float_patch).
-            let previous = slot.as_ref().map(|b| &b.data[..]);
-            let changed = scratch
-                .chunks(16)
-                .enumerate()
-                .filter(|(i, v)| previous.and_then(|p| p.get(i * 16..i * 16 + 16)) != Some(*v))
-                .count();
-            let offset = self.floats.push(stage as u32, previous, &scratch, FLOAT_CONSTANTS_SIZE);
-            match slot {
-                Some(b) => {
-                    b.offset = offset;
-                    b.data.clear();
-                    b.data.extend_from_slice(&scratch);
+            };
+            // Vec4s the block doesn't have, and the written ones that differ from it: only those
+            // are compared and sent (see float_patch); the title rewrites constants before every
+            // draw, but only ~5% of them change.
+            let have = block.data.len() / 16;
+            let written = self.regs.float_written(stage);
+            let mut mask = [0u32; 8];
+            values.clear();
+            for i in 0..count {
+                let changed = if i >= have {
+                    true
+                } else if written[i / 64] >> (i % 64) & 1 != 0 {
+                    self.regs.float_vec4(base + i) != block.data[i * 16..i * 16 + 16]
+                } else {
+                    false
+                };
+                if changed {
+                    mask[i / 32] |= 1 << (i % 32);
+                    values.extend_from_slice(&self.regs.float_vec4(base + i));
                 }
-                None => *slot = Some(ConstantBlock { offset, data: scratch.clone() }),
             }
+            if values.is_empty() {
+                // The block has these values (beyond `count` it keeps its own, still compared
+                // when a draw reads them).
+                self.regs.clear_float_written(stage, count);
+                self.stats.constant_blocks_reused += 1;
+                float[stage] = block.offset;
+                continue;
+            }
+            let offset = self.floats.push_masked(stage as u32, count, mask, &values, FLOAT_CONSTANTS_SIZE);
+            block.offset = offset;
+            block.data.resize(count * 16, 0);
+            let mut v = values.chunks(16);
+            for i in 0..count {
+                if mask[i / 32] >> (i % 32) & 1 != 0 {
+                    block.data[i * 16..i * 16 + 16].copy_from_slice(v.next().expect("one value per bit"));
+                }
+            }
+            // The new block is `count` long: what follows is sent when read.
+            self.regs.clear_float_written(stage, 256);
             float[stage] = offset;
+            let changed = values.len() / 16;
             self.stats.float_vec4s_changed[stage] += changed as u64;
             self.stats.float_upload_bytes[stage] += changed as u64 * 16 + 48;
-            self.stats.float_uploads_dynamic[stage] += u64::from(read == FLOAT_CONSTANTS_SIZE as usize);
+            self.stats.float_uploads_dynamic[stage] += u64::from(count == FLOAT_CONSTANTS_SIZE as usize / 16);
         }
+        cache.values = values;
         let bool_loop = match &cache.bool_loop {
             Some(b) if dirty_bits & dirty::BOOL_LOOP == 0 => b.offset,
             _ => ConstantBlock::push(
