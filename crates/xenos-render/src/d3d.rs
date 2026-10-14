@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use d3d_hle::args::{ClearArgs, clear};
 use d3d_hle::command::{Command, Surface};
 use gpu_webgpu::*;
-use xenos_state::edram::{EDRAM_TILE_WIDTH_SAMPLES, RenderTargetKey};
+use xenos_state::edram::{EDRAM_TILE_COUNT, EDRAM_TILE_WIDTH_SAMPLES, RenderTargetKey};
 use xenos_state::xenos::{ColorRenderTargetFormat, MsaaSamples};
 
 use crate::present::FrontBuffer;
@@ -97,6 +97,9 @@ pub(crate) struct D3dRenderer {
     /// binding one after another was written gets the other's contents (see
     /// [`D3dTargets::targets`]).
     edram_owners: HashMap<u32, SurfaceKey>,
+    /// Surfaces sharing EDRAM, as found when binding them (logged with the surface counts).
+    aliasing: AliasingStats,
+    aliasing_seen: std::collections::HashSet<String>,
     /// Textures replaced while the executor's batch may still use them, destroyed at the end of
     /// the frame (after the batch is submitted).
     retired: Vec<Texture>,
@@ -210,6 +213,8 @@ impl D3dRenderer {
             rows: HashMap::new(),
             textures: HashMap::new(),
             edram_owners: HashMap::new(),
+            aliasing: AliasingStats::default(),
+            aliasing_seen: Default::default(),
             retired: Vec::new(),
             targets: [None; 4],
             depth: None,
@@ -474,10 +479,11 @@ impl D3dRenderer {
         if self.logging() {
             let bytes: u64 = self.textures.keys().map(texture_bytes).sum();
             log::info!(
-                "d3d renderer: {} surfaces in {} textures, {} MiB",
+                "d3d renderer: {} surfaces in {} textures, {} MiB; EDRAM aliasing {:?}",
                 self.surfaces.len(),
                 self.textures.len(),
-                bytes >> 20
+                bytes >> 20,
+                self.aliasing
             );
         }
     }
@@ -510,14 +516,25 @@ impl D3dRenderer {
     fn take_edram(&mut self, device: &Device, encoder: &mut CommandEncoder, key: SurfaceKey) {
         let Some(s) = self.surfaces.get(&key) else { return };
         let base = s.edram.base_tiles;
+        self.note_overlaps(key);
         let previous = self.edram_owners.insert(base, key);
         let Some(p) = previous.filter(|&p| p != key).and_then(|p| self.surfaces.get(&p)) else { return };
+        let s = &self.surfaces[&key];
         let same_layout = (p.width, p.height, p.samples, p.edram.msaa_samples, p.edram.pitch_tiles_at_32bpp)
             == (s.width, s.height, s.samples, s.edram.msaa_samples, s.edram.pitch_tiles_at_32bpp);
         // Surfaces with the same format share their texture already.
-        if !same_layout || p.texture_key == s.texture_key {
+        if p.texture_key == s.texture_key {
             return;
         }
+        if !same_layout {
+            let what = format!("same base {base}: {} then {}", describe(p), describe(s));
+            self.aliasing.same_base_other_layout += 1;
+            if self.aliasing_seen.len() < 64 && self.aliasing_seen.insert(what.clone()) {
+                log::info!("d3d renderer: EDRAM aliasing not carried over: {what}");
+            }
+            return;
+        }
+        self.aliasing.carried += 1;
         let edram = self.edram.get_or_insert_with(|| xenos_edram::EdramCache::new(device));
         let done =
             edram.transfer_external(device, encoder, (&p.external([0, 0]), p.edram), (&s.external([0, 0]), s.edram));
@@ -527,6 +544,30 @@ impl D3dRenderer {
                 previous.unwrap_or_default().0,
                 key.0
             );
+        }
+    }
+
+    /// Counts (and logs the first of each kind) the surfaces drawn this frame at another EDRAM
+    /// base whose EDRAM range overlaps `key`'s: their contents aren't carried over.
+    fn note_overlaps(&mut self, key: SurfaceKey) {
+        let s = &self.surfaces[&key];
+        let range = edram_range(s);
+        let now = self.presents;
+        let mut found = Vec::new();
+        for (&base, owner) in &self.edram_owners {
+            if base == range.0 || *owner == key {
+                continue;
+            }
+            let Some(o) = self.surfaces.get(owner).filter(|o| o.last_used == now) else { continue };
+            if ranges_overlap(range, edram_range(o)) {
+                found.push(format!("{} over {}", describe(s), describe(o)));
+            }
+        }
+        for what in found {
+            self.aliasing.overlap_other_base += 1;
+            if self.aliasing_seen.len() < 64 && self.aliasing_seen.insert(what.clone()) {
+                log::info!("d3d renderer: EDRAM ranges overlap, not carried over: {what}");
+            }
         }
     }
 
@@ -584,6 +625,42 @@ fn edram_key(s: &Surface) -> RenderTargetKey {
         is_depth: s.depth,
         format,
     }
+}
+
+/// Surfaces found sharing EDRAM (see [`D3dRenderer::take_edram`]).
+#[derive(Clone, Copy, Debug, Default)]
+struct AliasingStats {
+    /// Same base and layout, another format: contents converted.
+    carried: u64,
+    /// Same base, another size or sample count: not carried over.
+    same_base_other_layout: u64,
+    /// Overlapping ranges from different bases: not carried over.
+    overlap_other_base: u64,
+}
+
+/// A surface's EDRAM tiles on the console: (first tile, count), from its EDRAM size.
+fn edram_range(s: &HostSurface) -> (u32, u32) {
+    const TILE_BYTES: u32 = 80 * 16 * 4;
+    (s.edram.base_tiles, s.header[11].div_ceil(TILE_BYTES).clamp(1, EDRAM_TILE_COUNT))
+}
+
+fn ranges_overlap(a: (u32, u32), b: (u32, u32)) -> bool {
+    // Ranges wrap around the end of EDRAM.
+    let starts_in = |x: (u32, u32), y: (u32, u32)| (y.0.wrapping_sub(x.0) & (EDRAM_TILE_COUNT - 1)) < x.1;
+    starts_in(a, b) || starts_in(b, a)
+}
+
+fn describe(s: &HostSurface) -> String {
+    let kind = if s.depth { "depth" } else { "color" };
+    format!(
+        "{kind} {}x{}x{} format {} at {} ({} tiles)",
+        s.width,
+        s.height,
+        s.samples,
+        s.edram.format,
+        s.edram.base_tiles,
+        edram_range(s).1
+    )
 }
 
 fn texture_bytes(key: &TextureKey) -> u64 {
