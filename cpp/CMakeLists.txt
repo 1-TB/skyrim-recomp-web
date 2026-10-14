@@ -7,6 +7,7 @@ project(skyrim_guest LANGUAGES CXX)
 set(XENON_RECOMP_OUT "" CACHE PATH "XenonRecomp output directory (ppc_recomp.*.cpp, ppc_config.h, ...)")
 set(SIMDE_DIR "" CACHE PATH "simde headers (XenonRecomp/thirdparty/simde)")
 set(SKYRT_SHIM "" CACHE FILEPATH "Generated import shim (skyrt_imports.cpp)")
+option(SKYRT_CHECK_FRAMES "Report scalar accesses straddling non-adjacent linear frames" OFF)
 
 foreach(var XENON_RECOMP_OUT SIMDE_DIR SKYRT_SHIM)
     if(NOT ${var})
@@ -60,4 +61,8 @@ else()
         -fexceptions
         -funwind-tables
     )
+endif()
+
+if(SKYRT_CHECK_FRAMES)
+    target_compile_definitions(skyrim_guest PRIVATE SKYRT_CHECK_FRAMES_ENABLED)
 endif()

@@ -21,6 +21,10 @@ mod stream;
 #[cfg(target_os = "emscripten")]
 mod text_input;
 
+/// The memory maximum build.rs links with (`-sMAXIMUM_MEMORY`) must hold the linear layout.
+#[cfg(target_os = "emscripten")]
+const _: () = assert!(runtime_core::memory::linear_map::SIZE <= 1538 << 20);
+
 #[cfg(target_os = "emscripten")]
 fn main() {
     use std::path::PathBuf;

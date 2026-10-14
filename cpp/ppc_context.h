@@ -16,6 +16,7 @@
 //     (runtime-core's dirty module), so the renderer re-uploads only those.
 //     Stores the patch emits inline are followed by PPC_MARK_WRITTEN.
 //   * Xenos half-float helpers for the vpkd3d128/vupkd3d128 forms the patch adds.
+//   * PPC_LOOKUP_FUNC reads the indirect-call table through skyrt_ea.
 //
 // Upstream license:
 //
@@ -161,20 +162,35 @@ static inline float skyrt_xenos_half_to_float(uint16_t value)
     return result;
 }
 
+// Debug check (native, guest-sys built with SKYRT_CHECK_FRAMES=1): reports scalar
+// accesses that straddle two 1 MiB frames that aren't adjacent in linear memory,
+// which the compact layout would split wrongly (runtime-core logs them).
+#ifdef SKYRT_CHECK_FRAMES_ENABLED
+extern "C" void skyrt_frame_crossing(uint32_t ea, uint32_t size);
+static inline void skyrt_check_frames(uint32_t ea, uint32_t size)
+{
+    if ((ea & 0xFFFFFu) + size > 0x100000u && skyrt_ea(ea + size - 1) != skyrt_ea(ea) + size - 1)
+        skyrt_frame_crossing(ea, size);
+}
+#define SKYRT_CHECK_FRAMES(x, size) skyrt_check_frames((uint32_t)(x), (size))
+#else
+#define SKYRT_CHECK_FRAMES(x, size) ((void)0)
+#endif
+
 #ifndef PPC_LOAD_U8
 #define PPC_LOAD_U8(x) *(volatile uint8_t*)PPC_EA(x)
 #endif
 
 #ifndef PPC_LOAD_U16
-#define PPC_LOAD_U16(x) __builtin_bswap16(*(volatile uint16_t*)PPC_EA(x))
+#define PPC_LOAD_U16(x) (SKYRT_CHECK_FRAMES(x, 2), __builtin_bswap16(*(volatile uint16_t*)PPC_EA(x)))
 #endif
 
 #ifndef PPC_LOAD_U32
-#define PPC_LOAD_U32(x) __builtin_bswap32(*(volatile uint32_t*)PPC_EA(x))
+#define PPC_LOAD_U32(x) (SKYRT_CHECK_FRAMES(x, 4), __builtin_bswap32(*(volatile uint32_t*)PPC_EA(x)))
 #endif
 
 #ifndef PPC_LOAD_U64
-#define PPC_LOAD_U64(x) __builtin_bswap64(*(volatile uint64_t*)PPC_EA(x))
+#define PPC_LOAD_U64(x) (SKYRT_CHECK_FRAMES(x, 8), __builtin_bswap64(*(volatile uint64_t*)PPC_EA(x)))
 #endif
 
 // TODO: Implement.
@@ -205,19 +221,22 @@ static inline float skyrt_xenos_half_to_float(uint16_t value)
 
 #ifndef PPC_STORE_U16
 #define PPC_STORE_U16(x, y) \
-    do { uint32_t skyrt_store_ea = (uint32_t)(x); *(volatile uint16_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap16(y); \
+    do { uint32_t skyrt_store_ea = (uint32_t)(x); SKYRT_CHECK_FRAMES(skyrt_store_ea, 2); \
+         *(volatile uint16_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap16(y); \
          PPC_MARK_WRITTEN(skyrt_store_ea, 2); } while (0)
 #endif
 
 #ifndef PPC_STORE_U32
 #define PPC_STORE_U32(x, y) \
-    do { uint32_t skyrt_store_ea = (uint32_t)(x); *(volatile uint32_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap32(y); \
+    do { uint32_t skyrt_store_ea = (uint32_t)(x); SKYRT_CHECK_FRAMES(skyrt_store_ea, 4); \
+         *(volatile uint32_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap32(y); \
          PPC_MARK_WRITTEN(skyrt_store_ea, 4); } while (0)
 #endif
 
 #ifndef PPC_STORE_U64
 #define PPC_STORE_U64(x, y) \
-    do { uint32_t skyrt_store_ea = (uint32_t)(x); *(volatile uint64_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap64(y); \
+    do { uint32_t skyrt_store_ea = (uint32_t)(x); SKYRT_CHECK_FRAMES(skyrt_store_ea, 8); \
+         *(volatile uint64_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap64(y); \
          PPC_MARK_WRITTEN(skyrt_store_ea, 8); } while (0)
 #endif
 
@@ -245,7 +264,9 @@ static inline float skyrt_xenos_half_to_float(uint16_t value)
 
 #define PPC_MEMORY_SIZE 0x100000000ull
 
-#define PPC_LOOKUP_FUNC(x, y) *(PPCFunc**)(x + PPC_IMAGE_BASE + PPC_IMAGE_SIZE + (uint64_t(uint32_t(y) - PPC_CODE_BASE) * 2))
+// The indirect-call table is guest memory after the image (runtime-core's guest.rs
+// fills it), so it is addressed through skyrt_ea like any other access.
+#define PPC_LOOKUP_FUNC(x, y) *(PPCFunc**)((x) + skyrt_ea(uint32_t(PPC_IMAGE_BASE + PPC_IMAGE_SIZE + (uint64_t(uint32_t(y) - PPC_CODE_BASE) * 2))))
 
 #ifndef PPC_CALL_INDIRECT_FUNC
 #define PPC_CALL_INDIRECT_FUNC(x) (PPC_LOOKUP_FUNC(base, x))(ctx, base)

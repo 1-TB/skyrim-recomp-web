@@ -41,11 +41,11 @@ fn scalars_are_stored_big_endian() {
 
 #[test]
 fn raw_pointer_view_matches_recompiled_code() {
-    // Recompiled code does `__builtin_bswap32(*(uint32_t*)(base + ea))`.
+    // Recompiled code does `__builtin_bswap32(*(uint32_t*)(base + skyrt_ea(ea)))`.
     let s = space();
     let a = s.alloc_virtual(0x1000, PAGE_4K, true, protect::READWRITE, false).unwrap();
     s.mem.write_u32(a, 0xCAFE_F00D);
-    let raw = unsafe { std::ptr::read_unaligned(s.mem.base_ptr().add(a as usize) as *const u32) };
+    let raw = unsafe { std::ptr::read_unaligned(s.mem.base_ptr().add(runtime_core::memory::linear(a) as usize) as *const u32) };
     assert_eq!(raw.swap_bytes(), 0xCAFE_F00D);
 }
 
@@ -186,7 +186,12 @@ fn physical_views_show_one_memory() {
     }
 
     // Every view of a physical page reaches the same memory.
-    let views = |p: u32| [map::PHYS_VIEW_64K + p, map::PHYS_VIEW_16M + p, map::PHYS_VIEW_4K + p - PAGE_4K];
+    // (The 4 KiB view starts one page into physical memory.)
+    let views = |p: u32| {
+        [Some(map::PHYS_VIEW_64K + p), Some(map::PHYS_VIEW_16M + p), p.checked_sub(PAGE_4K).map(|q| map::PHYS_VIEW_4K + q)]
+            .into_iter()
+            .flatten()
+    };
     s.mem.write_u32(mid + 8, 0x1234_5678);
     for v in views(pm + 8) {
         assert_eq!(s.mem.read_u32(v), 0x1234_5678, "view address {v:#010X}");
@@ -199,9 +204,9 @@ fn physical_views_show_one_memory() {
     assert_eq!(s.allocation_size(map::PHYS_VIEW_16M + pm), Some(0x10000));
     assert_eq!(s.query(map::PHYS_VIEW_16M + pm).unwrap().allocation_base, map::PHYS_VIEW_16M + pm);
 
-    let limited = s.alloc_physical(0x1000, PAGE_4K, 0x0100_0000, 0x01FF_FFFF, 0, protect::READWRITE).unwrap();
+    let limited = s.alloc_physical(0x1000, PAGE_4K, 0x0200_0000, 0x02FF_FFFF, 0, protect::READWRITE).unwrap();
     let pl = s.physical_address(limited).unwrap();
-    assert!((0x0100_0000..0x0200_0000).contains(&pl));
+    assert!((0x0200_0000..0x0300_0000).contains(&pl));
     // Alignment applies to the physical address.
     let aligned = s.alloc_physical(0x1000, PAGE_4K, 0, u32::MAX, 0x10000, protect::READWRITE).unwrap();
     assert_eq!(s.physical_address(aligned).unwrap() % 0x10000, 0);

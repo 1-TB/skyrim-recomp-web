@@ -107,8 +107,9 @@ pub fn start_memory_report() {
                 );
                 #[cfg(not(target_os = "emscripten"))]
                 let wasm = String::new();
+                let (pool_used, pool_size) = runtime_core::memory::linear_pool_usage();
                 log::info!(
-                    "memory: guest committed {} MiB, GPU {} MiB (peak {} MiB){wasm}",
+                    "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB){wasm}",
                     mib(committed),
                     mib(gpu),
                     mib(gpu_peak)

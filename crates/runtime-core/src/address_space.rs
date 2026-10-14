@@ -315,7 +315,9 @@ impl AddressSpace {
         let view_size = if view == map::PHYS_VIEW_4K { map::PHYS_VIEW_4K_SIZE } else { map::PHYSICAL_SIZE };
         let min = min_phys.max(shift);
         let max = max_phys.min(map::PHYSICAL_SIZE - 1).min(view_size - 1 + shift);
-        let a = self.physical.lock().unwrap().alloc_range(min, max, size, align, true, protect, true)?;
+        // Bottom-up (hardware and Xenia go top-down), so linear memory only grows as far as
+        // physical memory is used (see memory::linear_map).
+        let a = self.physical.lock().unwrap().alloc_range(min, max, size, align, true, protect, false)?;
         self.commit_ranges(map::PHYSICAL_BASE, &a.newly_committed)?;
         Ok(view + a.address - shift)
     }

@@ -9,16 +9,15 @@ fn main() {
         // main() blocks (it waits for the title to exit), so run it on a worker
         // and keep the browser thread free to service OPFS and spawn workers.
         "-sPROXY_TO_PTHREAD=1",
-        // Guest address space == linear memory (see runtime-core memory.rs):
-        // grown on demand up to the full 32-bit range.
+        // Guest memory is laid out compactly in linear memory (runtime-core memory.rs,
+        // linear_map), which grows on demand.
         "-sALLOW_MEMORY_GROWTH=1",
         // emcc warns that JS heap views are re-checked after growth with
         // pthreads; the runtime touches the heap from JS only for I/O proxying.
         "-Wno-pthreads-mem-growth",
-        // The guest never commits at or above 0xC0000000 (those physical views fold onto
-        // 0xA0000000, see runtime-core memory.rs), and iOS Safari refuses to reserve a 4 GiB
-        // shared memory (3 GiB works).
-        "-sMAXIMUM_MEMORY=3GB",
+        // runtime-core's linear_map::SIZE rounded up (main.rs checks it); iOS Safari often
+        // refuses to reserve a 3 GiB shared memory.
+        "-sMAXIMUM_MEMORY=1538MB",
         "-sINITIAL_MEMORY=128MB",
         // Keep low addresses unused so stray guest null-pointer accesses land in
         // unused memory rather than on host data.

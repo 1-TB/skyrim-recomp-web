@@ -52,8 +52,9 @@ pub fn recorded_with_arg1(tag: u32) -> Vec<RecordedCall> {
 unsafe extern "C-unwind" fn recorder(ctx: *mut PPCContext, base: *mut u8) {
     // SAFETY: called by Runtime::call with a live context and the guest base.
     let ctx = unsafe { &mut *ctx };
-    let pcr = ctx.gpr32(13) as usize;
-    // SAFETY: r13 is the thread's PCR, inside committed guest memory.
+    // Guest addresses go through the same translation as recompiled code's (skyrt_ea).
+    let pcr = runtime_core::memory::linear(ctx.gpr32(13)) as usize;
+    // SAFETY: r13 is the thread's PCR, inside committed guest memory (one frame).
     let (irql, dpc_active, process_type_in_dpc, cpu) = unsafe {
         let p = base.add(pcr);
         (

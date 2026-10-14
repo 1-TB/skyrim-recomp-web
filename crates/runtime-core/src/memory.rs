@@ -1,18 +1,16 @@
 //! The 4 GiB guest address space.
 //!
-//! Recompiled code addresses guest memory as `base + ea` with no translation hook
-//! for vector loads/stores, atomics and dcbz, so the whole 32-bit space must be
-//! one flat range starting at `base`.
+//! Guest addresses are translated to offsets in one flat "linear" range at `base`
+//! through a per-1 MiB table that recompiled code and the runtime share (see the
+//! translation section below and [`linear_map`]), which keeps the range small
+//! (~1.5 GiB) although the guest spreads its memory over 4 GiB of addresses.
 //!
-//! * Native: a 4 GiB reservation whose first 3 GiB (everything below the folded
-//!   physical views) is readable and writable from the start, like wasm linear
-//!   memory: pages cost nothing until touched, and the title's stray accesses
-//!   (reads past a commit, through null pointers) behave as in the browser
-//!   instead of faulting.
-//! * Web (wasm32): `base` is 0 and guest addresses *are* linear-memory
-//!   addresses. Emscripten's static data, stacks and heap live below
-//!   [`map::HOST_RESERVED_END`], a range the guest allocators never hand out.
-//!   Committing grows linear memory far enough to cover the range.
+//! * Native: a reservation of the whole layout, readable and writable from the
+//!   start like wasm linear memory: pages cost nothing until touched, and the
+//!   title's stray accesses behave as in the browser instead of faulting.
+//! * Web (wasm32): `base` is 0 and the range is linear memory. Emscripten's static
+//!   data, stacks and heap live below [`linear_map::HOST_END`]; committing grows
+//!   linear memory far enough to cover the range.
 //!
 //! Page protections are tracked by the heaps for queries but not enforced on
 //! either target, so both builds behave the same.
@@ -97,6 +95,10 @@ pub enum MemoryError {
     HostHeapCollision {
         host_break: u64,
     },
+    LinearPoolFull {
+        frames: u32,
+        wanted: u32,
+    },
 }
 
 impl fmt::Display for MemoryError {
@@ -113,8 +115,13 @@ impl fmt::Display for MemoryError {
             MemoryError::GrowFailed { needed_end } => {
                 write!(f, "could not grow linear memory to {needed_end:#X}")
             }
+            MemoryError::LinearPoolFull { frames, wanted } => write!(
+                f,
+                "out of linear memory for guest commits: {wanted} more 1 MiB frames needed, {frames} of {} in use",
+                linear_map::POOL_FRAMES
+            ),
             MemoryError::HostHeapCollision { host_break } => {
-                write!(f, "host heap break {host_break:#X} reached the guest range at {:#X}", map::HOST_RESERVED_END)
+                write!(f, "host heap break {host_break:#X} reached guest memory at {:#X}", linear_map::HOST_END)
             }
         }
     }
@@ -150,27 +157,24 @@ pub const fn fold_view(addr: u32) -> u32 {
 }
 
 impl GuestMemory {
-    /// Reserves the address space. Nothing is accessible until committed.
+    /// Reserves the linear range. Guest memory is usable once committed.
     pub fn reserve() -> Result<Self, MemoryError> {
         #[cfg(not(target_os = "emscripten"))]
         {
-            // SAFETY: anonymous PROT_NONE reservation; no existing mapping is touched.
+            // SAFETY: anonymous reservation of the linear layout; no existing mapping is
+            // touched. Readable and writable throughout, like wasm linear memory: pages cost
+            // nothing until touched.
             let ptr = unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
-                    GUEST_SPACE_SIZE as usize,
-                    libc::PROT_NONE,
+                    linear_map::SIZE as usize,
+                    libc::PROT_READ | libc::PROT_WRITE,
                     libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
                     -1,
                     0,
                 )
             };
             if ptr == libc::MAP_FAILED {
-                return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
-            }
-            // SAFETY: the start of the reservation made above.
-            let rc = unsafe { libc::mprotect(ptr, map::PHYS_VIEW_16M as usize, libc::PROT_READ | libc::PROT_WRITE) };
-            if rc != 0 {
                 return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
             }
             Ok(GuestMemory { base: (ptr as *mut u8).expose_provenance() })
@@ -230,6 +234,7 @@ impl GuestMemory {
         }
         let start = addr & !(PAGE_SIZE - 1);
         let end = (addr as u64 + len as u64 + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+        map_frames((start >> FRAME_SHIFT) as usize, ((end - 1) >> FRAME_SHIFT) as usize)?;
         self.commit_pages(start, end)?;
         COMMITTED.fetch_add(end - u64::from(start), Ordering::Relaxed);
         Ok(())
@@ -592,7 +597,7 @@ impl Drop for GuestMemory {
         #[cfg(not(target_os = "emscripten"))]
         // SAFETY: unmaps exactly the reservation created in `reserve`.
         unsafe {
-            libc::munmap(self.base_ptr() as *mut libc::c_void, GUEST_SPACE_SIZE as usize);
+            libc::munmap(self.base_ptr() as *mut libc::c_void, linear_map::SIZE as usize);
         }
     }
 }
@@ -641,7 +646,7 @@ pub fn host_heap_guard() -> Result<(), MemoryError> {
     }
     // SAFETY: sbrk(0) only queries the current break.
     let brk = unsafe { sbrk(0) } as usize as u64;
-    if brk >= map::HOST_RESERVED_END as u64 {
+    if brk >= linear_map::HOST_END as u64 {
         return Err(MemoryError::HostHeapCollision { host_break: brk });
     }
     Ok(())
@@ -656,30 +661,183 @@ pub fn host_heap_guard() -> Result<(), MemoryError> {
 //
 // Every guest address is stored at `linear(addr) = addr + skyrt_ea_offset[addr >> FRAME_SHIFT]`
 // (relative to `base`): recompiled code does the same lookup on every access (`skyrt_ea` in
-// cpp/ppc_context.h), and so does everything here. One entry per 1 MiB frame. The table holds
-// the physical-view folding ([`fold_view`]) and is the hook for laying guest memory out
-// compactly in linear memory: frames that are adjacent in the guest needn't be adjacent in
-// linear memory, so ranges are processed in runs of linearly contiguous frames
-// ([`GuestMemory::runs`]).
+// cpp/ppc_context.h), and so does everything here. One entry per 1 MiB frame.
+//
+// The guest uses ~2 GiB of address space sparsely (Skyrim: a 768 MiB and a 256 MiB heap range,
+// the XEX region, stacks, 512 MiB of physical memory in three views) but commits only a few
+// hundred MiB, and a wasm memory has to declare its maximum up front: iOS Safari often refuses
+// 3 GiB. So linear memory is laid out compactly ([`linear_map`]):
+//
+// * physical memory sits once, contiguously, at the top (all three views map onto it, the
+//   4 KiB view one page ahead), and is allocated bottom-up so it grows only as far as used;
+// * every other guest frame gets a linear frame from a pool when first committed, adjacent to
+//   its guest neighbour's when possible, and one commit's frames form one linear run, so
+//   accesses that straddle frames inside an allocation stay correct;
+// * frames never committed share one scratch frame, so stray accesses (the title reads through
+//   null pointers and past its commits) neither fault nor touch host data.
+//
+// Frames adjacent in the guest needn't be adjacent in linear memory, so the runtime processes
+// ranges in runs of linearly contiguous frames ([`GuestMemory::runs`]).
 
 pub const FRAME_SHIFT: u32 = 20;
 pub const FRAME_SIZE: u32 = 1 << FRAME_SHIFT;
 pub const FRAMES: usize = 1 << (32 - FRAME_SHIFT);
 
+/// Linear memory layout (offsets from `base`; on wasm, linear addresses).
+pub mod linear_map {
+    use super::{FRAME_SIZE, map};
+
+    /// Emscripten's static data, stacks and heap (unused natively).
+    pub const HOST_END: u32 = 0x1800_0000;
+    /// Shared by every guest frame that was never committed.
+    pub const SCRATCH: u32 = HOST_END;
+    /// Linear frames handed to committed guest frames outside physical memory.
+    pub const POOL_BASE: u32 = SCRATCH + FRAME_SIZE;
+    pub const POOL_FRAMES: u32 = 640;
+    /// Physical memory, stored once.
+    pub const PHYSICAL: u32 = POOL_BASE + POOL_FRAMES * FRAME_SIZE;
+    /// Everything, plus a page for the 4 KiB view's last page (one page past physical memory).
+    pub const SIZE: u64 = PHYSICAL as u64 + map::PHYSICAL_SIZE as u64 + 0x1_0000;
+}
+
 /// Linear offset of each guest frame. A load and an add per access measured ~25% fewer cycles
 /// in guest worker threads than the old compare-and-select fold (natively, at the main menu);
-/// 1 MiB entries cost the same as 16 MiB ones there.
+/// 1 MiB entries cost the same as 16 MiB ones there. Starts with the physical views mapped and
+/// everything else on the scratch frame; [`GuestMemory::commit`] maps the rest.
 #[unsafe(no_mangle)]
 pub static skyrt_ea_offset: [AtomicI32; FRAMES] = {
     let mut t = [const { AtomicI32::new(0) }; FRAMES];
     let mut i = 0;
     while i < FRAMES {
         let ea = (i as u32) << FRAME_SHIFT;
-        t[i] = AtomicI32::new(fold_view(ea).wrapping_sub(ea) as i32);
+        let folded = fold_view(ea);
+        let lin = if folded >= map::PHYSICAL_BASE && folded < map::PHYS_VIEW_16M {
+            linear_map::PHYSICAL + (folded - map::PHYSICAL_BASE)
+        } else {
+            linear_map::SCRATCH
+        };
+        t[i] = AtomicI32::new(lin.wrapping_sub(ea) as i32);
         i += 1;
     }
     t
 };
+
+/// Pool frames handed out, and the frame allocator's lock (commits on different heaps run
+/// concurrently).
+static POOL: std::sync::Mutex<Pool> = std::sync::Mutex::new(Pool { used: [0; POOL_WORDS], count: 0 });
+const POOL_WORDS: usize = (linear_map::POOL_FRAMES as usize).div_ceil(64);
+
+struct Pool {
+    used: [u64; POOL_WORDS],
+    count: u32,
+}
+
+impl Pool {
+    fn is_free(&self, i: u32) -> bool {
+        i < linear_map::POOL_FRAMES && self.used[i as usize / 64] & (1 << (i % 64)) == 0
+    }
+
+    fn run_free(&self, first: u32, n: u32) -> bool {
+        (first..first + n).all(|i| self.is_free(i))
+    }
+
+    /// Where a run of `n` frames with no mapped guest neighbour goes: the middle of the
+    /// largest free gap, which leaves room on both sides for the guest frames around it
+    /// to be committed later next to it (right after another run, they couldn't be).
+    fn fresh_run(&self, n: u32) -> Option<u32> {
+        let (mut best, mut gap) = (None, 0u32);
+        let mut i = 0;
+        while i < linear_map::POOL_FRAMES {
+            if !self.is_free(i) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < linear_map::POOL_FRAMES && self.is_free(i) {
+                i += 1;
+            }
+            if i - start >= n && i - start > gap {
+                (best, gap) = (Some(start), i - start);
+            }
+        }
+        best.map(|start| start + (gap - n) / 2)
+    }
+
+    fn take(&mut self, first: u32, n: u32) {
+        for i in first..first + n {
+            self.used[i as usize / 64] |= 1 << (i % 64);
+        }
+        self.count += n;
+    }
+}
+
+/// Whether guest frame `f` has linear memory of its own (physical frames always do).
+fn frame_mapped(f: usize) -> bool {
+    linear((f as u32) << FRAME_SHIFT) != linear_map::SCRATCH
+}
+
+/// Pool index of guest frame `f`'s linear frame, if it is a pool frame.
+fn pool_index(f: usize) -> Option<u32> {
+    let lin = linear((f as u32) << FRAME_SHIFT);
+    let i = lin.checked_sub(linear_map::POOL_BASE)? / FRAME_SIZE;
+    (i < linear_map::POOL_FRAMES).then_some(i)
+}
+
+/// Gives the unmapped guest frames of `[first, last]` linear frames: each run of unmapped
+/// frames gets one contiguous linear run, placed right after its guest predecessor's (or right
+/// before its successor's) when that is free.
+fn map_frames(first: usize, last: usize) -> Result<(), MemoryError> {
+    let mut pool = POOL.lock().unwrap();
+    let mut f = first;
+    while f <= last {
+        if frame_mapped(f) {
+            f += 1;
+            continue;
+        }
+        let mut end = f;
+        while end < last && !frame_mapped(end + 1) {
+            end += 1;
+        }
+        let n = (end - f + 1) as u32;
+        let after_prev = f.checked_sub(1).and_then(pool_index).map(|p| p + 1);
+        let before_next = (end + 1 < FRAMES).then(|| pool_index(end + 1)).flatten().and_then(|p| p.checked_sub(n));
+        let start = [after_prev, before_next]
+            .into_iter()
+            .flatten()
+            .find(|&p| pool.run_free(p, n))
+            .or_else(|| pool.fresh_run(n))
+            .ok_or(MemoryError::LinearPoolFull { frames: pool.count, wanted: n })?;
+        pool.take(start, n);
+        for (k, g) in (f..=end).enumerate() {
+            let lin = linear_map::POOL_BASE + (start + k as u32) * FRAME_SIZE;
+            skyrt_ea_offset[g].store(lin.wrapping_sub((g as u32) << FRAME_SHIFT) as i32, Ordering::Release);
+        }
+        f = end + 1;
+    }
+    Ok(())
+}
+
+/// Called by recompiled code built with `SKYRT_CHECK_FRAMES=1` for a scalar access at `ea`
+/// that straddles two frames not adjacent in linear memory: logs the first few and then every
+/// 1000th.
+#[unsafe(no_mangle)]
+pub extern "C" fn skyrt_frame_crossing(ea: u32, size: u32) {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 32 || n.is_multiple_of(1000) {
+        log::warn!(
+            "guest access of {size} bytes at {ea:#010X} straddles non-adjacent linear frames \
+             ({:#010X}, {:#010X}; #{n})",
+            linear(ea),
+            linear(ea.wrapping_add(size - 1))
+        );
+    }
+}
+
+/// Linear frames given to guest memory outside physical memory (used, available).
+pub fn linear_pool_usage() -> (u32, u32) {
+    (POOL.lock().unwrap().count, linear_map::POOL_FRAMES)
+}
 
 /// Whether `[addr, addr + len)` lies in one frame (and so is contiguous in linear memory).
 #[inline]
@@ -718,20 +876,45 @@ mod translation_tests {
     use super::*;
 
     #[test]
-    fn identity_layout_matches_fold_view() {
-        for ea in (0..=u32::MAX).step_by(0x1000).chain([0xBFFF_FFFF, 0xC000_0000, 0xDFFF_FFFF, 0xE000_0000, 0xFFFF_FFFF]) {
-            assert_eq!(linear(ea), fold_view(ea), "{ea:#010X}");
+    fn physical_views_share_one_copy() {
+        for p in (0..map::PHYSICAL_SIZE).step_by(0x1_0000) {
+            let lin = linear_map::PHYSICAL + p;
+            assert_eq!(linear(map::PHYS_VIEW_64K + p), lin);
+            assert_eq!(linear(map::PHYS_VIEW_16M + p), lin);
+            if p >= PAGE_SIZE {
+                assert_eq!(linear(map::PHYS_VIEW_4K + p - PAGE_SIZE), lin);
+            }
         }
+    }
+
+    #[test]
+    fn commits_get_pool_frames_next_to_their_neighbours() {
+        // Frames in the system range, which no other test commits.
+        let base = map::SYSTEM_BASE + 0x40_0000;
+        assert_eq!(linear(base), linear_map::SCRATCH);
+        map_frames((base >> FRAME_SHIFT) as usize, ((base >> FRAME_SHIFT) + 2) as usize).unwrap();
+        let lin = linear(base);
+        assert!(lin >= linear_map::POOL_BASE && lin < linear_map::PHYSICAL);
+        assert_eq!(linear(base + 2 * FRAME_SIZE + 5), lin + 2 * FRAME_SIZE + 5);
+        // A later commit just above continues the run.
+        let next = base + 3 * FRAME_SIZE;
+        map_frames((next >> FRAME_SHIFT) as usize, (next >> FRAME_SHIFT) as usize).unwrap();
+        assert_eq!(linear(next), lin + 3 * FRAME_SIZE);
+        let mut runs = 0;
+        linear_runs(base, u64::from(4 * FRAME_SIZE), |_, _, _| runs += 1);
+        assert_eq!(runs, 1);
     }
 
     #[test]
     fn runs_split_where_linear_memory_is_not_contiguous() {
         let mut runs = Vec::new();
-        // 0xBFF00000 (identity) is followed by 0xC0000000, which folds onto 0xA0000000.
-        linear_runs(0xBFE0_0000, 0x40_0000, |off, lin, n| runs.push((off, lin, n)));
-        assert_eq!(runs, [(0, 0xBFE0_0000, 0x20_0000), (0x20_0000, 0xA000_0000, 0x20_0000)]);
+        // The last 16 MiB-view frame is followed by the first 4 KiB-view frame, which maps
+        // one page into physical memory.
+        linear_runs(0xDFF0_0000, 0x20_0000, |off, lin, n| runs.push((off, lin, n)));
+        let top = linear_map::PHYSICAL + 0x1FF0_0000;
+        assert_eq!(runs, [(0, top, 0x10_0000), (0x10_0000, linear_map::PHYSICAL + 0x1000, 0x10_0000)]);
         runs.clear();
-        linear_runs(0x4000_0800, 0x30_0000, |off, lin, n| runs.push((off, lin, n)));
-        assert_eq!(runs, [(0, 0x4000_0800, 0x30_0000)]);
+        linear_runs(0xA000_0800, 0x30_0000, |off, lin, n| runs.push((off, lin, n)));
+        assert_eq!(runs, [(0, linear_map::PHYSICAL + 0x800, 0x30_0000)]);
     }
 }
