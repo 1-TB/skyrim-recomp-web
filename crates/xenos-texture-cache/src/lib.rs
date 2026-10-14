@@ -799,8 +799,12 @@ impl TextureCache {
         let started = std::time::Instant::now();
         let hash = hash_ranges(memory, &ranges, &mut self.scratch, &mut self.stats.hashed_bytes);
         let hashed = started.elapsed();
+        // From the GPU copy of guest memory, like Xenia: required where only it is current
+        // (resolve output, also when a texture only partly covers it), and otherwise cheaper
+        // than uploading the texture's bytes, as textures are reloaded whole when any of their
+        // memory changes while the copy is updated by changed page.
         if let Some(gpu) = gpu
-            && gpu.covers(&ranges)
+            && (gpu.covers(&ranges) || (self.config.gpu_conversion && gpu.sync(&ranges)))
         {
             match self.load_on_gpu(device, &*gpu, fetch, &info, caps, ranges.clone(), hash) {
                 Some(entry) => return Ok(entry),

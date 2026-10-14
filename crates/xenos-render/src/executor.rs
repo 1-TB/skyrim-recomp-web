@@ -57,6 +57,7 @@ const SYSTEM_SIZE: u64 = std::mem::size_of::<SystemConstants>() as u64;
 
 /// The shared memory as the texture cache's source of GPU-only data.
 struct SharedSource<'a> {
+    device: &'a Device,
     shared: &'a mut SharedMemory,
     memory: &'a dyn PhysicalMemory,
 }
@@ -65,6 +66,13 @@ impl GpuSource for SharedSource<'_> {
     fn covers(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
         let ranges: Vec<(u32, u32)> = ranges.iter().map(|r| (r.address, r.length)).collect();
         self.shared.gpu_covers(self.memory, &ranges)
+    }
+
+    fn sync(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
+        // Pages the device can't bind wouldn't be mirrored; a page that changed after a recorded
+        // draw read it can't be updated before that draw is submitted.
+        self.shared.part() == SHARED_MEMORY_BUFFER_BYTES
+            && ranges.iter().all(|r| self.shared.sync(self.device, self.memory, r.address, r.length).is_ok())
     }
 
     fn buffers(&self) -> (&[Buffer], u64) {
@@ -613,8 +621,10 @@ impl Executor {
             aniso_filter: xenos_shader::parsed::AnisoFilter::UseFetchConst,
         };
         let texture_memory = TextureMemory(self.memory.clone());
-        let mut source = SharedSource { shared: &mut self.shared, memory: &*self.memory };
+        let uploaded = self.shared.uploaded;
+        let mut source = SharedSource { device: &self.device, shared: &mut self.shared, memory: &*self.memory };
         let bound = self.textures.bind_with(&self.device, &texture_memory, &constants, &binding, Some(&mut source));
+        self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
         if bound.fallback {
             return None;
         }
@@ -1474,8 +1484,10 @@ impl Executor {
         let mut views: Vec<(u32, BindingKind)> = Vec::new();
         for shader in [Some(vs), ps].into_iter().flatten() {
             for binding in &shader.translation.texture_bindings {
-                let mut source = SharedSource { shared: &mut self.shared, memory: &*self.memory };
+                let uploaded = self.shared.uploaded;
+                let mut source = SharedSource { device: &self.device, shared: &mut self.shared, memory: &*self.memory };
                 let bound = self.textures.bind_with(&self.device, &texture_memory, &fetch, binding, Some(&mut source));
+                self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
                 push_texture(&mut layout_key, &mut views, binding, bound);
             }
         }

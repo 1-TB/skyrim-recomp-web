@@ -830,6 +830,9 @@ impl GpuSource for WholeMemory {
     fn covers(&mut self, _ranges: &[xenos_texture::GuestRange]) -> bool {
         true
     }
+    fn sync(&mut self, _ranges: &[xenos_texture::GuestRange]) -> bool {
+        true
+    }
     fn buffers(&self) -> (&[Buffer], u64) {
         (&self.buffers, MEMORY_SIZE as u64)
     }

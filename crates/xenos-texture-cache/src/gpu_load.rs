@@ -16,6 +16,10 @@ pub trait GpuSource {
     /// Whether the GPU copy is the up-to-date version of all of `ranges` (and guest memory may
     /// be stale there), so the texture must be loaded from it.
     fn covers(&mut self, ranges: &[GuestRange]) -> bool;
+    /// Brings the GPU copy of `ranges` up to date with guest memory, so the texture can be
+    /// loaded from it (only what changed since it was last brought up to date is uploaded,
+    /// rather than the whole texture). `false` if that isn't possible right now.
+    fn sync(&mut self, ranges: &[GuestRange]) -> bool;
     /// The buffers (`buffers[i]` holds physical bytes `i * buffer_bytes ..`) and their size.
     fn buffers(&self) -> (&[Buffer], u64);
 }
