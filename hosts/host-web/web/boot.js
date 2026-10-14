@@ -140,10 +140,14 @@ try {
 function saveCrumbs(clean = false) {
   if (!running) return;
   try {
-    const wasm = window.Module?.HEAPU8?.buffer.byteLength;
+    const M = window.Module;
+    const mib = (b) => (b / 2 ** 20).toFixed(0);
+    // The page's HEAPU8 view is not updated when a worker grows memory: ask the runtime.
+    const wasm = M?._skyrt_memory_bytes?.() ?? M?.HEAPU8?.buffer.byteLength;
     const heap = performance.memory?.usedJSHeapSize;
+    const io = M?._skyrt_io_stats ? `, files read ${mib(M._skyrt_io_stats(0))} MiB (${mib(M._skyrt_io_stats(1))} MiB via Blobs), ${M._skyrt_io_stats(2)} open` : '';
     const lines = fullLog.slice(-40);
-    lines.push(`(crumb: wasm ${wasm ? (wasm / 2 ** 20).toFixed(0) : '?'} MiB${heap ? `, JS heap ${(heap / 2 ** 20).toFixed(0)} MiB` : ''})`);
+    lines.push(`(crumb: wasm ${wasm ? mib(wasm) : '?'} MiB${heap ? `, JS heap ${mib(heap)} MiB` : ''}${io})`);
     localStorage.setItem(CRUMBS_KEY, JSON.stringify({ session: logSession, at: Date.now(), up: performance.now(), clean, lines }));
   } catch {}
 }

@@ -151,6 +151,19 @@ pub extern "C" fn skyrt_memory_bytes() -> f64 {
     (core::arch::wasm32::memory_size(0) as f64) * 65536.0
 }
 
+/// Host file-read statistics for the page's crash breadcrumbs: `what` 0 = bytes read,
+/// 1 = of those through files opened read-only (Blob reads in WasmFS), 2 = open files.
+#[cfg(target_os = "emscripten")]
+#[unsafe(no_mangle)]
+pub extern "C" fn skyrt_io_stats(what: i32) -> f64 {
+    let (read, read_only, open) = vfs::stats::snapshot();
+    match what {
+        0 => read as f64,
+        1 => read_only as f64,
+        _ => open as f64,
+    }
+}
+
 #[cfg(not(target_os = "emscripten"))]
 fn main() {
     eprintln!("host-web targets wasm32-unknown-emscripten (cargo xtask build-web); use skyrim-native on this host");

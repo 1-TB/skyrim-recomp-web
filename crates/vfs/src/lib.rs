@@ -245,6 +245,36 @@ pub struct VfsFile {
     pub guest_path: String,
     pub host_path: PathBuf,
     pub read_only: bool,
+    /// Opened read-only in the host file system (in the browser: WasmFS reads it through a
+    /// Blob, a JS buffer per read; see [`open_for_reading`]).
+    host_read_only: bool,
+}
+
+/// Host file reads, for crash breadcrumbs and memory diagnostics.
+pub mod stats {
+    use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+
+    pub(crate) static BYTES_READ: AtomicU64 = AtomicU64::new(0);
+    pub(crate) static BYTES_READ_READ_ONLY: AtomicU64 = AtomicU64::new(0);
+    pub(crate) static OPEN_FILES: AtomicI64 = AtomicI64::new(0);
+
+    /// Bytes read from host files, of those through files opened read-only, and the number of
+    /// host files open.
+    pub fn snapshot() -> (u64, u64, i64) {
+        (
+            BYTES_READ.load(Ordering::Relaxed),
+            BYTES_READ_READ_ONLY.load(Ordering::Relaxed),
+            OPEN_FILES.load(Ordering::Relaxed),
+        )
+    }
+}
+
+impl Drop for VfsFile {
+    fn drop(&mut self) {
+        if matches!(self.file, FileImpl::Host(_)) {
+            stats::OPEN_FILES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 impl VfsFile {
@@ -261,6 +291,10 @@ impl VfsFile {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
+        }
+        stats::BYTES_READ.fetch_add(done as u64, std::sync::atomic::Ordering::Relaxed);
+        if self.host_read_only {
+            stats::BYTES_READ_READ_ONLY.fetch_add(done as u64, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(done)
     }
@@ -557,11 +591,17 @@ impl Vfs {
                 if (req.write || truncates) && read_only {
                     return Err(VfsError::AccessDenied);
                 }
-                let file = if !req.write && !truncates && cfg!(target_os = "emscripten") {
+                let (file, host_read_only) = if !req.write && !truncates && cfg!(target_os = "emscripten") {
                     open_for_reading(&r.host_path)?
                 } else {
-                    OpenOptions::new().read(true).write(req.write || truncates).truncate(truncates).open(&r.host_path)?
+                    let file = OpenOptions::new()
+                        .read(true)
+                        .write(req.write || truncates)
+                        .truncate(truncates)
+                        .open(&r.host_path)?;
+                    (file, !req.write && !truncates)
                 };
+                stats::OPEN_FILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let action = match req.disposition {
                     Disposition::Supersede => CreateAction::Superseded,
                     Disposition::Overwrite | Disposition::OverwriteIf => CreateAction::Overwritten,
@@ -573,6 +613,7 @@ impl Vfs {
                         guest_path: r.guest_path,
                         host_path: r.host_path,
                         read_only: read_only || (!req.write && !truncates),
+                        host_read_only,
                     }),
                     action,
                 ))
@@ -601,12 +642,14 @@ impl Vfs {
                     ));
                 }
                 let file = OpenOptions::new().read(true).write(true).create_new(true).open(&r.host_path)?;
+                stats::OPEN_FILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 Ok((
                     Node::File(VfsFile {
                         file: FileImpl::Host(file),
                         guest_path: r.guest_path,
                         host_path: r.host_path,
                         read_only: false,
+                        host_read_only: false,
                     }),
                     CreateAction::Created,
                 ))
@@ -653,6 +696,7 @@ fn open_remote(tree: Arc<remote::RemoteTree>, r: Resolved, req: OpenRequest) -> 
                     guest_path: r.guest_path,
                     host_path: r.host_path,
                     read_only: true,
+                    host_read_only: false,
                 }),
                 CreateAction::Opened,
             ))
@@ -712,6 +756,19 @@ fn resolve_case_insensitive(root: &Path, components: &[&str]) -> PathBuf {
 /// streams hundreds of MiB that way in its first seconds in game, and on iOS the garbage pushed
 /// the page past its memory limit. Opened for writing, WasmFS uses a sync access handle instead,
 /// which reads straight into wasm memory. Nothing is written: the VFS keeps the file read-only.
-fn open_for_reading(path: &Path) -> io::Result<File> {
-    OpenOptions::new().read(true).write(true).open(path).or_else(|_| File::open(path))
+fn open_for_reading(path: &Path) -> io::Result<(File, bool)> {
+    static REPORTED: std::sync::Once = std::sync::Once::new();
+    static FALLBACK_REPORTED: std::sync::Once = std::sync::Once::new();
+    match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(f) => {
+            REPORTED.call_once(|| log::info!("vfs: game files read through OPFS access handles (opened read-write)"));
+            Ok((f, false))
+        }
+        Err(e) => {
+            FALLBACK_REPORTED.call_once(|| {
+                log::warn!("vfs: {} can't be opened read-write ({e}); reading through Blobs", path.display())
+            });
+            Ok((File::open(path)?, true))
+        }
+    }
 }
