@@ -178,8 +178,9 @@ const SLOW_REQUEST: std::time::Duration = std::time::Duration::from_secs(2);
 /// Largest single range request.
 const MAX_REQUEST: usize = 16 << 20;
 
-/// Fetches `<base>manifest` and returns the tree it describes.
-pub fn open(base: &str) -> Result<Arc<RemoteTree>, String> {
+/// Fetches `<base>manifest` and returns the tree it describes, caching small reads in
+/// `cache_mib` (default: [`DEFAULT_CACHE_CHUNKS`]).
+pub fn open(base: &str, cache_mib: Option<u64>) -> Result<Arc<RemoteTree>, String> {
     let base = if base.ends_with('/') { base.to_string() } else { format!("{base}/") };
     log::info!("streaming: fetching the game file list from {base}manifest");
     let url = CString::new(format!("{base}manifest")).map_err(|e| e.to_string())?;
@@ -195,7 +196,8 @@ pub fn open(base: &str) -> Result<Arc<RemoteTree>, String> {
     };
     let files = CString::new(format!("{base}files/")).map_err(|e| e.to_string())?;
     let ranges = HttpRanges::new(files).map_err(|e| format!("starting the streaming thread: {e}"))?;
-    let tree = RemoteTree::from_manifest(&manifest, Arc::new(ranges), DEFAULT_CACHE_CHUNKS);
+    let chunks = cache_mib.map_or(DEFAULT_CACHE_CHUNKS, |mib| ((mib << 20) / vfs::remote::CHUNK_BYTES) as usize);
+    let tree = RemoteTree::from_manifest(&manifest, Arc::new(ranges), chunks);
     let Some((vfs::remote::RemoteKind::File { size }, _)) = tree.lookup("default.xex") else {
         return Err(format!("the streamed game at {base} has no default.xex"));
     };

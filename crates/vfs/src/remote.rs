@@ -18,11 +18,15 @@ pub trait RangeReader: Send + Sync {
     fn read(&self, path: &str, offset: u64, buf: &mut [u8]) -> io::Result<usize>;
 }
 
-/// Bytes per cached chunk (and per request, unless a read spans several).
-pub const CHUNK_BYTES: u64 = 2 << 20;
-/// Default cache size in chunks. The cache serves the many small reads titles make from
-/// archives; it lives in the host heap, which on the web is wasm memory that never shrinks.
-pub const DEFAULT_CACHE_CHUNKS: usize = 32;
+/// Bytes per cached chunk (and per request, unless a read spans several). Each small read
+/// fetches whole chunks: Skyrim streams ~1.4 GiB to get in game with 2 MiB chunks, ~510 MiB
+/// with 256 KiB (in ~1.6k requests rather than ~700; smaller chunks save less than the extra
+/// requests cost over a phone's Wi-Fi).
+pub const CHUNK_BYTES: u64 = 256 << 10;
+/// Default cache size in chunks (16 MiB). The cache serves the many small reads titles make
+/// from archives; it lives in the host heap, which on the web is wasm memory that never
+/// shrinks (Skyrim: 64 MiB of cache streams 5-8% fewer bytes).
+pub const DEFAULT_CACHE_CHUNKS: usize = 64;
 
 #[derive(Debug, Clone)]
 enum Entry {

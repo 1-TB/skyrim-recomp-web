@@ -29,12 +29,13 @@ const _: () = assert!(runtime_core::memory::linear_map::SIZE <= 1538 << 20);
 fn main() {
     use std::path::PathBuf;
 
-    let opts = match boot::parse(std::env::args().skip(1), &["--node-dir", "--stream-game"]) {
+    let opts = match boot::parse(std::env::args().skip(1), &["--node-dir", "--stream-game", "--stream-cache-mib"]) {
         Ok(o) => o,
         Err(msg) => {
             eprintln!(
                 "host-web options:\n  --node-dir DIR           (Node.js only) use DIR instead of OPFS\n  \
-                 --stream-game URL        read the game files from the server at URL\n{msg}"
+                 --stream-game URL        read the game files from the server at URL\n  \
+                 --stream-cache-mib N     memory for small streamed reads (default 16)\n{msg}"
             );
             std::process::exit(2);
         }
@@ -46,6 +47,14 @@ fn main() {
     let extra = |flag: &str| opts.extra.iter().find(|(k, _)| k == flag).map(|(_, v)| v.clone());
     let node_dir = extra("--node-dir");
     let stream_url = extra("--stream-game");
+    let stream_cache = match extra("--stream-cache-mib").map(|v| v.parse::<u64>()) {
+        None => None,
+        Some(Ok(mib)) => Some(mib),
+        Some(Err(e)) => {
+            eprintln!("--stream-cache-mib: {e}");
+            std::process::exit(2);
+        }
+    };
     // Node.js has no canvas or WebGPU: headless runs only execute the title.
     let render = node_dir.is_none();
     let (game_root, content): (PathBuf, PathBuf) = match node_dir {
@@ -65,7 +74,7 @@ fn main() {
         },
     };
     let game = match stream_url {
-        Some(url) => match stream::open(&url) {
+        Some(url) => match stream::open(&url, stream_cache) {
             Ok(tree) => vfs::GameRoot::Remote(tree),
             Err(e) => {
                 log::error!("{e}");
