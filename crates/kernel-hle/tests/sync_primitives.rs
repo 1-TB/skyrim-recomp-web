@@ -469,3 +469,49 @@ fn spinlocks_record_owner_pcr_and_irql() {
     assert_eq!(k.mem().read_u32(lock), 0);
     assert_eq!(k.mem().read_u8(pcr + 0x18), old as u8);
 }
+
+#[test]
+fn barrier_thread_late_to_its_wait_is_released_by_the_set_it_missed() {
+    // Skyrim's job barrier: poll the notification event, count in (no kernel call), wait. A
+    // thread preempted between counting in and waiting must not miss the last thread's set
+    // when the main thread resets the event before it gets to the wait.
+    let k = kernel();
+    let mut ctx = guest(k);
+    let mem = scratch(k, 0x1000);
+    let ev = mem;
+    k.call_export("KeInitializeEvent", &mut ctx, &[ev, NOTIFICATION, 0]);
+    let (polled, go) = (Arc::new(Barrier::new(2)), Arc::new(Barrier::new(2)));
+    let late = {
+        let (polled, go) = (polled.clone(), go.clone());
+        thread::spawn(move || {
+            let mut ctx = guest(k);
+            let poll = timeout_ms(k, mem + 0x100, 0);
+            let first = k.call_export("KeWaitForSingleObject", &mut ctx, &[ev, 0, 0, 0, poll]) as u32;
+            polled.wait();
+            // Preempted here while the event is set and reset.
+            go.wait();
+            let t = timeout_ms(k, mem + 0x108, 2000);
+            (first, k.call_export("KeWaitForSingleObject", &mut ctx, &[ev, 0, 0, 0, t]) as u32)
+        })
+    };
+    polled.wait();
+    k.call_export("KeSetEvent", &mut ctx, &[ev, 0, 0]);
+    k.call_export("KeResetEvent", &mut ctx, &[ev]);
+    go.wait();
+    assert_eq!(late.join().unwrap(), (status::TIMEOUT, status::SUCCESS));
+
+    // A thread that polls and then makes another kernel call before waiting gets no such pass.
+    let poll = timeout_ms(k, mem + 0x100, 0);
+    assert_eq!(k.call_export("KeWaitForSingleObject", &mut ctx, &[ev, 0, 0, 0, poll]) as u32, status::TIMEOUT);
+    let other = {
+        let mut ctx = guest(k);
+        thread::spawn(move || {
+            k.call_export("KeSetEvent", &mut ctx, &[ev, 0, 0]);
+            k.call_export("KeResetEvent", &mut ctx, &[ev]);
+        })
+    };
+    other.join().unwrap();
+    k.call_export("KeQuerySystemTime", &mut ctx, &[mem + 0x200]);
+    let t = timeout_ms(k, mem + 0x108, 100);
+    assert_eq!(k.call_export("KeWaitForSingleObject", &mut ctx, &[ev, 0, 0, 0, t]) as u32, status::TIMEOUT);
+}

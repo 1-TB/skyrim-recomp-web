@@ -286,6 +286,11 @@ struct DispState {
     /// Who last signalled each object (thread id, caller's return address, when), kept only
     /// while slow-call logging is on (see [`ObjectManager::last_signal`]).
     last_signal: HashMap<ObjId, (u32, u32, Instant)>,
+    /// Sets of each manual-reset event so far, and per thread its last zero-timeout poll of one
+    /// that timed out: (event, sets at the poll, the thread's kernel calls at the poll). See
+    /// [`ObjectManager::wait`] on barriers.
+    event_sets: HashMap<ObjId, u64>,
+    polls: HashMap<u32, (ObjId, u64, u64)>,
 }
 
 impl DispState {
@@ -694,6 +699,7 @@ impl ObjectManager {
             SyncState::Event { signaled, .. } => std::mem::replace(signaled, true) as i32,
             _ => 0,
         };
+        *d.event_sets.entry(obj.id).or_default() += 1;
         d.note_signal(obj.id);
         d.mirror(mem, obj.id);
         if d.wake_waiters(mem) {
@@ -769,6 +775,7 @@ impl ObjectManager {
             SyncState::Event { signaled, .. } => std::mem::replace(signaled, true) as i32,
             _ => return Some(0),
         };
+        *d.event_sets.entry(obj.id).or_default() += 1;
         d.note_signal(obj.id);
         d.wake_waiters(mem);
         if let Some(SyncState::Event { signaled, .. }) = d.sync.get_mut(&obj.id) {
@@ -866,13 +873,44 @@ impl ObjectManager {
         if !objects.is_empty()
             && let Some(r) = d.try_satisfy(mem, tid, objects, wait_all)
         {
+            d.polls.remove(&tid);
             return WaitOutcome::Satisfied(r);
+        }
+        // Barriers: Skyrim's job threads poll a manual-reset event (timeout 0), count themselves
+        // in with an atomic add, and, unless they were last (the last one sets the event), wait
+        // for it. On hardware the gap between the add and the wait is a few instructions; on the
+        // host a thread can be preempted there while the last one sets the event, the frame
+        // finishes and the main thread resets the event for the next one, so the late thread
+        // waits forever (seen in the browser: three job threads split across two barriers and
+        // the frame never ends). A thread whose previous kernel call was a timed-out poll of
+        // this event, and that waits on it next, is released if the event was set in between,
+        // as it would have been on hardware.
+        let calls = crate::thread::kernel_call_count();
+        if let [obj] = objects
+            && let Some(&(polled, sets_then, calls_then)) = d.polls.get(&tid)
+        {
+            let missed = polled == *obj
+                && calls == calls_then + 1
+                && d.event_sets.get(obj).copied().unwrap_or(0) > sets_then
+                && matches!(d.sync.get(obj), Some(SyncState::Event { manual_reset: true, .. }));
+            d.polls.remove(&tid);
+            if missed {
+                return WaitOutcome::Satisfied(0);
+            }
+        } else {
+            d.polls.remove(&tid);
         }
         let apc_pending = |d: &DispState| d.apcs.get(&tid).is_some_and(|q| !q.is_empty());
         if alertable && apc_pending(&d) {
             return WaitOutcome::Apc;
         }
         if deadline.is_some_and(|dl| Instant::now() >= dl) {
+            if let [obj] = objects
+                && matches!(d.sync.get(obj), Some(SyncState::Event { manual_reset: true, .. }))
+            {
+                let sets = d.event_sets.get(obj).copied().unwrap_or(0);
+                d.polls.insert(tid, (*obj, sets, calls));
+            }
             return WaitOutcome::Timeout;
         }
         let id = d.next_wait;
