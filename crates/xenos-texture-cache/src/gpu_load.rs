@@ -24,9 +24,17 @@ pub trait GpuSource {
     /// GPU copy into `dst` at `dst_offset`. `false` (with nothing encoded) if part of the range
     /// isn't mirrored.
     fn gather(&self, encoder: &mut CommandEncoder, address: u32, len: u32, dst: &Buffer, dst_offset: u64) -> bool;
-    /// Runs a load's commands after the work recorded so far: queued with it (one submission
-    /// for many loads, and in order with the draws around them) or submitted right away.
-    fn submit(&mut self, device: &Device, commands: CommandBuffer);
+    /// The encoder a load records into, after the work recorded so far; handed back with
+    /// [`GpuSource::return_encoder`].
+    fn take_encoder(&mut self, device: &Device) -> CommandEncoder;
+    /// Takes back the encoder with the load recorded: it's submitted right away, or with the
+    /// source's batch (see [`GpuSource::batched`]).
+    fn return_encoder(&mut self, device: &Device, encoder: CommandEncoder);
+    /// Whether loads go with a batch the source submits later (one submission for many loads,
+    /// in order with the draws around them). The source must then call
+    /// `TextureCache::flush_loads` before submitting it: the loads' parameters are uploaded
+    /// together then.
+    fn batched(&self) -> bool;
 }
 
 /// Row alignment of `copy_buffer_to_texture`.
@@ -207,6 +215,10 @@ pub(crate) struct GpuLoader {
     params: Option<Buffer>,
     /// Next free parameter slot.
     param_cursor: usize,
+    /// Parameters of loads recorded but not uploaded yet (one upload per batch rather than per
+    /// load), for the slots from `pending_from` on.
+    pending: Vec<u8>,
+    pending_from: usize,
     /// Buffers replaced by bigger ones, destroyed at [`GpuLoader::end_batch`] (queued loads may
     /// still use them).
     retired: Vec<Buffer>,
@@ -292,7 +304,7 @@ impl GpuLoader {
             self.groups.clear();
         }
         let upload = self.upload.clone().expect("ensured above");
-        let mut encoder = device.create_command_encoder("texture gpu load");
+        let mut encoder = source.take_encoder(device);
         let mut sources = Vec::with_capacity(plan.levels.len());
         for (level, &offset) in plan.levels.iter().zip(&offsets) {
             let (address, len) = level.source;
@@ -300,13 +312,18 @@ impl GpuLoader {
             let start = address & !3;
             let end = (u64::from(address) + u64::from(len.max(1))).next_multiple_of(4);
             if !source.gather(&mut encoder, start, (end - u64::from(start)) as u32, &upload, offset) {
+                // Copies gathered so far only fill the upload buffer, which nothing reads yet.
+                source.return_encoder(device, encoder);
                 return false;
             }
             sources.push((upload.clone(), start.wrapping_sub(offset as u32)));
         }
-        // The conversion follows the copies in the same command buffer.
-        let commands = self.dispatch(device, encoder, &sources, plan, texture);
-        source.submit(device, commands);
+        // The conversion follows the copies.
+        self.dispatch(device, &mut encoder, &sources, plan, texture);
+        if !source.batched() {
+            self.flush_params(device);
+        }
+        source.return_encoder(device, encoder);
         true
     }
 
@@ -345,23 +362,33 @@ impl GpuLoader {
             .collect();
         // Submitted at once: the upload is written for the next submission, and loads queued
         // into one would all see the last load's bytes.
-        let commands =
-            self.dispatch(device, device.create_command_encoder("texture gpu load"), &sources, plan, texture);
-        device.queue().submit([commands]);
+        let mut encoder = device.create_command_encoder("texture gpu load");
+        self.dispatch(device, &mut encoder, &sources, plan, texture);
+        self.flush_params(device);
+        device.queue().submit([encoder.finish("texture gpu load")]);
         uploaded
     }
 
+    /// Uploads the parameters of the loads recorded since the last call (before the commands
+    /// using them are submitted).
+    pub(crate) fn flush_params(&mut self, device: &Device) {
+        if let Some(params) = self.params.as_ref().filter(|_| !self.pending.is_empty()) {
+            device.queue().write_buffer(params, self.pending_from as u64 * PARAMS_STRIDE, &self.pending);
+        }
+        self.pending.clear();
+        self.pending_from = self.param_cursor;
+    }
+
     /// Converts each level from its source buffer (holding guest bytes from address `base` on)
-    /// into `texture`, recording into `encoder` (after anything already in it); returns the
-    /// commands.
+    /// into `texture`, recording into `encoder` (after anything already in it).
     fn dispatch(
         &mut self,
         device: &Device,
-        mut encoder: CommandEncoder,
+        encoder: &mut CommandEncoder,
         sources: &[(Buffer, u32)],
         plan: &Plan,
         texture: &Texture,
-    ) -> CommandBuffer {
+    ) {
         let mut replaced = ensure(
             &mut self.out,
             &mut self.retired,
@@ -372,6 +399,10 @@ impl GpuLoader {
         );
         let slots = (self.param_cursor + plan.levels.len()).max(PARAM_SLOTS);
         let params_usage = BufferUsage::Uniform | BufferUsage::CopyDst;
+        if self.params.as_ref().is_some_and(|b| b.size() < slots as u64 * PARAMS_STRIDE) {
+            // Pending parameters belong in the buffer the loads recorded so far bind.
+            self.flush_params(device);
+        }
         if ensure(
             &mut self.params,
             &mut self.retired,
@@ -382,6 +413,7 @@ impl GpuLoader {
         ) {
             // Slots of the old buffer stay as written; a new one starts over.
             self.param_cursor = 0;
+            self.pending_from = 0;
             replaced = true;
         }
         if replaced {
@@ -394,15 +426,14 @@ impl GpuLoader {
         let mut groups = Vec::with_capacity(plan.levels.len());
         // The levels' parameters, in consecutive slots.
         let first_slot = self.param_cursor;
-        let mut bytes = Vec::with_capacity(plan.levels.len() * PARAMS_STRIDE as usize);
+        debug_assert_eq!(self.pending_from + self.pending.len() / PARAMS_STRIDE as usize, first_slot);
         for (level, (_, base)) in plan.levels.iter().zip(sources) {
             let mut words = level.params;
             words[21] = *base;
             words[25] = (level.out_offset / 4) as u32;
-            bytes.extend(words.iter().flat_map(|w| w.to_le_bytes()));
-            bytes.resize(bytes.len().next_multiple_of(PARAMS_STRIDE as usize), 0);
+            self.pending.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+            self.pending.resize(self.pending.len().next_multiple_of(PARAMS_STRIDE as usize), 0);
         }
-        device.queue().write_buffer(&params, first_slot as u64 * PARAMS_STRIDE, &bytes);
         self.param_cursor += plan.levels.len();
         for (_, (buffer, _)) in plan.levels.iter().zip(sources) {
             let key = (atomic, buffer.raw() as usize, out.raw() as usize);
@@ -455,13 +486,14 @@ impl GpuLoader {
                 extent(level.copy.0, level.copy.1, level.copy.2),
             );
         }
-        encoder.finish("texture gpu load")
     }
 
     /// Everything recorded with the loader so far was submitted: its parameter slots can be
     /// reused and the buffers it replaced freed.
     pub(crate) fn end_batch(&mut self) {
+        debug_assert!(self.pending.is_empty(), "texture loads submitted before flush_loads");
         self.param_cursor = 0;
+        self.pending_from = 0;
         for buffer in self.retired.drain(..) {
             buffer.destroy();
         }

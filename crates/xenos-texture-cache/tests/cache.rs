@@ -935,8 +935,14 @@ impl GpuSource for WholeMemory {
         encoder.copy_buffer_to_buffer(&self.buffers[0], u64::from(address), dst, dst_offset, u64::from(len));
         true
     }
-    fn submit(&mut self, device: &Device, commands: CommandBuffer) {
-        device.queue().submit([commands]);
+    fn take_encoder(&mut self, device: &Device) -> CommandEncoder {
+        device.create_command_encoder("test load")
+    }
+    fn return_encoder(&mut self, device: &Device, encoder: CommandEncoder) {
+        device.queue().submit([encoder.finish("test load")]);
+    }
+    fn batched(&self) -> bool {
+        false
     }
 }
 

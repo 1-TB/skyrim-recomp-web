@@ -73,9 +73,9 @@ struct SharedSource<'a> {
     device: &'a Device,
     shared: &'a mut SharedMemory,
     memory: &'a dyn PhysicalMemory,
-    /// The batch being recorded: texture loads are queued after what it has so far.
+    /// The batch being recorded: texture loads are recorded after what it has so far (the
+    /// pass being recorded is encoded later, after them).
     encoder: &'a mut Option<CommandEncoder>,
-    queued: &'a mut Vec<CommandBuffer>,
 }
 
 impl GpuSource for SharedSource<'_> {
@@ -94,12 +94,16 @@ impl GpuSource for SharedSource<'_> {
         self.shared.gather(encoder, address, len, dst, dst_offset)
     }
 
-    fn submit(&mut self, _device: &Device, commands: CommandBuffer) {
-        // After everything encoded so far (the pass being recorded is encoded later, after it).
-        if let Some(encoder) = self.encoder.take() {
-            self.queued.push(encoder.finish("xenos"));
-        }
-        self.queued.push(commands);
+    fn take_encoder(&mut self, device: &Device) -> CommandEncoder {
+        self.encoder.take().unwrap_or_else(|| device.create_command_encoder("xenos"))
+    }
+
+    fn return_encoder(&mut self, _device: &Device, encoder: CommandEncoder) {
+        *self.encoder = Some(encoder);
+    }
+
+    fn batched(&self) -> bool {
+        true
     }
 }
 
@@ -406,9 +410,6 @@ pub struct Executor {
     /// `targets`' resolution scale (host pixels per guest pixel along each axis).
     resolution_scale: u32,
     encoder: Option<CommandEncoder>,
-    /// Recorded work closed into command buffers (to put texture loads after it), submitted
-    /// before `encoder` with the batch.
-    queued: Vec<CommandBuffer>,
     /// Guest memory ranges a draw reads (kept to reuse the allocation).
     vertex_ranges: Vec<(u32, u32)>,
     /// Time spent in operations that may be slow on some devices (see [`OpTimes`]).
@@ -698,7 +699,6 @@ impl Executor {
             targets,
             resolution_scale,
             encoder: None,
-            queued: Vec::new(),
             times: OpTimes::default(),
             vertex_ranges: Vec::new(),
             pass: None,
@@ -744,7 +744,6 @@ impl Executor {
             shared: &mut self.shared,
             memory: &*self.memory,
             encoder: &mut self.encoder,
-            queued: &mut self.queued,
         };
         let bound = self.textures.bind_with(&self.device, &texture_memory, &constants, &binding, Some(&mut source));
         self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
@@ -891,11 +890,12 @@ impl Executor {
             commands
         });
         self.targets.flush_uploads(&self.device);
+        self.textures.flush_loads(&self.device);
         let main = self.encoder.take().map(|encoder| encoder.finish("xenos"));
         // Uploads without commands are submitted too (empty), to know when they've reached the GPU.
         let uploaded = gpu_webgpu::counters::upload_bytes();
-        if patches.is_some() || main.is_some() || !self.queued.is_empty() || uploaded > self.uploaded_at_submit {
-            self.device.queue().submit(patches.into_iter().chain(self.queued.drain(..)).chain(main));
+        if patches.is_some() || main.is_some() || uploaded > self.uploaded_at_submit {
+            self.device.queue().submit(patches.into_iter().chain(main));
             self.stats.submissions += 1;
             if uploaded > self.uploaded_at_submit {
                 let done = self.device.queue().on_submitted_work_done();
@@ -1858,7 +1858,6 @@ impl Executor {
                     shared: &mut self.shared,
                     memory: &*self.memory,
                     encoder: &mut self.encoder,
-                    queued: &mut self.queued,
                 };
                 let bound = self.textures.bind_with(&self.device, &texture_memory, &fetch, binding, Some(&mut source));
                 self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;

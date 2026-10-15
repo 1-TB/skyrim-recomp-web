@@ -807,7 +807,13 @@ impl TextureCache {
         self.stats.evicted += (before - self.textures.len()) as u64;
     }
 
-    /// Everything recorded so far (including loads queued with [`GpuSource::submit`]) was
+    /// Uploads what the loads recorded into a [`GpuSource`]'s batch need: call before
+    /// submitting the batch.
+    pub fn flush_loads(&mut self, device: &Device) {
+        self.gpu_loader.flush_params(device);
+    }
+
+    /// Everything recorded so far (including loads recorded into a [`GpuSource`]'s batch) was
     /// submitted.
     pub fn end_batch(&mut self) {
         self.gpu_loader.end_batch();
