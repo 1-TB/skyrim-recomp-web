@@ -208,6 +208,9 @@ pub trait GpuBackend: Send + Sync {
     }
 }
 
+/// `--gpu-sync`: the command processor waits for the renderer at each [`Deferred`] effect.
+pub static SYNC_EFFECTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// An effect the CPU can observe that waits until the renderer has executed the commands sent
 /// before it, as the GPU reaches it on the console. The command processor goes on meanwhile.
 #[derive(Debug, Clone, Copy)]
@@ -699,7 +702,8 @@ impl CommandProcessor<'_> {
     /// round trip through the renderer worker's event loop, ~20 per frame).
     fn defer(&mut self, opcode: u32, action: Deferred) {
         self.flush_registers();
-        match self.backend.as_ref().and_then(|b| b.submitted()) {
+        let sync = SYNC_EFFECTS.load(Ordering::Relaxed);
+        match self.backend.as_ref().and_then(|b| b.submitted()).filter(|_| !sync) {
             Some(seq) => {
                 self.deferred.push_back((seq, action));
                 self.deferred_count += 1;

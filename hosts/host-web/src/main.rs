@@ -29,13 +29,17 @@ const _: () = assert!(runtime_core::memory::linear_map::SIZE <= 1538 << 20);
 fn main() {
     use std::path::PathBuf;
 
-    let opts = match boot::parse(std::env::args().skip(1), &["--node-dir", "--stream-game", "--stream-cache-mib"]) {
+    let wasi_clock = std::env::args().any(|a| a == "--wasi-clock");
+    clock::WASI.store(wasi_clock, std::sync::atomic::Ordering::Relaxed);
+    let args = std::env::args().skip(1).filter(|a| a != "--wasi-clock");
+    let opts = match boot::parse(args, &["--node-dir", "--stream-game", "--stream-cache-mib"]) {
         Ok(o) => o,
         Err(msg) => {
             eprintln!(
                 "host-web options:\n  --node-dir DIR           (Node.js only) use DIR instead of OPFS\n  \
                  --stream-game URL        read the game files from the server at URL\n  \
-                 --stream-cache-mib N     memory for small streamed reads (default 16)\n{msg}"
+                 --stream-cache-mib N     memory for small streamed reads (default 16)\n  \
+                 --wasi-clock             read clocks through Emscripten's WASI import (as before)\n{msg}"
             );
             std::process::exit(2);
         }
@@ -137,6 +141,15 @@ mod clock {
         fn emscripten_date_now() -> f64;
     }
 
+    #[link(wasm_import_module = "wasi_snapshot_preview1")]
+    unsafe extern "C" {
+        #[link_name = "clock_time_get"]
+        fn wasi_clock_time_get(clk: u32, precision: u64, time: *mut u64) -> u16;
+    }
+
+    /// `--wasi-clock`: through the WASI import after all (for comparisons).
+    pub static WASI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
     const CLOCK_REALTIME: i32 = 0;
     const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
     const EINVAL: i32 = 28;
@@ -148,9 +161,16 @@ mod clock {
             unsafe { *__errno_location() = EINVAL };
             return -1;
         }
-        // SAFETY: imports without arguments.
-        let ms = unsafe { if clk == CLOCK_REALTIME { emscripten_date_now() } else { emscripten_get_now() } };
-        let ns = (ms * 1e6) as i64;
+        let ns = if WASI.load(std::sync::atomic::Ordering::Relaxed) {
+            let mut t = 0u64;
+            // SAFETY: a valid out pointer.
+            unsafe { wasi_clock_time_get(clk as u32, 1, &mut t) };
+            t as i64
+        } else {
+            // SAFETY: imports without arguments.
+            let ms = unsafe { if clk == CLOCK_REALTIME { emscripten_date_now() } else { emscripten_get_now() } };
+            (ms * 1e6) as i64
+        };
         // SAFETY: the caller passes a valid timespec.
         unsafe {
             *ts = Timespec { tv_sec: ns.div_euclid(1_000_000_000), tv_nsec: ns.rem_euclid(1_000_000_000) as i32, _pad: 0 };
