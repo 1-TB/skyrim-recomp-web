@@ -96,30 +96,44 @@ fn title_overrides(title: Option<(u32, u32)>, declared: &HashSet<String>) -> Str
     // buffers with it while playing (one call took ~330 ms natively, ~560 ms in the browser,
     // and the frame waits for it); kernel-hle's zlib module does it on the host. Each override
     // falls back to the recompiled function for streams the host doesn't handle.
-    const SKYRIM_ZLIB: [(&str, &str); 3] = [
-        ("sub_82CA7688", "skyrt_deflate_init(ctx.r3.u32, ctx.r4.s32, ctx.r5.s32, ctx.r6.s32, ctx.r8.s32)"),
-        ("sub_82CA5798", "skyrt_deflate(ctx.r3.u32, ctx.r4.s32)"),
-        ("sub_82CA6360", "skyrt_deflate_end(ctx.r3.u32)"),
+    // Inflate (the loader's BSA reads) goes to zlib-rs the same way; `inflate`'s fallback is
+    // followed by a check hook so `SKYRT_ZLIB_VERIFY` can compare every call with the host's.
+    const SKYRIM_ZLIB: [(&str, &str, &str); 7] = [
+        ("sub_82CA7688", "skyrt_deflate_init(ctx.r3.u32, ctx.r4.s32, ctx.r5.s32, ctx.r6.s32, ctx.r8.s32)", ""),
+        ("sub_82CA5798", "skyrt_deflate(ctx.r3.u32, ctx.r4.s32)", ""),
+        ("sub_82CA6360", "skyrt_deflate_end(ctx.r3.u32)", ""),
+        ("sub_823359D0", "skyrt_inflate_init(ctx.r3.u32)", ""),
+        ("sub_82335CF0", "skyrt_inflate(ctx.r3.u32, ctx.r4.s32)", "skyrt_inflate_verify(strm, ctx.r3.s32);"),
+        ("sub_82334C38", "skyrt_inflate_reset(ctx.r3.u32)", ""),
+        ("sub_82CA5640", "skyrt_inflate_end(ctx.r3.u32)", ""),
     ];
-    if skyrim && SKYRIM_ZLIB.iter().all(|(f, _)| declared.contains(*f)) {
+    if skyrim && SKYRIM_ZLIB.iter().all(|(f, _, _)| declared.contains(*f)) {
         cpp.push_str(
             r#"
 extern "C" int32_t skyrt_deflate_init(uint32_t strm, int32_t level, int32_t method, int32_t window_bits, int32_t strategy);
 extern "C" int32_t skyrt_deflate(uint32_t strm, int32_t flush);
 extern "C" int32_t skyrt_deflate_end(uint32_t strm);
+extern "C" int32_t skyrt_inflate_init(uint32_t strm);
+extern "C" int32_t skyrt_inflate(uint32_t strm, int32_t flush);
+extern "C" void skyrt_inflate_verify(uint32_t strm, int32_t ret);
+extern "C" int32_t skyrt_inflate_reset(uint32_t strm);
+extern "C" int32_t skyrt_inflate_end(uint32_t strm);
 "#,
         );
-        for (f, host) in SKYRIM_ZLIB {
+        for (f, host, after) in SKYRIM_ZLIB {
             writeln!(
                 cpp,
                 r#"
 extern "C" PPC_FUNC(__imp__{f});
 PPC_FUNC({f}) {{
+    uint32_t strm = ctx.r3.u32;
     int32_t r = {host};
     if (r == INT32_MIN) {{
         __imp__{f}(ctx, base);
+        {after}
         return;
     }}
+    (void)strm;
     ctx.r3.s64 = r;
 }}"#
             )

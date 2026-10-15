@@ -15,3 +15,4 @@ vfs.workspace = true
 xex.workspace = true
 lzxd = "0.2.7"
 miniz_oxide = "0.9"
+zlib-rs = { version = "0.6", default-features = false, features = ["std"] }
