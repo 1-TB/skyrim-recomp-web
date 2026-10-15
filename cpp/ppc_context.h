@@ -12,9 +12,10 @@
 //   * Every guest memory access goes through PPC_EA (the skyrt XenonRecomp patch
 //     emits it for the accesses it writes inline), which folds the three
 //     physical-memory views onto one mapping; see skyrt_ea.
-//   * Every guest store marks the physical pages it wrote in skyrt_dirty_pages
+//   * Every guest store marks the guest pages it wrote in skyrt_written
 //     (runtime-core's dirty module), so the renderer re-uploads only those.
 //     Stores the patch emits inline are followed by PPC_MARK_WRITTEN.
+//   * 64-bit byte swaps use a SIMD shuffle on wasm (skyrt_bswap64).
 //   * Xenos half-float helpers for the vpkd3d128/vupkd3d128 forms the patch adds.
 //   * PPC_LOOKUP_FUNC reads the indirect-call table through skyrt_ea.
 //
@@ -98,32 +99,23 @@ static inline __attribute__((always_inline)) uint32_t skyrt_ea(uint32_t ea)
 
 #define PPC_EA(x) (base + skyrt_ea((uint32_t)(x)))
 
-// One byte per 4 KiB page of the 512 MiB physical space, set when a store may
-// have changed the page (runtime-core's dirty module; the renderer clears
-// them). Physical memory is reached through its three views and, where the guest
-// hasn't allocated it, also through the identity-mapped XEX region at 0x80000000;
-// skyrt_dirty_frame gives the physical address of each 1 MiB guest frame's start
-// (~0 for frames that aren't physical memory). The mark follows the data: the
-// renderer clears a mark before reading the page, so a store it misses leaves the
-// page marked for next time. Plain byte stores suffice: the renderer only reads
-// memory after the guest published it through the ring buffer, which orders
-// everything before.
-extern "C" uint8_t skyrt_dirty_pages[];
-extern "C" const uint32_t skyrt_dirty_frame[4096];
+// One byte per 4 KiB page of the guest address space, cleared to 0 when a store
+// may have changed the page (runtime-core's dirty module, which sets it back to
+// 1 when the renderer consumes the mark, checking every address a physical page
+// is visible at). Indexing by guest address keeps the mark to a shift and a byte
+// store with no branch: on wasm, recompiled code is mostly memory accesses, and
+// the code size is what Safari's memory use follows. The mark follows the data:
+// the renderer consumes a mark before reading the page, so a store it misses
+// leaves the page marked for next time. Plain byte stores suffice: the renderer
+// only reads memory after the guest published it through the ring buffer, which
+// orders everything before.
+extern "C" uint8_t skyrt_written[];
 
 static inline __attribute__((always_inline)) void skyrt_mark_written(uint32_t ea, uint32_t size)
 {
-    // Only 0x80000000 and up can be physical memory: stack and heap stores skip the lookup.
-    if ((int32_t)ea >= 0)
-        return;
-    uint32_t frame = skyrt_dirty_frame[ea >> 20];
-    if (frame != 0xFFFFFFFFu)
-    {
-        uint32_t first = frame + (ea & 0xFFFFFu);
-        uint32_t last = first + size - 1;
-        ((volatile uint8_t*)skyrt_dirty_pages)[(first >> 12) & 0x1FFFFu] = 1;
-        ((volatile uint8_t*)skyrt_dirty_pages)[(last >> 12) & 0x1FFFFu] = 1;
-    }
+    ((volatile uint8_t*)skyrt_written)[ea >> 12] = 0;
+    if (size > 1)
+        ((volatile uint8_t*)skyrt_written)[(ea + size - 1) >> 12] = 0;
 }
 
 #define PPC_MARK_WRITTEN(x, size) skyrt_mark_written((uint32_t)(x), (size))
@@ -177,6 +169,20 @@ static inline void skyrt_check_frames(uint32_t ea, uint32_t size)
 #define SKYRT_CHECK_FRAMES(x, size) ((void)0)
 #endif
 
+#if defined(__wasm_simd128__)
+#include <wasm_simd128.h>
+// Wasm has no byte swap instruction: a 64-bit one expands to ~40 scalar instructions,
+// a shuffle to three.
+static inline __attribute__((always_inline)) uint64_t skyrt_bswap64(uint64_t x)
+{
+    v128_t v = wasm_i8x16_swizzle(wasm_i64x2_splat((int64_t)x),
+                                  wasm_i8x16_const(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8));
+    return (uint64_t)wasm_i64x2_extract_lane(v, 0);
+}
+#else
+#define skyrt_bswap64 __builtin_bswap64
+#endif
+
 #ifndef PPC_LOAD_U8
 #define PPC_LOAD_U8(x) *(volatile uint8_t*)PPC_EA(x)
 #endif
@@ -190,7 +196,7 @@ static inline void skyrt_check_frames(uint32_t ea, uint32_t size)
 #endif
 
 #ifndef PPC_LOAD_U64
-#define PPC_LOAD_U64(x) (SKYRT_CHECK_FRAMES(x, 8), __builtin_bswap64(*(volatile uint64_t*)PPC_EA(x)))
+#define PPC_LOAD_U64(x) (SKYRT_CHECK_FRAMES(x, 8), skyrt_bswap64(*(volatile uint64_t*)PPC_EA(x)))
 #endif
 
 // TODO: Implement.
@@ -236,7 +242,7 @@ static inline void skyrt_check_frames(uint32_t ea, uint32_t size)
 #ifndef PPC_STORE_U64
 #define PPC_STORE_U64(x, y) \
     do { uint32_t skyrt_store_ea = (uint32_t)(x); SKYRT_CHECK_FRAMES(skyrt_store_ea, 8); \
-         *(volatile uint64_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap64(y); \
+         *(volatile uint64_t*)PPC_EA(skyrt_store_ea) = skyrt_bswap64(y); \
          PPC_MARK_WRITTEN(skyrt_store_ea, 8); } while (0)
 #endif
 

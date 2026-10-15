@@ -111,7 +111,7 @@ and an Android phone).
 | Path | What |
 |---|---|
 | `crates/xex` | XEX2 parsing. |
-| `crates/runtime-core` | Guest memory (4 GiB space; on wasm guest address == linear address), threads, dirty-page tracking (`dirty.rs`, `skyrt_dirty_pages`). |
+| `crates/runtime-core` | Guest memory (4 GiB space; on wasm guest address == linear address), threads, dirty-page tracking (`dirty.rs`, `skyrt_written`). |
 | `crates/kernel-hle` | xboxkrnl/XAM HLE, objects and sync, GPU command processor front end (`gpu.rs`), input, audio, content/saves, on-screen keyboard hook. |
 | `crates/vfs` | Guest devices/paths; game root is a directory or a streamed `RemoteTree` (`remote.rs`, 2 MiB chunk LRU); OPFS mounting on the web. |
 | `crates/guest-sys` | Builds the recompiled C++ (CMake) and links it; import name table. |
