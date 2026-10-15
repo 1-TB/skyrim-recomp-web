@@ -34,10 +34,11 @@ pub const INITIAL_STACK_HEADROOM: u32 = 0x100;
 /// calls, so this bounds guest call depth.
 #[cfg(not(target_os = "emscripten"))]
 pub const HOST_STACK_SIZE: usize = 16 << 20;
-/// On wasm the shadow stack comes out of the host's 1 GiB budget; most frame
-/// state lives in wasm locals, so a smaller shadow stack suffices.
+/// On wasm this is only the shadow stack (the wasm call stack is the browser's), which comes
+/// out of the host heap: recompiled code keeps its frame state in wasm locals, and Skyrim's
+/// threads used at most 6 KiB of it from boot to in game.
 #[cfg(target_os = "emscripten")]
-pub const HOST_STACK_SIZE: usize = 4 << 20;
+pub const HOST_STACK_SIZE: usize = 512 << 10;
 
 /// Static TLS template from the XEX TLS directory.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

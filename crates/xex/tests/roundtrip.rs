@@ -125,3 +125,14 @@ fn rejects_encrypted_and_lzx() {
     assert_eq!(Xex::parse(&data).unwrap_err(), Error::LzxCompressed);
     assert_eq!(Xex::parse(b"XEX1....").unwrap_err(), Error::BadMagic);
 }
+
+#[test]
+fn parse_owned_builds_the_same_image() {
+    for basic in [false, true] {
+        let data = sample(basic);
+        let expected = Xex::parse(&data).unwrap();
+        let owned = Xex::parse_owned(data).unwrap();
+        assert_eq!(owned.image(), expected.image());
+        assert_eq!(owned.header_bytes(), expected.header_bytes());
+    }
+}

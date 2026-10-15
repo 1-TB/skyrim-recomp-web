@@ -303,8 +303,9 @@ pub fn run(
         None => ("default.xex".to_string(), game.read("default.xex")),
     };
     log::info!("title {xex_name} (game root {game})");
-    // Parsing copies what it keeps: the file's bytes go before the title runs.
-    let xex = xex::Xex::parse(&data.map_err(|e| format!("{xex_name}: {e}"))?).map_err(|e| format!("{xex_name}: {e}"))?;
+    // The image is built in the file's buffer (dropped after loading, see Kernel::new).
+    let data = data.map_err(|e| format!("{xex_name}: {e}"))?;
+    let xex = xex::Xex::parse_owned(data).map_err(|e| format!("{xex_name}: {e}"))?;
     if let Some(info) = xex.execution_info() {
         log::info!("title id {:08X}, version {:08X}", info.title_id, info.version);
     }

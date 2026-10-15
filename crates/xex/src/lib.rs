@@ -168,6 +168,21 @@ pub struct Xex {
 
 impl Xex {
     pub fn parse(data: &[u8]) -> Result<Self> {
+        let (mut xex, header_size) = Self::parse_headers(data)?;
+        xex.image = xex.extract_image(&data[header_size..])?;
+        Ok(xex)
+    }
+
+    /// [`Xex::parse`], building the image in `data`'s buffer: the file and a copy of its
+    /// image aren't held at once (on the web the host heap never shrinks after its peak).
+    pub fn parse_owned(mut data: Vec<u8>) -> Result<Self> {
+        let (mut xex, header_size) = Self::parse_headers(&data)?;
+        data.drain(..header_size);
+        xex.image = xex.extract_image_in_place(data)?;
+        Ok(xex)
+    }
+
+    fn parse_headers(data: &[u8]) -> Result<(Self, usize)> {
         if data.get(0..4) != Some(&MAGIC[..]) {
             return Err(Error::BadMagic);
         }
@@ -202,19 +217,14 @@ impl Xex {
             page_descriptor_count: be32(&header, s + 0x180, "security info")?,
         };
 
-        let mut xex = Xex { header, module_flags, opt_headers, security, image: Vec::new() };
-        xex.image = xex.extract_image(&data[header_size..])?;
-        Ok(xex)
+        Ok((Xex { header, module_flags, opt_headers, security, image: Vec::new() }, header_size))
     }
 
-    fn extract_image(&self, payload: &[u8]) -> Result<Vec<u8>> {
-        let image_size = self.security.image_size as usize;
+    /// The payload's (data size, zero size) blocks, or `None` for an uncompressed payload.
+    fn payload_blocks(&self) -> Result<Option<Vec<(usize, usize)>>> {
         let Some(OptValue::Data { bytes: info, .. }) = self.opt_header(keys::FILE_FORMAT_INFO) else {
             // No file format info means a raw image.
-            let mut image = vec![0u8; image_size];
-            let n = payload.len().min(image_size);
-            image[..n].copy_from_slice(&payload[..n]);
-            return Ok(image);
+            return Ok(None);
         };
         let info_size = be32(info, 0, "file format info")? as usize;
         let encryption = be16(info, 4, "file format info")?;
@@ -223,33 +233,70 @@ impl Xex {
             return Err(Error::Encrypted);
         }
         match compression {
-            COMPRESSION_NONE => {
-                let mut image = vec![0u8; image_size];
-                let n = payload.len().min(image_size);
-                image[..n].copy_from_slice(&payload[..n]);
-                Ok(image)
-            }
+            COMPRESSION_NONE => Ok(None),
             COMPRESSION_BASIC => {
                 if info_size < 8 || info.len() < info_size {
                     return Err(Error::Malformed("basic compression info"));
                 }
-                let block_count = (info_size - 8) / 8;
-                let mut image = Vec::with_capacity(image_size);
-                let mut src = 0usize;
-                for i in 0..block_count {
-                    let data_size = be32(info, 8 + i * 8, "basic compression block")? as usize;
-                    let zero_size = be32(info, 12 + i * 8, "basic compression block")? as usize;
-                    let chunk = payload.get(src..src + data_size).ok_or(Error::Truncated("basic compression data"))?;
-                    image.extend_from_slice(chunk);
-                    image.resize(image.len() + zero_size, 0);
-                    src += data_size;
-                }
-                image.resize(image_size.max(image.len()), 0);
-                Ok(image)
+                (0..(info_size - 8) / 8)
+                    .map(|i| {
+                        let data_size = be32(info, 8 + i * 8, "basic compression block")? as usize;
+                        let zero_size = be32(info, 12 + i * 8, "basic compression block")? as usize;
+                        Ok((data_size, zero_size))
+                    })
+                    .collect::<Result<Vec<_>>>()
+                    .map(Some)
             }
             COMPRESSION_NORMAL => Err(Error::LzxCompressed),
             other => Err(Error::UnsupportedCompression(other)),
         }
+    }
+
+    /// [`Xex::extract_image`] in `payload`'s buffer: each block moves to its place in the
+    /// image (never before its place in the payload), last first, and the gaps are zeroed.
+    fn extract_image_in_place(&self, mut payload: Vec<u8>) -> Result<Vec<u8>> {
+        let image_size = self.security.image_size as usize;
+        let Some(blocks) = self.payload_blocks()? else {
+            payload.resize(image_size, 0);
+            return Ok(payload);
+        };
+        let mut moves = Vec::with_capacity(blocks.len());
+        let (mut src, mut dst) = (0usize, 0usize);
+        for &(data_size, zero_size) in &blocks {
+            if src + data_size > payload.len() {
+                return Err(Error::Truncated("basic compression data"));
+            }
+            moves.push((src, dst, data_size, zero_size));
+            src += data_size;
+            dst += data_size + zero_size;
+        }
+        payload.truncate(src);
+        payload.resize(image_size.max(dst), 0);
+        for &(src, dst, data_size, zero_size) in moves.iter().rev() {
+            payload.copy_within(src..src + data_size, dst);
+            payload[dst + data_size..dst + data_size + zero_size].fill(0);
+        }
+        Ok(payload)
+    }
+
+    fn extract_image(&self, payload: &[u8]) -> Result<Vec<u8>> {
+        let image_size = self.security.image_size as usize;
+        let Some(blocks) = self.payload_blocks()? else {
+            let mut image = vec![0u8; image_size];
+            let n = payload.len().min(image_size);
+            image[..n].copy_from_slice(&payload[..n]);
+            return Ok(image);
+        };
+        let mut image = Vec::with_capacity(image_size);
+        let mut src = 0usize;
+        for (data_size, zero_size) in blocks {
+            let chunk = payload.get(src..src + data_size).ok_or(Error::Truncated("basic compression data"))?;
+            image.extend_from_slice(chunk);
+            image.resize(image.len() + zero_size, 0);
+            src += data_size;
+        }
+        image.resize(image_size.max(image.len()), 0);
+        Ok(image)
     }
 
     /// Raw XEX header bytes (everything before the image payload). Header-relative
