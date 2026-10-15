@@ -1,13 +1,15 @@
-//! Float constant blocks built on the GPU from what changed.
+//! Constant blocks built on the GPU from what changed.
 //!
-//! Every draw binds a block of up to 256 float constants per shader stage, and draws in one
-//! submission each need their own block. Titles rewrite constants before every draw, but in
-//! Skyrim only about 5% of the vec4s of a new block differ from the stage's previous block, so
-//! instead of uploading whole blocks (megabytes per frame, which browsers copy slowly) each block
-//! is recorded as a patch on the previous one: a 256-bit mask of the changed vec4s and their
-//! values. Before the submission's own commands, one compute dispatch replays the patches into
-//! the blocks: one invocation per constant index, walking the blocks in order and carrying the
-//! last value forward (indices are independent, so nothing synchronizes).
+//! Every draw binds a block of up to 256 float constants per shader stage, plus blocks of fetch,
+//! system and bool/loop constants, and draws in one submission each need their own blocks.
+//! Titles rewrite constants before every draw, but in Skyrim only about 5% of the float vec4s of
+//! a new block differ from the stage's previous block (and a draw changes one or two of the 32
+//! fetch constants), so instead of uploading whole blocks (megabytes per frame, which browsers
+//! copy slowly) each block is recorded as a patch on the previous one of its kind ("stage"): a
+//! 256-bit mask of the changed vec4s and their values. Before the submission's own commands, one
+//! compute dispatch replays the patches into the blocks: one workgroup per stage and one
+//! invocation per vec4 index, walking the stage's blocks in order and carrying the last value
+//! forward (indices are independent, so nothing synchronizes).
 //!
 //! The first block of a stage in a submission has no previous block: all of it is sent.
 
@@ -23,8 +25,14 @@ const MAX_RECORDS: usize = 16384;
 const MAX_VALUES: usize = 1 << 17;
 /// u32s per record: stage, block offset (vec4s), vec4 count, first value, 8 mask words.
 const RECORD_WORDS: usize = 12;
-/// Constant indices per stage (one invocation each).
+/// Vec4s per block at most (one invocation each).
 const INDICES: usize = 256;
+/// Kinds of blocks, each patched on its own previous block: vertex and pixel shader float
+/// constants (0 and 1), then the [`FETCH`], [`SYSTEM`] and [`BOOL_LOOP`] blocks.
+const STAGES: u32 = 5;
+pub const FETCH: u32 = 2;
+pub const SYSTEM: u32 = 3;
+pub const BOOL_LOOP: u32 = 4;
 
 const SHADER: &str = r#"
 // records[0] is the record count; record r starts at 1 + 12 r.
@@ -60,7 +68,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 }
 "#;
 
-pub struct FloatPatcher {
+pub struct ConstantPatcher {
     /// The blocks, bound to the draws' float constant bindings.
     pub buffer: Buffer,
     alignment: u64,
@@ -74,19 +82,23 @@ pub struct FloatPatcher {
     group: BindGroup,
 }
 
-impl FloatPatcher {
+impl ConstantPatcher {
     pub fn new(device: &Device, alignment: u64) -> Self {
         let buffer = |label, size, usage| {
             device.create_buffer(&BufferDescriptor { label, size, usage, mapped_at_creation: false })
         };
-        let blocks = buffer("xenos float constants", BLOCK_BUFFER_BYTES, BufferUsage::Storage | BufferUsage::CopySrc);
+        let blocks = buffer(
+            "xenos constant blocks",
+            BLOCK_BUFFER_BYTES,
+            BufferUsage::Storage | BufferUsage::Uniform | BufferUsage::CopySrc,
+        );
         let records_buffer = buffer(
-            "xenos float constant patches",
+            "xenos constant patches",
             ((1 + MAX_RECORDS * RECORD_WORDS) * 4) as u64,
             BufferUsage::Storage | BufferUsage::CopyDst,
         );
         let values_buffer = buffer(
-            "xenos float constant values",
+            "xenos constant values",
             (MAX_VALUES * 16) as u64,
             BufferUsage::Storage | BufferUsage::CopyDst,
         );
@@ -96,22 +108,22 @@ impl FloatPatcher {
             ty: BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: 0 },
         };
         let layout = device.create_bind_group_layout(
-            "xenos float constant patches",
+            "xenos constant patches",
             &[
                 entry(0, BufferBindingType::ReadOnlyStorage),
                 entry(1, BufferBindingType::ReadOnlyStorage),
                 entry(2, BufferBindingType::Storage),
             ],
         );
-        let module = device.create_shader_module_wgsl("xenos float constant patches", SHADER);
+        let module = device.create_shader_module_wgsl("xenos constant patches", SHADER);
         let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: "xenos float constant patches",
-            layout: Some(&device.create_pipeline_layout("xenos float constant patches", &[&layout])),
+            label: "xenos constant patches",
+            layout: Some(&device.create_pipeline_layout("xenos constant patches", &[&layout])),
             stage: ProgrammableStage::new(&module, "main"),
         });
         let whole = |buffer| BindingResource::Buffer { buffer, offset: 0, size: None };
         let group = device.create_bind_group(
-            "xenos float constant patches",
+            "xenos constant patches",
             &layout,
             &[
                 BindGroupEntry { binding: 0, resource: whole(&records_buffer) },
@@ -119,7 +131,7 @@ impl FloatPatcher {
                 BindGroupEntry { binding: 2, resource: whole(&blocks) },
             ],
         );
-        FloatPatcher {
+        ConstantPatcher {
             buffer: blocks,
             alignment: alignment.max(16),
             cursor: 0,
@@ -132,19 +144,20 @@ impl FloatPatcher {
         }
     }
 
-    /// Whether `blocks` blocks of up to `window` bytes with all their vec4s changed still fit in
-    /// this submission (else submit first).
-    pub fn has_room(&self, blocks: usize, window: u64) -> bool {
+    /// Whether blocks bound with `windows` bytes each, with all their vec4s changed, still fit
+    /// in this submission (else submit first).
+    pub fn has_room(&self, windows: &[u64]) -> bool {
         // Each block may start up to an alignment past the previous window's end.
-        let bytes = blocks as u64 * window.next_multiple_of(self.alignment);
+        let bytes: u64 = windows.iter().map(|w| w.next_multiple_of(self.alignment)).sum();
+        let vec4s: usize = windows.iter().map(|&w| (w as usize / 16).min(INDICES)).sum();
         self.cursor.next_multiple_of(self.alignment) + bytes <= BLOCK_BUFFER_BYTES
-            && (self.records.len() - 1) / RECORD_WORDS + blocks <= MAX_RECORDS
-            && self.values.len() / 16 + blocks * INDICES <= MAX_VALUES
+            && (self.records.len() - 1) / RECORD_WORDS + windows.len() <= MAX_RECORDS
+            && self.values.len() / 16 + vec4s <= MAX_VALUES
     }
 
-    /// Adds `data` (vec4s of stage `stage`, 0 vertex or 1 pixel) as a block bound with `window`
-    /// bytes, given the stage's previous block of this submission. Returns its offset. Check
-    /// [`FloatPatcher::has_room`] first.
+    /// Adds `data` (vec4s of stage `stage`) as a block bound with `window` bytes, given the
+    /// stage's previous block of this submission. Returns its offset. Check
+    /// [`ConstantPatcher::has_room`] first.
     pub fn push(&mut self, stage: u32, previous: Option<&[u8]>, data: &[u8], window: u64) -> u32 {
         debug_assert!(data.len() % 16 == 0 && data.len() <= INDICES * 16);
         let offset = self.cursor.next_multiple_of(self.alignment);
@@ -164,7 +177,7 @@ impl FloatPatcher {
         offset as u32
     }
 
-    /// Like [`FloatPatcher::push`] for a block of `count` vec4s whose changed vec4s (in `mask`,
+    /// Like [`ConstantPatcher::push`] for a block of `count` vec4s whose changed vec4s (in `mask`,
     /// with their bytes in index order in `values`) are already known: the others are the
     /// stage's previous block's, which must cover them.
     pub fn push_masked(
@@ -200,15 +213,15 @@ impl FloatPatcher {
         if !self.values.is_empty() {
             device.queue().write_buffer(&self.values_buffer, 0, &self.values);
         }
-        let mut encoder = device.create_command_encoder("xenos float constant patches");
+        let mut encoder = device.create_command_encoder("xenos constant patches");
         {
-            let mut pass = encoder.begin_compute_pass("xenos float constant patches");
+            let mut pass = encoder.begin_compute_pass("xenos constant patches");
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.group, &[]);
-            pass.dispatch_workgroups(2, 1, 1);
+            pass.dispatch_workgroups(STAGES, 1, 1);
             pass.end();
         }
-        Some((encoder.finish("xenos float constant patches"), (records.len() + self.values.len()) as u64))
+        Some((encoder.finish("xenos constant patches"), (records.len() + self.values.len()) as u64))
     }
 
     /// The submission went out: blocks and patches start over.
@@ -224,14 +237,14 @@ impl FloatPatcher {
 mod tests {
     use super::*;
 
-    /// Blocks of both stages with varying lengths and a few changed vec4s each (including NaN
+    /// Blocks of every stage with varying lengths and a few changed vec4s each (including NaN
     /// patterns, which must survive bit for bit) come out of the GPU exactly as pushed.
     #[test]
     fn patches_rebuild_every_block_exactly() {
         let instance = Instance::new().expect("instance");
         let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).expect("adapter");
         let device = instance.block_on(adapter.request_device(&DeviceDescriptor::default())).expect("device");
-        let mut patcher = FloatPatcher::new(&device, 256);
+        let mut patcher = ConstantPatcher::new(&device, 256);
         let mut seed = 0x1234_5678u32;
         let mut next = move || {
             seed ^= seed << 13;
@@ -240,9 +253,9 @@ mod tests {
             seed
         };
         let mut expected = Vec::new();
-        let mut previous: [Option<Vec<u8>>; 2] = [None, None];
+        let mut previous: [Option<Vec<u8>>; STAGES as usize] = Default::default();
         for i in 0..300 {
-            let stage = (next() % 2) as usize;
+            let stage = (next() % STAGES) as usize;
             let len = [256usize, 256, 40, 3, 256, 128][i % 6];
             let mut data = previous[stage].clone().unwrap_or_default();
             data.resize(len * 16, 0);
@@ -251,7 +264,7 @@ mod tests {
                 let word = if next() % 7 == 0 { 0x7FC0_0001 } else { next() };
                 data[v..v + 4].copy_from_slice(&word.to_le_bytes());
             }
-            assert!(patcher.has_room(1, 4096));
+            assert!(patcher.has_room(&[4096]));
             let offset = patcher.push(stage as u32, previous[stage].as_deref(), &data, 4096);
             expected.push((offset, data.clone()));
             previous[stage] = Some(data);

@@ -58,6 +58,11 @@ mod defs {
 pub(crate) use defs::count;
 pub use defs::{Counters, snapshot};
 
+/// Bytes uploaded so far (`write_buffer` plus `write_texture`).
+pub fn upload_bytes() -> u64 {
+    count::write_buffer_bytes.load(Ordering::Relaxed) + count::write_texture_bytes.load(Ordering::Relaxed)
+}
+
 /// Adds `n` to a counter.
 #[inline]
 pub(crate) fn add(counter: &AtomicU64, n: u64) {

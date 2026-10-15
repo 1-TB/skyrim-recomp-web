@@ -40,6 +40,10 @@ pub(crate) static STAGING: std::sync::atomic::AtomicU8 = std::sync::atomic::Atom
 /// default (a cap only with the handheld budgets).
 pub(crate) static LOAD_CAP_MIB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
 
+/// `upload-cap=MIB`: upload bytes that may be on their way to the GPU before the renderer waits
+/// (0 = no cap); `u64::MAX` = the default (see the executor's `UPLOAD_BUDGET`).
+pub(crate) static UPLOAD_CAP_MIB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+
 /// Frames the renderer may run ahead of the GPU (2 unless an experiment changes it).
 pub(crate) static MAX_FRAMES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(2);
 /// Don't use BC texture compression even when the device has it (as on phones, where BC
@@ -81,6 +85,11 @@ pub fn enable(mode: &str) -> Result<(), String> {
         LOAD_CAP_MIB.store(mib, Ordering::Relaxed);
         return Ok(());
     }
+    if let Some(n) = mode.strip_prefix("upload-cap=") {
+        let mib: u64 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
+        UPLOAD_CAP_MIB.store(mib, Ordering::Relaxed);
+        return Ok(());
+    }
     if let Some(n) = mode.strip_prefix("mirror=") {
         let mib: u32 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
         crate::set_mirror_limit(mib);
@@ -112,7 +121,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, d3d-surfaces, gpu-time, frames=N, mirror=MIB, load-cap=MIB, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, d3d-surfaces, gpu-time, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };

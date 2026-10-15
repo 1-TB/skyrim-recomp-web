@@ -9,12 +9,12 @@
 //! The renderer reads guest memory (front buffers, vertex data, textures) itself through
 //! [`PhysicalMemory`], at physical addresses as the GPU sees them.
 
+mod constant_patch;
 mod d3d;
 pub mod debug;
 pub mod edram;
 pub mod executor;
 mod extent;
-mod float_patch;
 mod present;
 mod queue;
 pub mod registers;

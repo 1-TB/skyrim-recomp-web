@@ -1,9 +1,9 @@
-//! Per-draw data (constants, indices) suballocated from large buffers. Every draw gets its own
+//! Per-draw data (indices) suballocated from large buffers. Every draw gets its own
 //! region, so writes for later draws never clobber data an earlier draw in the same submission
 //! still reads; the ring rewinds after each submission.
 //!
 //! Pushed data is staged on the host and sent with one `Queue::write_buffer` per submission
-//! ([`Ring::upload`]): browsers pay a fixed cost per WebGPU call, and a frame pushes thousands
+//! ([`Ring::upload`]): browsers pay a fixed cost per WebGPU call, and a frame pushes hundreds
 //! of small blocks.
 
 use gpu_webgpu::{Buffer, BufferDescriptor, BufferUsage, Device};
@@ -55,17 +55,6 @@ impl Ring {
         }
         self.cursor = end;
         Some(offset)
-    }
-
-    /// Like [`Ring::push`], for data bound with a fixed `window` size (≥ the data): the window
-    /// must fit in the buffer too. What follows the data in the window is whatever later pushes
-    /// store there.
-    pub fn push_window(&mut self, data: &[u8], window: u64) -> Option<u64> {
-        let offset = self.cursor.next_multiple_of(self.alignment);
-        if offset + window.max(data.len() as u64) > self.size {
-            return None;
-        }
-        self.push(data)
     }
 
     /// Sends everything pushed since the last rewind; call before submitting work that reads it.

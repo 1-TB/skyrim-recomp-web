@@ -36,7 +36,7 @@ use xenos_state::viewport::{
 use xenos_state::xenos::{self, EdramMode, MsaaSamples, SourceSelect};
 use xenos_texture_cache::{GpuSource, TextureCache};
 
-use crate::float_patch::FloatPatcher;
+use crate::constant_patch::{self, ConstantPatcher};
 use crate::present::FrontBuffer;
 use crate::registers::{ActiveShaders, RegisterFile, dirty};
 use crate::ring::Ring;
@@ -48,9 +48,6 @@ use crate::{PhysicalMemory, TextureMemory};
 /// Pixel shader textures start at this `@group(2)` binding (vertex shader ones at 0); a shader
 /// uses at most 32 fetch constants with 3 bindings each.
 const PIXEL_TEXTURE_BINDING_BASE: u32 = 96;
-/// Per-submission constants (a submission is made first when full; Skyrim submits every ~20
-/// draws on average, at each resolve).
-const CONSTANT_RING_SIZE: u64 = 4 << 20;
 /// Per-submission indices (converted on the CPU, or copied out of shared memory); a draw with
 /// more is skipped.
 const INDEX_RING_SIZE: u64 = 4 << 20;
@@ -60,6 +57,14 @@ const FETCH_SIZE: u64 = bindings::FETCH_CONSTANTS_SIZE;
 /// Phones: guest bytes of new textures loaded per second (see
 /// `CacheConfig::max_load_bytes_per_second`; `--render-debug load-cap=MIB` overrides it).
 const HANDHELD_LOAD_RATE: u64 = u64::MAX;
+/// Bytes uploaded (`write_buffer`/`write_texture`) that may be on their way to the GPU before
+/// the renderer waits for earlier submissions to finish. Browsers copy each upload out of the
+/// page and hand it to their GPU process, which consumes them in order: while that process is
+/// busy (compiling pipelines at world entry, on phones for seconds), uploads pile up in the
+/// page's process. Safari killed the tab at its 2 GiB limit right after world entry, with
+/// growth following upload volume. `--render-debug upload-cap=MIB` overrides it (0: no cap).
+const UPLOAD_BUDGET: u64 = 256 << 20;
+const HANDHELD_UPLOAD_BUDGET: u64 = 32 << 20;
 
 const SYSTEM_SIZE: u64 = std::mem::size_of::<SystemConstants>() as u64;
 
@@ -280,8 +285,8 @@ struct Pass {
     draws: Vec<RecordedDraw>,
 }
 
-/// Ring offsets of constants that haven't changed since they were pushed (valid until the ring
-/// rewinds).
+/// The constant blocks last pushed in this submission, reused by draws whose constants haven't
+/// changed and patched by those whose have (see `constant_patch`).
 #[derive(Default)]
 struct ConstantCache {
     /// Per stage (vertex, pixel): the float constants last pushed (from c0).
@@ -294,23 +299,30 @@ struct ConstantCache {
     values: Vec<u8>,
 }
 
-/// A block of constants in the ring and its contents.
+/// A constant block of this submission and its contents.
 struct ConstantBlock {
     offset: u32,
     data: Vec<u8>,
 }
 
 impl ConstantBlock {
-    /// The offset of `data` in the ring: `slot`'s if it holds the same bytes (or more, starting
-    /// with them), else of a new copy bound with a `window` byte binding, which becomes `slot`.
-    fn push(slot: &mut Option<Self>, ring: &mut Ring, data: &[u8], window: u64, stats: &mut ExecutorStats) -> u32 {
+    /// The offset of a block holding `data` (`stage` of the patcher): `slot`'s if it holds the
+    /// same bytes, else of a new block, patched on `slot`'s, which becomes `slot`.
+    fn push(
+        slot: &mut Option<Self>,
+        patcher: &mut ConstantPatcher,
+        stage: u32,
+        data: &[u8],
+        window: u64,
+        stats: &mut ExecutorStats,
+    ) -> u32 {
         if let Some(b) = slot
-            && b.data.starts_with(data)
+            && b.data == data
         {
             stats.constant_blocks_reused += 1;
             return b.offset;
         }
-        let offset = ring.push_window(data, window).expect("constant ring space was checked") as u32;
+        let offset = patcher.push(stage, slot.as_ref().map(|b| &b.data[..]), data, window);
         match slot {
             Some(b) => {
                 b.offset = offset;
@@ -351,14 +363,13 @@ pub struct Executor {
     active: ActiveShaders,
     shaders: ShaderCache,
     shared: SharedMemory,
-    constants: Ring,
     indices: Ring,
     /// Guest index buffers copied out of shared memory where they aren't in consecutive slots
     /// (written by commands only).
     gathered_indices: Ring,
     constants_group: BindGroup,
-    /// Float constant blocks, built on the GPU from per-draw patches.
-    floats: FloatPatcher,
+    /// Constant blocks, built on the GPU from per-draw patches.
+    floats: ConstantPatcher,
     shared_group: BindGroup,
     /// [`SharedMemory::generation`] `shared_group` was made for.
     shared_generation: u64,
@@ -375,6 +386,14 @@ pub struct Executor {
     texture_groups: FxHashMap<Vec<u64>, (BindGroup, u64, Vec<BindingKind>)>,
     /// Completion of each submitted frame not yet known to be finished on the GPU.
     frames_in_flight: std::collections::VecDeque<Pending<gpu_webgpu::Result<()>>>,
+    /// Submissions not yet known to be finished on the GPU, with the bytes uploaded before each.
+    uploads_in_flight: std::collections::VecDeque<(Pending<gpu_webgpu::Result<()>>, u64)>,
+    /// `gpu_webgpu::counters::upload_bytes()` at the last submission.
+    uploaded_at_submit: u64,
+    /// Most bytes uploaded and not yet known to have reached the GPU (see `uploads_over_budget`).
+    upload_budget: u64,
+    /// The last `uploads_over_budget` asked the renderer to wait.
+    upload_waiting: bool,
     frame: u64,
     /// Color targets of traced passes to write out after the next submit (name, size).
     trace_dumps: Vec<(TextureView, u32, u32, String)>,
@@ -430,6 +449,8 @@ pub struct ExecutorStats {
     pub constant_blocks_reused: u64,
     pub index_upload_bytes: u64,
     pub memory_upload_bytes: u64,
+    /// Times the renderer waited for the GPU to catch up with uploads (`upload_budget`).
+    pub upload_waits: u64,
 }
 
 /// The bind group of the shared memory slot buffers and table (recreated when a slot buffer is
@@ -549,13 +570,6 @@ impl Executor {
         let limits = device.limits();
         let resolution_scale = targets.resolution_scale().max(1);
         let alignment = u64::from(limits.minUniformBufferOffsetAlignment.max(limits.minStorageBufferOffsetAlignment));
-        let constants = Ring::new(
-            device,
-            "xenos constants",
-            CONSTANT_RING_SIZE,
-            BufferUsage::Uniform | BufferUsage::Storage,
-            alignment,
-        );
         let indices = Ring::new(device, "xenos indices", INDEX_RING_SIZE, BufferUsage::Index, 4);
         let gathered_indices = Ring::new(device, "xenos gathered indices", INDEX_RING_SIZE, BufferUsage::Index, 4);
         let shared = SharedMemory::new(device);
@@ -580,15 +594,15 @@ impl Executor {
                 ),
             ],
         );
-        let floats = FloatPatcher::new(device, alignment);
+        let floats = ConstantPatcher::new(device, alignment);
         let constants_group = device.create_bind_group(
             "xenos constants",
             &constants_layout,
             &[
                 (bindings::FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, &floats.buffer),
-                (bindings::BOOL_LOOP_CONSTANTS_BINDING, BOOL_LOOP_SIZE, &constants.buffer),
-                (bindings::FETCH_CONSTANTS_BINDING, FETCH_SIZE, &constants.buffer),
-                (bindings::SYSTEM_CONSTANTS_BINDING, SYSTEM_SIZE, &constants.buffer),
+                (bindings::BOOL_LOOP_CONSTANTS_BINDING, BOOL_LOOP_SIZE, &floats.buffer),
+                (bindings::FETCH_CONSTANTS_BINDING, FETCH_SIZE, &floats.buffer),
+                (bindings::SYSTEM_CONSTANTS_BINDING, SYSTEM_SIZE, &floats.buffer),
                 (bindings::PIXEL_FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, &floats.buffer),
             ]
             .map(|(binding, size, buffer)| BindGroupEntry {
@@ -622,7 +636,6 @@ impl Executor {
             active: ActiveShaders::default(),
             shaders: ShaderCache::default(),
             shared,
-            constants,
             indices,
             gathered_indices,
             constants_group,
@@ -635,6 +648,15 @@ impl Executor {
             pipelines: FxHashMap::default(),
             texture_groups: FxHashMap::default(),
             frames_in_flight: Default::default(),
+            uploads_in_flight: Default::default(),
+            uploaded_at_submit: gpu_webgpu::counters::upload_bytes(),
+            upload_budget: match crate::debug::UPLOAD_CAP_MIB.load(std::sync::atomic::Ordering::Relaxed) {
+                0 => u64::MAX,
+                u64::MAX if crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed) => HANDHELD_UPLOAD_BUDGET,
+                u64::MAX => UPLOAD_BUDGET,
+                mib => mib << 20,
+            },
+            upload_waiting: false,
             frame: 0,
             trace_dumps: Vec::new(),
             textures: {
@@ -784,7 +806,7 @@ impl Executor {
             return true;
         }
         if !self.resolving {
-            return false;
+            return self.uploads_over_budget();
         }
         self.device.poll();
         match self.targets.poll_resolve(&self.device, &*self.memory) {
@@ -794,6 +816,37 @@ impl Executor {
                 false
             }
         }
+    }
+
+    /// Whether more than `upload_budget` bytes were uploaded for submissions the GPU hasn't
+    /// finished: then the renderer waits (between commands) until enough of them have. Uploads
+    /// not submitted yet are submitted first, so that they're waited for too.
+    fn uploads_over_budget(&mut self) -> bool {
+        let retire = |queue: &mut std::collections::VecDeque<(Pending<gpu_webgpu::Result<()>>, u64)>| {
+            while queue.front().is_some_and(|(f, _)| f.is_ready()) {
+                if let Some(Err(e)) = queue.pop_front().and_then(|(f, _)| f.try_take()) {
+                    log::warn!("renderer: waiting for uploads failed: {e}");
+                }
+            }
+            queue.iter().map(|(_, bytes)| bytes).sum::<u64>()
+        };
+        let mut in_flight = retire(&mut self.uploads_in_flight);
+        let pending = gpu_webgpu::counters::upload_bytes() - self.uploaded_at_submit;
+        let waiting = std::mem::take(&mut self.upload_waiting);
+        if in_flight + pending <= self.upload_budget {
+            return false;
+        }
+        if pending > 0 {
+            self.flush();
+        }
+        self.device.poll();
+        in_flight = retire(&mut self.uploads_in_flight);
+        if in_flight <= self.upload_budget {
+            return false;
+        }
+        self.stats.upload_waits += u64::from(!waiting);
+        self.upload_waiting = true;
+        true
     }
 
     /// Frame boundary: submits everything and ages caches.
@@ -821,7 +874,6 @@ impl Executor {
 
     fn submit_batch(&mut self) {
         self.encode_pass();
-        self.stats.constant_upload_bytes += self.constants.upload(&self.device);
         self.stats.index_upload_bytes += self.indices.upload(&self.device);
         // The float constant blocks are built first, in a command buffer of their own.
         let patches = self.floats.encode(&self.device).map(|(commands, bytes)| {
@@ -830,9 +882,16 @@ impl Executor {
         });
         self.targets.flush_uploads(&self.device);
         let main = self.encoder.take().map(|encoder| encoder.finish("xenos"));
-        if patches.is_some() || main.is_some() || !self.queued.is_empty() {
+        // Uploads without commands are submitted too (empty), to know when they've reached the GPU.
+        let uploaded = gpu_webgpu::counters::upload_bytes();
+        if patches.is_some() || main.is_some() || !self.queued.is_empty() || uploaded > self.uploaded_at_submit {
             self.device.queue().submit(patches.into_iter().chain(self.queued.drain(..)).chain(main));
             self.stats.submissions += 1;
+            if uploaded > self.uploaded_at_submit {
+                let done = self.device.queue().on_submitted_work_done();
+                self.uploads_in_flight.push_back((done, uploaded - self.uploaded_at_submit));
+                self.uploaded_at_submit = uploaded;
+            }
         }
         self.textures.end_batch();
         self.floats.rewind();
@@ -843,7 +902,6 @@ impl Executor {
                 log::error!("trace: {}: {e}", path.display());
             }
         }
-        self.constants.rewind();
         self.indices.rewind();
         self.gathered_indices.rewind();
         self.shared.end_batch();
@@ -1311,11 +1369,9 @@ impl Executor {
             return Err(Skip::Warn(format!("draw with {} bytes of indices skipped", index_len.max(gathered_len))));
         }
         // Each float constant binding spans a full stage's constants past its offset.
-        let constant_space = BOOL_LOOP_SIZE + FETCH_SIZE + SYSTEM_SIZE + 3 * 256;
-        if self.constants.remaining() < constant_space
-            || self.indices.remaining() < index_len
+        if self.indices.remaining() < index_len
             || self.gathered_indices.remaining() < gathered_len
-            || !self.floats.has_room(2, FLOAT_CONSTANTS_SIZE)
+            || !self.floats.has_room(&[FLOAT_CONSTANTS_SIZE, FLOAT_CONSTANTS_SIZE, FETCH_SIZE, SYSTEM_SIZE, BOOL_LOOP_SIZE])
         {
             self.flush();
         }
@@ -1550,7 +1606,6 @@ impl Executor {
     fn push_constants(&mut self, system: &SystemConstants, float_reads: [u32; 2]) -> [u32; 5] {
         let dirty_bits = self.regs.take_dirty();
         let cache = &mut self.constant_cache;
-        let ring = &mut self.constants;
         let mut scratch = std::mem::take(&mut cache.scratch);
         // Like Xenia's renderers, pixel shaders read c256.. regardless of SQ_PS_CONST (titles
         // leave the SQ_*_CONST windows unset).
@@ -1578,7 +1633,7 @@ impl Executor {
                 continue;
             };
             // Vec4s the block doesn't have, and the written ones that differ from it: only those
-            // are compared and sent (see float_patch); the title rewrites constants before every
+            // are compared and sent (see constant_patch); the title rewrites constants before every
             // draw, but only ~5% of them change.
             let have = block.data.len() / 16;
             let written = self.regs.float_written(stage);
@@ -1627,7 +1682,8 @@ impl Executor {
             Some(b) if dirty_bits & dirty::BOOL_LOOP == 0 => b.offset,
             _ => ConstantBlock::push(
                 &mut cache.bool_loop,
-                ring,
+                &mut self.floats,
+                constant_patch::BOOL_LOOP,
                 as_bytes(self.regs.bool_loop_constants()),
                 BOOL_LOOP_SIZE,
                 &mut self.stats,
@@ -1637,13 +1693,21 @@ impl Executor {
             Some(b) if dirty_bits & dirty::FETCH == 0 => b.offset,
             _ => ConstantBlock::push(
                 &mut cache.fetch,
-                ring,
+                &mut self.floats,
+                constant_patch::FETCH,
                 as_bytes(self.regs.fetch_constants()),
                 FETCH_SIZE,
                 &mut self.stats,
             ),
         };
-        let system = ConstantBlock::push(&mut cache.system, ring, system.as_bytes(), SYSTEM_SIZE, &mut self.stats);
+        let system = ConstantBlock::push(
+            &mut cache.system,
+            &mut self.floats,
+            constant_patch::SYSTEM,
+            system.as_bytes(),
+            SYSTEM_SIZE,
+            &mut self.stats,
+        );
         cache.scratch = scratch;
         [float[0], bool_loop, fetch, system, float[1]]
     }
