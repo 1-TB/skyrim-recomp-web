@@ -26,7 +26,7 @@ const PAD = [
 // The on-screen controller (touch.js).
 const TOUCH = [
   ['Drag on the left half', 'Left stick', 'moveUp'],
-  ['Drag on the right half', 'Right stick (look)', 'lookUp'],
+  ['Drag on the right half', 'Right stick', 'lookUp'],
   ['A, B, X, Y (bottom right)', 'Face buttons', null],
   ['LT, LB / RT, RB (top corners)', 'Triggers and bumpers', null],
   ['LS, RS (beside the bumpers)', 'Stick clicks', null],

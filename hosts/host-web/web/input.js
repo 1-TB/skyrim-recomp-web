@@ -158,9 +158,11 @@ function withTouch(state, touch, sensitivity) {
     state[3] = axis(t.lx);
     state[4] = axis(t.ly);
   }
-  if (t.lookDx !== 0 || t.lookDy !== 0) {
-    // A finger moves further than a mouse for the same turn: half the deflection per pixel.
-    [state[5], state[6]] = look(t.lookDx / 2, t.lookDy / 2, sensitivity);
+  if (t.rx !== 0 || t.ry !== 0) {
+    // Squared response for fine aiming near the centre, scaled by the look sensitivity.
+    const curve = (v) => v * Math.abs(v) * sensitivity;
+    state[5] = axis(curve(t.rx));
+    state[6] = axis(curve(t.ry));
   }
   return state;
 }
