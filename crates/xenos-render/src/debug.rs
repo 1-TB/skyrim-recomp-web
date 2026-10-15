@@ -32,6 +32,14 @@ pub(crate) fn tracing(frame: u64) -> bool {
     first != 0 && (frame == first || (every != 0 && frame > first && (frame - first).is_multiple_of(every)))
 }
 
+/// `staging` (1) / `no-staging` (2): uploads through mapped staging buffers or not; 0 = the
+/// default (phones only).
+pub(crate) static STAGING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// `load-cap=MIB`: guest MiB of new textures loaded per second (0 = no cap); `u64::MAX` = the
+/// default (a cap only with the handheld budgets).
+pub(crate) static LOAD_CAP_MIB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+
 /// Frames the renderer may run ahead of the GPU (2 unless an experiment changes it).
 pub(crate) static MAX_FRAMES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(2);
 /// Don't use BC texture compression even when the device has it (as on phones, where BC
@@ -62,6 +70,15 @@ pub fn enable(mode: &str) -> Result<(), String> {
     }
     if mode == "handheld" {
         crate::handheld_budgets();
+        return Ok(());
+    }
+    if mode == "staging" || mode == "no-staging" {
+        STAGING.store(if mode == "staging" { 1 } else { 2 }, Ordering::Relaxed);
+        return Ok(());
+    }
+    if let Some(n) = mode.strip_prefix("load-cap=") {
+        let mib: u64 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
+        LOAD_CAP_MIB.store(mib, Ordering::Relaxed);
         return Ok(());
     }
     if let Some(n) = mode.strip_prefix("mirror=") {
@@ -95,7 +112,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, d3d-surfaces, gpu-time, frames=N, mirror=MIB, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, d3d-surfaces, gpu-time, frames=N, mirror=MIB, load-cap=MIB, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };

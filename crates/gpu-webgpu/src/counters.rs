@@ -45,6 +45,7 @@ mod defs {
         write_buffers,
         write_buffer_bytes,
         write_textures,
+        write_texture_bytes,
         copies,
         set_pipelines,
         set_bind_groups,

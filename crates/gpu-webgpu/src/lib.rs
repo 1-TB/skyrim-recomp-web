@@ -52,6 +52,7 @@ mod instance;
 pub mod memory;
 mod pending;
 mod resource;
+pub mod staging;
 mod surface;
 pub mod timing;
 #[cfg(target_os = "emscripten")]

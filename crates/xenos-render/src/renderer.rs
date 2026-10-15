@@ -62,6 +62,12 @@ pub fn wanted_features(available: &[FeatureName]) -> Vec<FeatureName> {
     wanted
 }
 
+/// Staging ring for uploads (see `gpu_webgpu::staging`): buffers and their size.
+const STAGING_BUFFERS: usize = 8;
+const STAGING_BUFFER_BYTES: u64 = 1 << 20;
+/// Whether phones use the staging ring unless told otherwise.
+const HANDHELD_STAGING: bool = false;
+
 pub(crate) struct Renderer {
     pub device: Device,
     pub executor: Executor,
@@ -97,6 +103,18 @@ impl Renderer {
             Some(d3d) => Box::new(crate::d3d::D3dTargets(d3d.clone())),
             None => targets(device),
         };
+        // Uploads through mapped staging buffers (`staging`, or phones unless `no-staging`).
+        let staging = match crate::debug::STAGING.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed) && HANDHELD_STAGING,
+            mode => mode == 1,
+        };
+        if staging {
+            gpu_webgpu::staging::enable(device, STAGING_BUFFERS, STAGING_BUFFER_BYTES);
+            log::info!(
+                "renderer: uploads go through {STAGING_BUFFERS} staging buffers of {} KiB",
+                STAGING_BUFFER_BYTES >> 10
+            );
+        }
         if crate::debug::GPU_TIME.load(std::sync::atomic::Ordering::Relaxed) {
             if gpu_webgpu::timing::enable(device) {
                 log::info!("renderer: measuring GPU time per pass");

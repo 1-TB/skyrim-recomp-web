@@ -466,6 +466,13 @@ impl Drop for ComputePass<'_> {
 
 impl Queue {
     pub fn submit(&self, buffers: impl IntoIterator<Item = CommandBuffer>) {
+        // Staged uploads first (see `staging`).
+        let copies = crate::staging::take_copies();
+        self.submit_raw(copies.into_iter().chain(buffers));
+        crate::staging::submitted();
+    }
+
+    pub(crate) fn submit_raw(&self, buffers: impl IntoIterator<Item = CommandBuffer>) {
         crate::counters::add(&crate::counters::count::submits, 1);
         let buffers: Vec<CommandBuffer> = buffers.into_iter().collect();
         let raws: Vec<_> = buffers.iter().map(|b| b.raw()).collect();
@@ -477,6 +484,9 @@ impl Queue {
         crate::counters::add(&crate::counters::count::write_buffer_bytes, data.len() as u64);
         crate::counters::add(&crate::counters::count::write_buffers, 1);
         crate::counters::written(buffer.label(), data.len() as u64);
+        if crate::staging::stage(self, buffer, offset, data) {
+            return;
+        }
         unsafe { ffi::wgpuQueueWriteBuffer(self.raw(), buffer.raw(), offset, data.as_ptr().cast(), data.len()) };
     }
 
@@ -490,6 +500,7 @@ impl Queue {
         size: Extent3d,
     ) {
         crate::counters::add(&crate::counters::count::write_textures, 1);
+        crate::counters::add(&crate::counters::count::write_texture_bytes, data.len() as u64);
         let layout = buffer_layout(0, bytes_per_row, rows_per_image);
         unsafe {
             ffi::wgpuQueueWriteTexture(self.raw(), &dst.to_ffi(), data.as_ptr().cast(), data.len(), &layout, &size)

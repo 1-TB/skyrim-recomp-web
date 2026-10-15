@@ -102,7 +102,19 @@ pub fn start_memory_report() {
         let mib = |b: u64| b >> 20;
         let mut last = (0u64, 0u64);
         let mut last_at = std::time::Instant::now() - REPORT_PERIOD;
+        // Upload bytes (write_buffer + write_texture): browsers copy each upload out of the
+        // shared wasm memory, which counts against the page's process (WebKit's in particular).
+        let uploaded = || {
+            let c = gpu_webgpu::counters::snapshot();
+            c.write_buffer_bytes + c.write_texture_bytes
+        };
+        let (mut uploads_at_report, mut uploads_at_tick, mut peak_tick) = (uploaded(), uploaded(), 0u64);
+        let mut tick_at = std::time::Instant::now();
         loop {
+            let now_uploaded = uploaded();
+            let tick = tick_at.elapsed().as_secs_f64().max(0.001);
+            peak_tick = peak_tick.max(((now_uploaded - uploads_at_tick) as f64 / tick) as u64);
+            (uploads_at_tick, tick_at) = (now_uploaded, std::time::Instant::now());
             let committed = runtime_core::memory::committed_bytes();
             let (gpu, gpu_peak) = gpu_webgpu::memory::totals();
             let grew = committed >= last.0 + REPORT_GROWTH || gpu >= last.1 + REPORT_GROWTH;
@@ -127,14 +139,18 @@ pub fn start_memory_report() {
                 } else {
                     String::new()
                 };
+                let rate = (now_uploaded - uploads_at_report) as f64 / last_at.elapsed().as_secs_f64().max(0.001);
                 log::info!(
-                    "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB){wasm}{labels}",
+                    "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB){wasm}; uploads {:.1} MiB/s (peak {:.1} MiB/s){labels}",
                     mib(committed),
                     mib(gpu),
-                    mib(gpu_peak)
+                    mib(gpu_peak),
+                    rate / f64::from(1 << 20),
+                    peak_tick as f64 / f64::from(1 << 20)
                 );
                 last = (committed, gpu);
                 last_at = std::time::Instant::now();
+                (uploads_at_report, peak_tick) = (now_uploaded, 0);
             }
             std::thread::sleep(std::time::Duration::from_millis(250));
         }

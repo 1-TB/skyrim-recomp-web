@@ -57,6 +57,10 @@ const INDEX_RING_SIZE: u64 = 4 << 20;
 const FLOAT_CONSTANTS_SIZE: u64 = bindings::FLOAT_CONSTANTS_SIZE;
 const BOOL_LOOP_SIZE: u64 = 160;
 const FETCH_SIZE: u64 = bindings::FETCH_CONSTANTS_SIZE;
+/// Phones: guest bytes of new textures loaded per second (see
+/// `CacheConfig::max_load_bytes_per_second`; `--render-debug load-cap=MIB` overrides it).
+const HANDHELD_LOAD_RATE: u64 = u64::MAX;
+
 const SYSTEM_SIZE: u64 = std::mem::size_of::<SystemConstants>() as u64;
 
 /// The shared memory as the texture cache's source of GPU-only data.
@@ -648,10 +652,16 @@ impl Executor {
                         max_host_bytes: 56 << 20,
                         max_live_bytes: 80 << 20,
                         pool_max_bytes: 16 << 20,
+                        max_load_bytes_per_second: HANDHELD_LOAD_RATE,
                         ..config
                     }
                 } else {
                     config
+                };
+                let config = match crate::debug::LOAD_CAP_MIB.load(std::sync::atomic::Ordering::Relaxed) {
+                    u64::MAX => config,
+                    0 => xenos_texture_cache::CacheConfig { max_load_bytes_per_second: u64::MAX, ..config },
+                    mib => xenos_texture_cache::CacheConfig { max_load_bytes_per_second: mib << 20, ..config },
                 };
                 TextureCache::with_config(device, xenos_texture_cache::host_caps(device), config)
             },

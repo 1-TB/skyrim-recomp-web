@@ -109,6 +109,11 @@ pub struct CacheConfig {
     pub gpu_conversion: bool,
     /// Reuse dropped textures for new loads of the same shape and format (`TexturePool`).
     pub reuse_textures: bool,
+    /// Guest bytes of new textures loaded per second (with half a second's worth of burst);
+    /// past it, textures not loaded yet bind the fallback and load in a later frame. Each load
+    /// uploads its guest memory, and phone browsers copy every upload in the page's process: a
+    /// world's first frames could otherwise upload hundreds of MiB at once.
+    pub max_load_bytes_per_second: u64,
 }
 
 impl Default for CacheConfig {
@@ -123,6 +128,7 @@ impl Default for CacheConfig {
             allow_invalid_fetch_constants: false,
             gpu_conversion: true,
             reuse_textures: true,
+            max_load_bytes_per_second: u64::MAX,
         }
     }
 }
@@ -147,6 +153,8 @@ pub struct CacheStats {
     pub hits: u64,
     /// Binds that used a fallback view instead of guest data.
     pub fallbacks: u64,
+    /// Loads put off to a later frame by [`CacheConfig::max_load_bytes_per_second`].
+    pub deferred: u64,
     /// Textures dropped by [`TextureCache::invalidate`].
     pub invalidated: u64,
     /// Of those, reloaded into the same texture.
@@ -493,6 +501,10 @@ struct DeviceLimits {
 }
 
 pub struct TextureCache {
+    /// Guest bytes new textures may still load now, and when it was last topped up (see
+    /// [`CacheConfig::max_load_bytes_per_second`]).
+    load_allowance: f64,
+    allowance_at: std::time::Instant,
     caps: HostCaps,
     bc_sliced_3d: bool,
     float32_filterable: bool,
@@ -563,6 +575,8 @@ impl TextureCache {
             textures: FxHashMap::default(),
             samplers: FxHashMap::default(),
             fallback: Fallback::new(device),
+            load_allowance: 0.0,
+            allowance_at: std::time::Instant::now(),
             gpu_loader: gpu_load::GpuLoader::default(),
             failed: HashSet::new(),
             cpu_load_kinds: HashSet::new(),
@@ -819,6 +833,7 @@ impl TextureCache {
             return None;
         };
         let frame = self.frame;
+        let reloading = self.textures.contains_key(&key);
         if let Some(entry) = self.textures.get_mut(&key) {
             let current = entry.validated == frame || {
                 entry.validated = frame;
@@ -838,6 +853,29 @@ impl TextureCache {
         if self.failed.contains(&key) {
             self.warn_once(dwords, 4, "texture failed to load before");
             return None;
+        }
+        // New textures wait for a later frame once this one has loaded its share. Reloads go
+        // ahead (their old contents are gone already), and so do textures entirely in the GPU
+        // copy of memory (resolve output: nothing to upload).
+        let mut gpu = gpu;
+        if self.config.max_load_bytes_per_second != u64::MAX && !reloading {
+            let rate = self.config.max_load_bytes_per_second as f64;
+            let now = std::time::Instant::now();
+            let topped = self.load_allowance + rate * now.duration_since(self.allowance_at).as_secs_f64();
+            (self.load_allowance, self.allowance_at) = (topped.min(rate * 0.5), now);
+            // Any allowance left lets a load go (it may go below zero), so large textures load.
+            if self.load_allowance <= 0.0 {
+                let ranges = TextureGuestInfo::from_fetch(fetch).memory_ranges();
+                if !gpu.as_deref_mut().is_some_and(|g| g.covers(&ranges)) {
+                    self.stats.deferred += 1;
+                    return None;
+                }
+            } else {
+                let ranges = TextureGuestInfo::from_fetch(fetch).memory_ranges();
+                if !gpu.as_deref_mut().is_some_and(|g| g.covers(&ranges)) {
+                    self.load_allowance -= ranges.iter().map(|r| f64::from(r.length)).sum::<f64>();
+                }
+            }
         }
         self.reload_into = self.stale.remove(&key);
         let loaded = self.load(device, memory, fetch, gpu);
