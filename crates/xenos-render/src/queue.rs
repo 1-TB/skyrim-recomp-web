@@ -1,7 +1,7 @@
 //! Ordered hand-off from the command processor to the renderer thread.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -35,6 +35,8 @@ struct Shared {
     submissions: AtomicU32,
     /// Such a renderer is waiting on `submissions`: submissions wake it.
     parked: AtomicBool,
+    /// `State::completed`, readable without the lock (polled by the command processor).
+    completed: AtomicU64,
 }
 
 #[cfg(target_os = "emscripten")]
@@ -110,8 +112,9 @@ impl RendererHandle {
         self.shared.state.lock().unwrap().submitted
     }
 
+    /// Sequence number of the last command the renderer finished (lock-free).
     pub fn completed(&self) -> u64 {
-        self.shared.state.lock().unwrap().completed
+        self.shared.completed.load(Ordering::Acquire)
     }
 
     /// Renderer side: takes everything queued, waiting up to `timeout` if nothing is.
@@ -151,6 +154,7 @@ impl RendererHandle {
     pub(crate) fn complete(&self, seq: u64) {
         let mut s = self.shared.state.lock().unwrap();
         s.completed = s.completed.max(seq);
+        self.shared.completed.store(s.completed, Ordering::Release);
         let wake = s.idle_waiters > 0;
         drop(s);
         if wake {

@@ -197,6 +197,27 @@ pub trait GpuBackend: Send + Sync {
     fn wait_for(&self, _seq: u64) {
         self.wait_idle();
     }
+    /// Sequence number of the last command sent, for effects deferred until the renderer has
+    /// executed it (see [`GpuBackend::completed`]); `None`: such effects wait for the renderer.
+    fn submitted(&self) -> Option<u64> {
+        None
+    }
+    /// Sequence number of the last command executed (including writes to guest memory).
+    fn completed(&self) -> u64 {
+        0
+    }
+}
+
+/// An effect the CPU can observe that waits until the renderer has executed the commands sent
+/// before it, as the GPU reaches it on the console. The command processor goes on meanwhile.
+#[derive(Debug, Clone, Copy)]
+enum Deferred {
+    /// EVENT_WRITE_SHD: a fence value.
+    Fence { addr: u32, data: u32 },
+    /// EVENT_WRITE_ZPD: an occlusion query report to this address (RB_SAMPLE_COUNT_ADDR).
+    Zpd { report: u32 },
+    /// INTERRUPT: the graphics interrupt on these processors.
+    Interrupt { cpu_mask: u32 },
 }
 
 pub struct Gpu {
@@ -459,6 +480,8 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         zpd_samples: 0,
         backend: k.gpu.backend.get().cloned(),
         pending: Vec::new(),
+        deferred: std::collections::VecDeque::new(),
+        deferred_count: 0,
         syncs: [0; 128],
         sync_wait: Duration::ZERO,
         frame_draws: 0,
@@ -485,6 +508,11 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         }
         let write_index = k.gpu.read_register(mem, reg::CP_RB_WPTR) % ring.size_dwords.max(1);
         if ring.base == 0 || write_index == read_index {
+            if !cp.deferred.is_empty() {
+                // Out of commands: the title may be waiting for one of these.
+                cp.run_deferred(true);
+                continue;
+            }
             // Titles kick the ring by storing CP_RB_WPTR, which nothing
             // intercepts, so poll it: spin briefly, then back off to sleeping.
             idle_spins += 1;
@@ -514,6 +542,7 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
                 // Malformed stream: drop the rest of this batch.
                 reader.skip(reader.remaining);
             }
+            cp.run_deferred(false);
             if let Some(a) = writeback {
                 mem.write_u32(a, reader.pos);
                 k.gpu.note_progress();
@@ -556,6 +585,10 @@ struct CommandProcessor<'a> {
     backend: Option<Arc<dyn GpuBackend>>,
     /// Register writes not yet sent to the backend.
     pending: Vec<(u32, u32)>,
+    /// Effects waiting for the renderer to execute the command with the given sequence number,
+    /// oldest first, and how many were deferred since the last report.
+    deferred: std::collections::VecDeque<(u64, Deferred)>,
+    deferred_count: u32,
     /// Waits for the renderer since the last report (see `report_syncs`).
     syncs: [u32; 128],
     sync_wait: Duration,
@@ -657,6 +690,72 @@ impl CommandProcessor<'_> {
             self.syncs[opcode as usize & 0x7F] += 1;
             self.sync_wait += started.elapsed();
         }
+        // Everything sent has been executed: the deferred effects are due (before this one).
+        self.run_deferred(true);
+    }
+
+    /// `action` once the renderer has executed everything sent before it: queued if the backend
+    /// tracks completion, so the command processor needn't wait (on the web each wait is a
+    /// round trip through the renderer worker's event loop, ~20 per frame).
+    fn defer(&mut self, opcode: u32, action: Deferred) {
+        self.flush_registers();
+        match self.backend.as_ref().and_then(|b| b.submitted()) {
+            Some(seq) => {
+                self.deferred.push_back((seq, action));
+                self.deferred_count += 1;
+                self.run_deferred(false);
+            }
+            None => {
+                self.sync(opcode);
+                self.run(action);
+            }
+        }
+    }
+
+    /// Runs the deferred effects the renderer has caught up with, in order; with `block`, all
+    /// of them, waiting for the renderer.
+    fn run_deferred(&mut self, block: bool) {
+        while let Some(&(seq, action)) = self.deferred.front() {
+            let Some(b) = self.backend.clone() else { break };
+            if b.completed() < seq {
+                if !block {
+                    return;
+                }
+                let started = Instant::now();
+                b.wait_for(seq);
+                self.sync_wait += started.elapsed();
+            }
+            self.deferred.pop_front();
+            self.run(action);
+        }
+    }
+
+    /// Waits for the renderer to reach the oldest deferred effect and runs it.
+    fn run_next_deferred(&mut self) {
+        let Some((seq, action)) = self.deferred.pop_front() else { return };
+        if let Some(b) = self.backend.clone()
+            && b.completed() < seq
+        {
+            let started = Instant::now();
+            b.wait_for(seq);
+            self.syncs[pm4::WAIT_REG_MEM as usize] += 1;
+            self.sync_wait += started.elapsed();
+        }
+        self.run(action);
+    }
+
+    fn run(&mut self, action: Deferred) {
+        match action {
+            Deferred::Fence { addr, data } => self.event_write_shd(addr, data),
+            Deferred::Zpd { report } => self.write_zpd_report(report),
+            Deferred::Interrupt { cpu_mask } => {
+                for cpu in 0..6 {
+                    if cpu_mask & (1 << cpu) != 0 {
+                        self.k.gpu_dispatch_interrupt(self.ctx, 1, cpu);
+                    }
+                }
+            }
+        }
     }
 
     /// Logs how often and how long the command processor waited for the renderer per frame,
@@ -669,11 +768,13 @@ impl CommandProcessor<'_> {
                 .map(|op| format!("{op:#04X}: {:.1}", f64::from(self.syncs[op]) / 600.0))
                 .collect();
             log::info!(
-                "GPU: {:.1} renderer waits per frame ({}), {:.2} ms blocked per frame",
+                "GPU: {:.1} renderer waits per frame ({}), {:.1} effects deferred, {:.2} ms blocked per frame",
                 f64::from(total) / 600.0,
                 by_opcode.join(", "),
+                f64::from(self.deferred_count) / 600.0,
                 self.sync_wait.as_secs_f64() * 1000.0 / 600.0
             );
+            self.deferred_count = 0;
             self.syncs = [0; 128];
             self.sync_wait = Duration::ZERO;
         }
@@ -828,13 +929,8 @@ impl CommandProcessor<'_> {
         match opcode {
             pm4::INTERRUPT => {
                 let cpu_mask = r.read(mem);
-                self.sync(pm4::INTERRUPT);
                 log::trace!("INTERRUPT cpu mask {cpu_mask:#X}");
-                for cpu in 0..6 {
-                    if cpu_mask & (1 << cpu) != 0 {
-                        self.k.gpu_dispatch_interrupt(self.ctx, 1, cpu);
-                    }
-                }
+                self.defer(pm4::INTERRUPT, Deferred::Interrupt { cpu_mask });
             }
             pm4::XE_SWAP => {
                 let signature = r.read(mem);
@@ -887,8 +983,15 @@ impl CommandProcessor<'_> {
                 // Usually already satisfied (Skyrim issues ~30 per frame): then the renderer
                 // needn't catch up first, which would stall the command processor.
                 if !self.reg_mem_matches(info, addr, reference, mask) {
-                    self.sync(pm4::WAIT_REG_MEM);
-                    self.wait_reg_mem(info, addr, reference, mask, wait);
+                    // Often a wait for a deferred fence: run deferred effects (waiting for the
+                    // renderer only as far as each needs) until the condition holds.
+                    while !self.deferred.is_empty() && !self.reg_mem_matches(info, addr, reference, mask) {
+                        self.run_next_deferred();
+                    }
+                    if !self.reg_mem_matches(info, addr, reference, mask) {
+                        self.sync(pm4::WAIT_REG_MEM);
+                        self.wait_reg_mem(info, addr, reference, mask, wait);
+                    }
                 }
             }
             pm4::REG_RMW => {
@@ -934,9 +1037,8 @@ impl CommandProcessor<'_> {
             pm4::EVENT_WRITE_SHD => {
                 let (initiator, addr, value) = (r.read(mem), r.read(mem), r.read(mem));
                 self.write_register(reg::VGT_EVENT_INITIATOR, initiator & 0x3F);
-                self.sync(pm4::EVENT_WRITE_SHD);
                 let data = if initiator >> 31 != 0 { self.k.gpu.counter.load(Ordering::Relaxed) } else { value };
-                self.event_write_shd(addr, data);
+                self.defer(pm4::EVENT_WRITE_SHD, Deferred::Fence { addr, data });
             }
             pm4::EVENT_WRITE_EXT => {
                 let (initiator, addr) = (r.read(mem), r.read(mem));
@@ -959,8 +1061,8 @@ impl CommandProcessor<'_> {
             pm4::EVENT_WRITE_ZPD => {
                 let initiator = r.read(mem);
                 self.write_register(reg::VGT_EVENT_INITIATOR, initiator & 0x3F);
-                self.sync(pm4::EVENT_WRITE_ZPD);
-                self.write_zpd_report();
+                let report = self.read_register(reg::RB_SAMPLE_COUNT_ADDR);
+                self.defer(pm4::EVENT_WRITE_ZPD, Deferred::Zpd { report });
             }
             pm4::SET_CONSTANT => {
                 let offset_type = r.read(mem);
@@ -1289,8 +1391,7 @@ impl CommandProcessor<'_> {
     /// Occlusion query sample (Xenia's fake ZPD path). D3D brackets a query
     /// with two of these reports and takes end minus begin, so a running
     /// counter that grows on every report makes every query visible.
-    fn write_zpd_report(&mut self) {
-        let report = self.read_register(reg::RB_SAMPLE_COUNT_ADDR);
+    fn write_zpd_report(&mut self, report: u32) {
         if report == 0 {
             return;
         }

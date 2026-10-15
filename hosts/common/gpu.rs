@@ -78,6 +78,14 @@ impl GpuBackend for Renderer {
     fn wait_for(&self, seq: u64) {
         self.0.wait_for(seq);
     }
+
+    fn submitted(&self) -> Option<u64> {
+        Some(self.0.submitted())
+    }
+
+    fn completed(&self) -> u64 {
+        self.0.completed()
+    }
 }
 
 /// The EDRAM emulation for the renderer thread.
