@@ -896,6 +896,17 @@ $('boot').onclick = async () => {
         touch,
       });
       audioNode?.port.postMessage({ memory: window.Module.HEAPU8.buffer, header: window.Module._skyrt_audio_ring() });
+      // The renderer sizes the canvas's backing store to its size on screen (desktop only), so
+      // the frame is scaled up by its own filter instead of being stretched by the browser.
+      const setSize = window.Module._skyrt_set_display_size;
+      if (typeof setSize === 'function') {
+        new ResizeObserver(([entry]) => {
+          const box = entry.devicePixelContentBoxSize?.[0];
+          const width = box ? box.inlineSize : Math.round(entry.contentRect.width * devicePixelRatio);
+          const height = box ? box.blockSize : Math.round(entry.contentRect.height * devicePixelRatio);
+          setSize(width, height);
+        }).observe(canvas);
+      }
     },
   };
   const script = document.createElement('script');

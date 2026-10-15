@@ -126,6 +126,9 @@ pub(crate) struct D3dRenderer {
     /// tile-based GPU, as phones have, stores the whole surface for the next pass to load).
     /// Anything else reading or writing the surfaces does them first ([`D3dRenderer::do_clears`]).
     pending_clears: Vec<(TextureKey, TextureView, PendingClear)>,
+    /// Host pixels per guest pixel along each axis (`--resolution-scale`): surface textures are
+    /// this much larger, and resolves average each guest pixel's host pixels.
+    scale: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -241,7 +244,14 @@ impl D3dRenderer {
             presents: 0,
             mosaic: None,
             pending_clears: Vec::new(),
+            scale: crate::RESOLUTION_SCALE.load(std::sync::atomic::Ordering::Relaxed).clamp(1, 3),
         }
+    }
+
+    /// The resolve and transfer shaders, built for the resolution scale.
+    fn edram_cache(&self, device: &Device) -> xenos_edram::EdramCache {
+        let options = xenos_edram::EdramOptions { resolution_scale: self.scale, ..Default::default() };
+        xenos_edram::EdramCache::with_options(device, options)
     }
 
     fn logging(&self) -> bool {
@@ -418,8 +428,8 @@ impl D3dRenderer {
                 TextureFormat::RGBA8Unorm
             })
         };
-        let width = s.width();
-        let height = s.height().max(self.rows.get(&key).copied().unwrap_or(0));
+        let width = s.width() * self.scale;
+        let height = s.height().max(self.rows.get(&key).copied().unwrap_or(0)) * self.scale;
         // Phones and tablets draw multisampled surfaces single-sampled: MSAA would take most of
         // their memory (a whole-screen 4x depth surface is 28 MiB) for little visible gain.
         let samples =
@@ -513,24 +523,25 @@ impl D3dRenderer {
         }
     }
 
-    /// Makes surface `key` at least `rows` tall. With predicated tiling the title's surfaces are
+    /// Makes surface `key` at least `rows` (guest rows) tall. With predicated tiling the title's surfaces are
     /// one tile tall and each tile is drawn with a window offset; here the draws cover the
     /// whole surface (see the command processor), so it must be the screen's height, which
     /// the draws' viewport and scissor tell. The texture is replaced (its contents are lost:
     /// this happens once, on the surface's first tiled use).
     fn grow(&mut self, device: &Device, key: SurfaceKey, rows: u32) {
         let Some(s) = self.surfaces.get(&key) else { return };
-        if s.height >= rows {
+        let rows = rows.min(device.limits().maxTextureDimension2D / self.scale);
+        let height = rows * self.scale;
+        if s.height >= height {
             return;
         }
-        let rows = rows.min(device.limits().maxTextureDimension2D);
-        log::debug!("d3d renderer: surface {:#010X} grows from {} to {rows} rows", key.0, s.height);
+        log::debug!("d3d renderer: surface {:#010X} grows from {} to {height} rows", key.0, s.height);
         let (old, depth) = (s.texture_key, s.depth);
-        let new = TextureKey { height: rows, ..old };
+        let new = TextureKey { height, ..old };
         let (texture, view, views) = self.acquire(device, new, depth);
         self.release(old);
         let s = self.surfaces.get_mut(&key).expect("checked above");
-        (s.texture, s.view, s.views, s.height, s.texture_key) = (texture, view, views, rows, new);
+        (s.texture, s.view, s.views, s.height, s.texture_key) = (texture, view, views, height, new);
         self.rows.insert(key, rows);
     }
 
@@ -566,7 +577,10 @@ impl D3dRenderer {
         self.do_clears(encoder);
         let s = &self.surfaces[&key];
         let p = &self.surfaces[&previous.expect("found above")];
-        let edram = self.edram.get_or_insert_with(|| xenos_edram::EdramCache::new(device));
+        if self.edram.is_none() {
+            self.edram = Some(self.edram_cache(device));
+        }
+        let edram = self.edram.as_mut().expect("made above");
         let done =
             edram.transfer_external(device, encoder, (&p.external([0, 0]), p.edram), (&s.external([0, 0]), s.edram));
         if done {
@@ -857,7 +871,7 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         let mut r = self.0.borrow_mut();
         r.do_clears(encoder);
         // The cache is taken out while it runs (the surfaces stay borrowed from `r`).
-        let mut edram = r.edram.take().unwrap_or_else(|| xenos_edram::EdramCache::new(device));
+        let mut edram = r.edram.take().unwrap_or_else(|| r.edram_cache(device));
         // With predicated tiling the resolve covers one tile, whose screen origin the window
         // offset moved to the EDRAM origin; the surfaces hold the whole screen.
         let offset = info.window_offset.map(|v| (-v).max(0) as u32);
@@ -890,5 +904,9 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         if let Some(edram) = &self.0.borrow().edram {
             edram.flush_uploads(device);
         }
+    }
+
+    fn resolution_scale(&self) -> u32 {
+        self.0.borrow().scale
     }
 }

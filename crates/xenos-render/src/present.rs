@@ -36,9 +36,44 @@ fn pick(t: vec4<f32>, s: u32) -> f32 {
     }
 }
 
+// Catmull-Rom (bicubic) filtering in 9 bilinear taps (the 16 texels' weights folded pairwise):
+// sharper than bilinear when the frame is scaled up to the screen.
+fn catmull_rom(uv: vec2<f32>) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(frame));
+    let pos = uv * size;
+    let center = floor(pos - 0.5) + 0.5;
+    let f = pos - center;
+    let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    let w3 = f * f * (-0.5 + 0.5 * f);
+    let w12 = w1 + w2;
+    let t0 = (center - 1.0) / size;
+    let t3 = (center + 2.0) / size;
+    let t12 = (center + w2 / w12) / size;
+    var c = vec4<f32>(0.0);
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t0.x, t0.y), 0.0) * w0.x * w0.y;
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t12.x, t0.y), 0.0) * w12.x * w0.y;
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t3.x, t0.y), 0.0) * w3.x * w0.y;
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t0.x, t12.y), 0.0) * w0.x * w12.y;
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t12.x, t12.y), 0.0) * w12.x * w12.y;
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t3.x, t12.y), 0.0) * w3.x * w12.y;
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t0.x, t3.y), 0.0) * w0.x * w3.y;
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t12.x, t3.y), 0.0) * w12.x * w3.y;
+    c += textureSampleLevel(frame, frame_sampler, vec2<f32>(t3.x, t3.y), 0.0) * w3.x * w3.y;
+    return max(c, vec4<f32>(0.0));
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-    let t = textureSample(frame, frame_sampler, in.uv);
+    // Scaled up (the viewport is larger than the frame): bicubic; otherwise bilinear.
+    let scale = fwidth(in.uv) * vec2<f32>(textureDimensions(frame));
+    var t: vec4<f32>;
+    if (max(scale.x, scale.y) < 0.99) {
+        t = catmull_rom(in.uv);
+    } else {
+        t = textureSampleLevel(frame, frame_sampler, in.uv, 0.0);
+    }
     return vec4<f32>(pick(t, swizzle.x), pick(t, swizzle.y), pick(t, swizzle.z), 1.0);
 }
 "#;

@@ -137,6 +137,13 @@ pub extern "C" fn skyrt_set_pad(user: u32, buttons: u32, lt: u32, rt: u32, lx: i
     );
 }
 
+/// The page canvas's size on screen in device pixels (the renderer sizes its output to it).
+#[cfg(target_os = "emscripten")]
+#[unsafe(no_mangle)]
+pub extern "C" fn skyrt_set_display_size(width: u32, height: u32) {
+    xenos_render::web::set_display_size(width, height);
+}
+
 /// Plugs a controller into port `user` or pulls it out.
 #[cfg(target_os = "emscripten")]
 #[unsafe(no_mangle)]

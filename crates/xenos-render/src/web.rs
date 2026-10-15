@@ -11,9 +11,35 @@ use gpu_webgpu::*;
 use crate::renderer::{Renderer, TargetsFactory, wanted_features};
 use crate::{PhysicalMemory, RendererHandle};
 
-/// Canvas backing-store size.
+/// Canvas backing-store size until the page reports the canvas's size on screen.
 pub const WIDTH: u32 = 1280;
 pub const HEIGHT: u32 = 720;
+/// Largest backing store (4K): a bigger one costs GPU memory and present time for no detail.
+const MAX_PIXELS: u32 = 3840 * 2160;
+
+/// The canvas's size on screen in device pixels (`width << 16 | height`; 0: not reported).
+static DISPLAY_SIZE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The page's canvas is `width` x `height` device pixels on screen. Outside phones and tablets the
+/// canvas's backing store follows it, so the frame is scaled up once, by the presenter, rather
+/// than drawn at 1280x720 and stretched by the browser. Callable from any thread.
+pub fn set_display_size(width: u32, height: u32) {
+    let packed = (width.min(0xFFFF) << 16) | height.min(0xFFFF);
+    DISPLAY_SIZE.store(packed, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The backing-store size for the reported display size.
+fn wanted_size(max_dimension: u32) -> (u32, u32) {
+    let packed = DISPLAY_SIZE.load(std::sync::atomic::Ordering::Relaxed);
+    let (w, h) = (packed >> 16, packed & 0xFFFF);
+    // Phones keep the default: a full-screen swap chain there is tens of MiB of the tab's memory.
+    if w < 16 || h < 16 || crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed) {
+        return (WIDTH, HEIGHT);
+    }
+    let shrink = (MAX_PIXELS as f64 / (w as f64 * h as f64)).sqrt().min(1.0);
+    let fit = |v: u32| ((v as f64 * shrink) as u32).clamp(1, max_dimension);
+    (fit(w), fit(h))
+}
 const STACK_SIZE: usize = 1 << 20;
 
 /// Starts the renderer on its own pthread, presenting to the canvas `selector` (e.g.
@@ -42,6 +68,9 @@ struct Running {
     perf: Perf,
     /// When frames were shown since the last perf report.
     presents: Vec<std::time::Instant>,
+    /// The surface's format and current size (reconfigured when the canvas's size changes).
+    format: TextureFormat,
+    size: (u32, u32),
 }
 
 fn run(handle: RendererHandle, memory: Arc<dyn PhysicalMemory>, canvas: &str, targets: TargetsFactory) {
@@ -127,18 +156,8 @@ fn configure(
 ) -> Result<Running> {
     let caps = surface.capabilities(adapter)?;
     let format = *caps.formats.first().ok_or(Error::Surface("no surface formats".into()))?;
-    surface.configure(
-        &device,
-        &SurfaceConfiguration {
-            format,
-            usage: TextureUsage::RenderAttachment,
-            width: WIDTH,
-            height: HEIGHT,
-            view_formats: &[],
-            alpha_mode: CompositeAlphaMode::Opaque,
-            present_mode: PresentMode::Fifo,
-        },
-    );
+    let size = wanted_size(device.limits().maxTextureDimension2D);
+    configure_surface(surface, &device, format, size);
     Ok(Running {
         renderer: Renderer::new(&device, memory, format, targets),
         ticks: 0,
@@ -146,7 +165,24 @@ fn configure(
         last_report: 0.0,
         perf: Perf::default(),
         presents: Vec::new(),
+        format,
+        size,
     })
+}
+
+fn configure_surface(surface: &Surface, device: &Device, format: TextureFormat, (width, height): (u32, u32)) {
+    surface.configure(
+        device,
+        &SurfaceConfiguration {
+            format,
+            usage: TextureUsage::RenderAttachment,
+            width,
+            height,
+            view_formats: &[],
+            alpha_mode: CompositeAlphaMode::Opaque,
+            present_mode: PresentMode::Fifo,
+        },
+    );
 }
 
 /// Where the renderer thread's time went over a reporting window (logged every few seconds, to
@@ -251,13 +287,21 @@ impl Running {
                 self.renderer.executor.stats
             );
         }
+        let size = wanted_size(self.renderer.device.limits().maxTextureDimension2D);
+        if size != self.size {
+            log::info!("renderer: canvas {}x{} -> {}x{}", self.size.0, self.size.1, size.0, size.1);
+            self.size = size;
+            configure_surface(surface, &self.renderer.device, self.format, size);
+            // Show the current frame at the new size.
+            self.presented = u64::MAX;
+        }
         if self.renderer.presenter.frames != self.presented {
             self.presented = self.renderer.presenter.frames;
             let device = self.renderer.device.clone();
             let frame = surface.current_frame()?;
             let view = frame.texture.create_view(None);
             let mut encoder = device.create_command_encoder("present");
-            self.renderer.presenter.encode(&mut encoder, &view, WIDTH, HEIGHT);
+            self.renderer.presenter.encode(&mut encoder, &view, size.0, size.1);
             device.queue().submit([encoder.finish("present")]);
             frame.present();
             self.presents.push(std::time::Instant::now());

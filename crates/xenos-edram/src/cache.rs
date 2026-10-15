@@ -1474,7 +1474,7 @@ impl EdramCache {
             return false;
         }
         let tile_h = EDRAM_TILE_HEIGHT_SAMPLES >> dst_key.msaa_samples.samples_y_log2();
-        let tiles = dst_key.pitch_tiles() * dst.height.div_ceil(tile_h);
+        let tiles = dst_key.pitch_tiles() * (dst.height / self.scale).div_ceil(tile_h);
         if tiles > EDRAM_TILE_COUNT || dst.offset != [0, 0] || src.offset != [0, 0] {
             return false;
         }
