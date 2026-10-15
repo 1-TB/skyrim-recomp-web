@@ -51,7 +51,7 @@ pub mod map {
     /// guest code land somewhere harmless until a GPU backend claims them.
     pub const MMIO_BASE: u32 = 0x7FC0_0000;
     pub const MMIO_END: u32 = 0x8000_0000;
-    /// XEX image, its copied header, and XenonRecomp's indirect-call table.
+    /// XEX image and its copied header.
     pub const XEX_BASE: u32 = 0x8000_0000;
     pub const XEX_END: u32 = 0x9000_0000;
     /// NtAllocateVirtualMemory heap for 4 KiB-page requests. On hardware (and

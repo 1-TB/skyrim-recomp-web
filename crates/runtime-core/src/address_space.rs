@@ -385,8 +385,7 @@ impl AddressSpace {
 
     // --- XEX region ---------------------------------------------------------------------
 
-    /// Reserves and commits a fixed range in the XEX region (image, header copy,
-    /// indirect-call table).
+    /// Reserves and commits a fixed range in the XEX region (image, header copy).
     pub fn alloc_xex(&self, addr: u32, size: u32) -> AllocResult<u32> {
         if region_of(addr) != Region::Xex {
             return Err(AllocError::WrongRegion(addr));

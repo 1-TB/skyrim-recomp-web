@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use kernel_hle::Kernel;
 use kernel_hle::dispatch::{ImportName, StubConfig};
 use runtime_core::layout::kpcr;
-use runtime_core::{FuncMapping, GuestModule, PPCContext, Runtime};
+use runtime_core::{GuestModule, PPCContext, Runtime};
 use xex::builder::{
     IMAGE_SCN_CNT_CODE, IMAGE_SCN_CNT_INITIALIZED_DATA, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE,
     ImportLibrarySpec, PeSection, XexBuilder, build_pe_image,
@@ -29,8 +29,14 @@ pub const NTCLOSE_THUNK: u32 = BASE + CODE_RVA;
 /// A guest function (implemented on the host) that records each call.
 pub const RECORDER: u32 = BASE + CODE_RVA + 0x100;
 
-static FUNCS: [FuncMapping; 2] =
-    [FuncMapping { guest: RECORDER as usize, host: Some(recorder) }, FuncMapping { guest: 0, host: None }];
+static FUNCS: [u32; 1] = [RECORDER];
+
+/// The module's function dispatch: [`RECORDER`] is the only function.
+unsafe extern "C-unwind" fn call(addr: u32, ctx: *mut PPCContext, base: *mut u8) {
+    assert_eq!(addr, RECORDER);
+    // SAFETY: as received from Runtime::call.
+    unsafe { recorder(ctx, base) }
+}
 
 /// What [`RECORDER`] saw: r3..r6 and the DPC state of its processor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +153,7 @@ pub fn kernel_with(stubs: StubConfig) -> &'static Kernel {
         code_base: BASE + CODE_RVA,
         code_size: 0x1000,
         functions: &FUNCS,
+        call,
         init_context,
     };
     let rt = Runtime::load(module, synthetic_xex()).expect("runtime");

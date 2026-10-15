@@ -114,12 +114,7 @@ impl Runtime {
         let entry_point = xex.entry_point().ok_or(LoadError::NoEntryPoint)?;
         let space = AddressSpace::new()?;
         let installed = module.install(&space)?;
-        log::info!(
-            "image {:#010X}+{:#X}, {installed} recompiled functions, call table at {:#010X}",
-            module.image_base,
-            module.image_size,
-            module.table_base()
-        );
+        log::info!("image {:#010X}+{:#X}, {installed} recompiled functions", module.image_base, module.image_size);
         space.mem.write_bytes(module.image_base, xex.image());
 
         let header = xex.header_bytes();
@@ -188,10 +183,12 @@ impl Runtime {
 
     /// Calls the recompiled function at `addr` with the registers already in `ctx`.
     pub fn call(&self, ctx: &mut PPCContext, addr: u32) -> Result<(), CallError> {
-        let f = self.module.lookup(&self.space.mem, addr).ok_or(CallError::NoFunction(addr))?;
-        // SAFETY: `f` is a recompiled function taking (ctx, base); base is the
+        if !self.module.has_function(addr) {
+            return Err(CallError::NoFunction(addr));
+        }
+        // SAFETY: a recompiled function starts at `addr`; it takes (ctx, base), base being the
         // guest memory every recompiled access is relative to.
-        unsafe { f(ctx, self.base()) };
+        unsafe { (self.module.call)(addr, ctx, self.base()) };
         Ok(())
     }
 }

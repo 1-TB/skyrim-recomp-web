@@ -380,7 +380,7 @@ pub fn build() -> Synthetic {
     a.lwz(R5, 0x74, R1);
     a.la(R3, "fmt_pack");
     a.bl("DbgPrint");
-    // Indirect call through ctr (PPC_CALL_INDIRECT_FUNC -> call table).
+    // Indirect call through ctr (PPC_CALL_INDIRECT_FUNC -> skyrt_call_func).
     a.la(R11, "helper");
     a.mtctr(R11);
     a.li(R3, 5);

@@ -14,6 +14,6 @@ pub mod timebase;
 
 pub use address_space::AddressSpace;
 pub use context::PPCContext;
-pub use guest::{FuncMapping, GuestModule, PPCFunc};
+pub use guest::{CallFunc, GuestModule, PPCFunc};
 pub use memory::GuestMemory;
 pub use runtime::Runtime;

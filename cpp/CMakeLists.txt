@@ -7,9 +7,10 @@ project(skyrim_guest LANGUAGES CXX)
 set(XENON_RECOMP_OUT "" CACHE PATH "XenonRecomp output directory (ppc_recomp.*.cpp, ppc_config.h, ...)")
 set(SIMDE_DIR "" CACHE PATH "simde headers (XenonRecomp/thirdparty/simde)")
 set(SKYRT_SHIM "" CACHE FILEPATH "Generated import shim (skyrt_imports.cpp)")
+set(SKYRT_DISPATCH "" CACHE FILEPATH "Generated indirect-call dispatch (skyrt_dispatch.cpp)")
 option(SKYRT_CHECK_FRAMES "Report scalar accesses straddling non-adjacent linear frames" OFF)
 
-foreach(var XENON_RECOMP_OUT SIMDE_DIR SKYRT_SHIM)
+foreach(var XENON_RECOMP_OUT SIMDE_DIR SKYRT_SHIM SKYRT_DISPATCH)
     if(NOT ${var})
         message(FATAL_ERROR "${var} must be set")
     endif()
@@ -22,8 +23,9 @@ endif()
 
 add_library(skyrim_guest STATIC
     ${RECOMP_SOURCES}
-    "${XENON_RECOMP_OUT}/ppc_func_mapping.cpp"
     "${SKYRT_SHIM}"
+    # Replaces ppc_func_mapping.cpp (see guest-sys build.rs, fn dispatch).
+    "${SKYRT_DISPATCH}"
 )
 target_include_directories(skyrim_guest PRIVATE "${XENON_RECOMP_OUT}" "${SIMDE_DIR}")
 set_target_properties(skyrim_guest PROPERTIES
