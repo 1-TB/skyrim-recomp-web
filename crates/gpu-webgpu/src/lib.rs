@@ -61,7 +61,7 @@ pub mod web;
 pub use buffer::{Buffer, BufferDescriptor};
 pub use command::{
     CommandBuffer, CommandEncoder, ComputePass, Queue, RenderPass, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, TexelCopyBufferInfo, TexelCopyTextureInfo,
+    RenderPassDepthStencilAttachment, TexelCopyBufferInfo, TexelCopyTextureInfo, UNSHARED_UPLOADS,
 };
 pub use device::{BindGroupEntry, BindingResource, Device, DeviceDescriptor};
 pub use error::{Error, GpuError, Result};

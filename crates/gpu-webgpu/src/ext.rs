@@ -139,6 +139,14 @@ pub mod emscripten {
             timeout_ms: c_int,
         );
         pub fn gpu_webgpu_loop_keepalive(start: bool);
+        /// `wgpuQueueWriteBuffer` from a copy in a (reused) non-shared buffer.
+        pub fn gpu_webgpu_write_buffer_unshared(
+            queue: crate::ffi::WGPUQueue,
+            buffer: crate::ffi::WGPUBuffer,
+            offset: f64,
+            data: *const c_void,
+            size: usize,
+        );
         pub fn emscripten_get_now() -> f64;
     }
 }

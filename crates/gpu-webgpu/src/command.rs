@@ -9,6 +9,11 @@ use crate::{
     Result, StoreOp, Texture, TextureAspect, TextureView, ffi,
 };
 
+/// `Queue::write_buffer` hands the browser a copy in a plain (non-shared) `ArrayBuffer` rather than
+/// a view of the wasm memory, which is a `SharedArrayBuffer` (an experiment: how browsers handle
+/// uploads from shared memory may differ). Web only.
+pub static UNSHARED_UPLOADS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 handle!(Queue, WGPUQueue, wgpuQueueAddRef, wgpuQueueRelease);
 handle!(CommandEncoder, WGPUCommandEncoder, wgpuCommandEncoderAddRef, wgpuCommandEncoderRelease);
 handle!(CommandBuffer, WGPUCommandBuffer, wgpuCommandBufferAddRef, wgpuCommandBufferRelease);
@@ -485,6 +490,19 @@ impl Queue {
         crate::counters::add(&crate::counters::count::write_buffers, 1);
         crate::counters::written(buffer.label(), data.len() as u64);
         if crate::staging::stage(self, buffer, offset, data) {
+            return;
+        }
+        #[cfg(target_os = "emscripten")]
+        if UNSHARED_UPLOADS.load(std::sync::atomic::Ordering::Relaxed) {
+            unsafe {
+                crate::ext::emscripten::gpu_webgpu_write_buffer_unshared(
+                    self.raw(),
+                    buffer.raw(),
+                    offset as f64,
+                    data.as_ptr().cast(),
+                    data.len(),
+                )
+            };
             return;
         }
         unsafe { ffi::wgpuQueueWriteBuffer(self.raw(), buffer.raw(), offset, data.as_ptr().cast(), data.len()) };

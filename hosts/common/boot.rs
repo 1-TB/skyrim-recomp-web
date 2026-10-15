@@ -51,7 +51,8 @@ options:
                            MiB of new textures loaded per second, the rest later; 0 = no
                            cap), upload-cap=MIB (MiB of uploads the GPU may not have consumed
                            yet before the renderer waits; default 256, 32 on phones and
-                           tablets; 0 = no cap), staging / no-staging (uploads through a ring of mapped
+                           tablets; 0 = no cap), unshared-upload (uploads copied out
+                           of the shared wasm memory first; web only), staging / no-staging (uploads through a ring of mapped
                            staging buffers instead of writeBuffer, or not),
                            nopool (never reuse textures), nomemo (bind textures per draw),
                            cpu-resolve (read resolves back to guest memory), cpu-texture (convert

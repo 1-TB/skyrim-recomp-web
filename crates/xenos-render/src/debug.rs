@@ -76,6 +76,10 @@ pub fn enable(mode: &str) -> Result<(), String> {
         crate::handheld_budgets();
         return Ok(());
     }
+    if mode == "unshared-upload" {
+        gpu_webgpu::UNSHARED_UPLOADS.store(true, Ordering::Relaxed);
+        return Ok(());
+    }
     if mode == "staging" || mode == "no-staging" {
         STAGING.store(if mode == "staging" { 1 } else { 2 }, Ordering::Relaxed);
         return Ok(());
@@ -121,7 +125,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, d3d-surfaces, gpu-time, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, d3d-surfaces, gpu-time, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, unshared-upload, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };

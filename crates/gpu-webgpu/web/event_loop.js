@@ -23,6 +23,15 @@ addToLibrary({
     channel.queue.push(run);
     channel.port2.postMessage(0);
   },
+  gpu_webgpu_write_buffer_unshared__deps: ['$WebGPU'],
+  gpu_webgpu_write_buffer_unshared: (queuePtr, bufferPtr, offset, data, size) => {
+    let scratch = globalThis.__gpuWebgpuUploadScratch;
+    if (!scratch || scratch.length < size) {
+      scratch = globalThis.__gpuWebgpuUploadScratch = new Uint8Array(Math.max(1 << 16, 2 ** Math.ceil(Math.log2(size))));
+    }
+    scratch.set(HEAPU8.subarray(data, data + size));
+    WebGPU.getJsObject(queuePtr).writeBuffer(WebGPU.getJsObject(bufferPtr), offset, scratch, 0, size);
+  },
   gpu_webgpu_schedule_on_change__deps: ['gpu_webgpu_schedule'],
   gpu_webgpu_schedule_on_change: (func, arg, addr, value, timeoutMs) => {
     // Wakes on Atomics.notify (an Emscripten futex wake) of the word, without blocking the
