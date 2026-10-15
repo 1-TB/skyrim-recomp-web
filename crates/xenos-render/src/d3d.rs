@@ -26,6 +26,8 @@ use crate::present::FrontBuffer;
 struct HostSurface {
     texture: Texture,
     view: TextureView,
+    /// The views the EDRAM shaders bind (resolves, transfers).
+    views: xenos_edram::ExternalViews,
     format: TextureFormat,
     width: u32,
     height: u32,
@@ -62,6 +64,7 @@ struct TextureKey {
 struct SharedTexture {
     texture: Texture,
     view: TextureView,
+    views: xenos_edram::ExternalViews,
     users: u32,
 }
 
@@ -69,6 +72,7 @@ impl HostSurface {
     fn external(&self, offset: [u32; 2]) -> xenos_edram::ExternalSource<'_> {
         xenos_edram::ExternalSource {
             texture: &self.texture,
+            views: &self.views,
             format: self.format,
             width: self.width,
             height: self.height,
@@ -409,13 +413,14 @@ impl D3dRenderer {
             if s.samples() > 1 && !crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed) { 4 } else { 1 };
         let edram = edram_key(s);
         let texture_key = TextureKey { edram, width, height, samples, format };
-        let (texture, view) = self.acquire(device, texture_key, s.depth);
+        let (texture, view, views) = self.acquire(device, texture_key, s.depth);
         log::debug!("d3d renderer: surface {:#010X} {width}x{height}x{samples} {format:?}", s.address);
         if let Some(old) = self.surfaces.insert(
             key,
             HostSurface {
                 texture,
                 view,
+                views,
                 format,
                 width,
                 height,
@@ -435,13 +440,19 @@ impl D3dRenderer {
     }
 
     /// The texture for surfaces with `key` (created for the first).
-    fn acquire(&mut self, device: &Device, key: TextureKey, depth: bool) -> (Texture, TextureView) {
+    fn acquire(
+        &mut self,
+        device: &Device,
+        key: TextureKey,
+        depth: bool,
+    ) -> (Texture, TextureView, xenos_edram::ExternalViews) {
         let shared = self.textures.entry(key).or_insert_with(|| {
             let (texture, view) = surface_texture(device, depth, key.width, key.height, key.samples, key.format);
-            SharedTexture { texture, view, users: 0 }
+            let views = xenos_edram::ExternalViews::new(&texture, depth);
+            SharedTexture { texture, view, views, users: 0 }
         });
         shared.users += 1;
-        (shared.texture.clone(), shared.view.clone())
+        (shared.texture.clone(), shared.view.clone(), shared.views.clone())
     }
 
     /// A surface no longer uses the texture with `key`; the last one retires it.
@@ -502,10 +513,10 @@ impl D3dRenderer {
         log::debug!("d3d renderer: surface {:#010X} grows from {} to {rows} rows", key.0, s.height);
         let (old, depth) = (s.texture_key, s.depth);
         let new = TextureKey { height: rows, ..old };
-        let (texture, view) = self.acquire(device, new, depth);
+        let (texture, view, views) = self.acquire(device, new, depth);
         self.release(old);
         let s = self.surfaces.get_mut(&key).expect("checked above");
-        (s.texture, s.view, s.height, s.texture_key) = (texture, view, rows, new);
+        (s.texture, s.view, s.views, s.height, s.texture_key) = (texture, view, views, rows, new);
         self.rows.insert(key, rows);
     }
 

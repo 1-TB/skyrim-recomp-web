@@ -563,8 +563,40 @@ fn fs_depth() -> @builtin(frag_depth) f32 {
 /// resolution: with resolution scaling, converted colors average each guest pixel's scale x scale
 /// host pixels, and raw copies take the host pixel at its center. Entry `main`.
 pub(crate) fn resolve_module(scale: u32) -> String {
-    format!("{}{RESOLVE_BODY}", common(scale))
+    format!("{}{RESOLVE_FROM_EDRAM}{RESOLVE_BODY}", common(scale))
 }
+
+/// The resolve shader reading a host texture standing for the whole surface instead of the
+/// EDRAM-layout buffer (`--gpu d3d`): no dump into EDRAM layout first. Entry `main`.
+pub(crate) fn resolve_direct_module(src: SrcKind, scale: u32) -> String {
+    format!("{}{}{}{RESOLVE_FROM_TEXTURE}{RESOLVE_BODY}", common(scale), src_decl(src), src_load(src))
+}
+
+const RESOLVE_FROM_EDRAM: &str = r#"
+@group(0) @binding(1) var<storage, read> edram: array<u32>;
+@group(0) @binding(2) var<storage, read_write> out_words: array<u32>;
+
+// Host pixel `host`'s sample as stored in EDRAM (high word for 64bpp).
+fn fetch_packed(host: vec2<u32>, sample: u32, depth: bool) -> vec2<u32> {
+    let a = edram_dword(host, sample, p.base, p.pitch, p.msaa, depth, (p.flags & 2u) != 0u);
+    var hi = 0u;
+    if ((p.flags & 2u) != 0u) {
+        hi = edram[a + 1u];
+    }
+    return vec2<u32>(edram[a], hi);
+}
+"#;
+
+const RESOLVE_FROM_TEXTURE: &str = r#"
+@group(0) @binding(3) var<storage, read_write> out_words: array<u32>;
+
+// Host pixel `host`'s sample packed as EDRAM stores it (high word for 64bpp).
+fn fetch_packed(host: vec2<u32>, sample: u32, depth: bool) -> vec2<u32> {
+    let fmt = select(p.src_format, 16u + p.src_format, (p.flags & 1u) != 0u);
+    let px = host + vec2<u32>(p.src_offset_x, p.src_offset_y);
+    return load_src_packed(px, host_sample_of_guest(sample, p.msaa), fmt);
+}
+"#;
 
 const RESOLVE_BODY: &str = r#"
 struct ResolveParams {
@@ -589,21 +621,19 @@ struct ResolveParams {
     copy_func: u32,
     copy_ref: u32,
     copy_mask: u32,
-    pad: u32,
+    // Direct resolves: where the base's pixel (0, 0) is in the source texture (host pixels).
+    src_offset_x: u32,
+    src_offset_y: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> p: ResolveParams;
-@group(0) @binding(1) var<storage, read> edram: array<u32>;
-@group(0) @binding(2) var<storage, read_write> out_words: array<u32>;
 
 // The host pixel at the center of guest pixel `pos`.
 fn center(pos: vec2<u32>) -> vec2<u32> {
     return pos * RES_SCALE + vec2<u32>(RES_SCALE >> 1u);
-}
-
-// `host` is a host pixel.
-fn src_addr(host: vec2<u32>, sample: u32, depth: bool) -> u32 {
-    return edram_dword(host, sample, p.base, p.pitch, p.msaa, depth, (p.flags & 2u) != 0u);
 }
 
 // Guest pixel `pos`'s sample, averaged over its host pixels.
@@ -618,16 +648,12 @@ fn load_rgba(pos: vec2<u32>, sample: u32) -> vec4<f32> {
 }
 
 fn load_rgba_host(host: vec2<u32>, sample: u32) -> vec4<f32> {
-    let a = src_addr(host, sample, false);
-    var hi = 0u;
-    if ((p.flags & 2u) != 0u) {
-        hi = edram[a + 1u];
-    }
+    let v = fetch_packed(host, sample, false);
     var fmt = p.src_format;
     if (fmt == 1u && (p.flags & 8u) == 0u) {
         fmt = 0u;
     }
-    return unpack_color(edram[a], hi, fmt);
+    return unpack_color(v.x, v.y, fmt);
 }
 
 fn first_sample(sel: u32) -> u32 {
@@ -764,16 +790,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let swap = (p.flags & 4u) != 0u;
     switch (p.mode) {
         case 0u: {
-            var v = edram[src_addr(center(pos), first, (p.flags & 1u) != 0u)];
+            var v = fetch_packed(center(pos), first, (p.flags & 1u) != 0u).x;
             if (swap) {
                 v = swap_rb_32(v, p.src_format);
             }
             out_words[o] = v;
         }
         case 1u: {
-            let a = src_addr(center(pos), first, false);
-            var lo = edram[a];
-            var hi = edram[a + 1u];
+            let packed = fetch_packed(center(pos), first, false);
+            var lo = packed.x;
+            var hi = packed.y;
             if (swap && (p.src_format == 5u || p.src_format == 7u)) {
                 let t = lo;
                 lo = (lo & 0xFFFF0000u) | (hi & 0xFFFFu);
@@ -783,7 +809,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             out_words[o + 1u] = hi;
         }
         case 3u: {
-            let v = edram[src_addr(center(pos), first, false)];
+            let v = fetch_packed(center(pos), first, false).x;
             out_words[o] = bit_1111(v, 0u) | (bit_1111(v, 1u) << 1u) | (bit_1111(v, 2u) << 2u)
                 | (bit_1111(v, 3u) << 3u);
         }

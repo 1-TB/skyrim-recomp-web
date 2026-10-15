@@ -190,6 +190,8 @@ struct Pipelines {
     clear: Option<(BindGroupLayout, PipelineLayout, ShaderModule)>,
     clears: HashMap<(TextureFormat, u32, bool), RenderPipeline>,
     resolve: Option<(BindGroupLayout, ComputePipeline)>,
+    /// Resolves reading a host texture directly (`--gpu d3d`), by source kind.
+    resolve_direct: HashMap<SrcKind, (BindGroupLayout, ComputePipeline)>,
     store: [Option<(BindGroupLayout, ComputePipeline)>; 2],
     /// By multisampling: the stencil bit layout, pipeline layout and module.
     stencil_bit_modules: [Option<(BindGroupLayout, PipelineLayout, ShaderModule)>; 2],
@@ -439,6 +441,32 @@ impl Pipelines {
         })
     }
 
+    fn resolve_direct(&mut self, device: &Device, kind: SrcKind) -> &(BindGroupLayout, ComputePipeline) {
+        let scale = self.scale;
+        self.resolve_direct.entry(kind).or_insert_with(|| {
+            let mut entries = src_layout_entries(kind, ShaderStage::Compute);
+            entries.push(BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStage::Compute,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage,
+                    has_dynamic_offset: false,
+                    min_binding_size: 0,
+                },
+            });
+            let bgl = device.create_bind_group_layout("edram resolve direct", &entries);
+            let pl = device.create_pipeline_layout("edram resolve direct", &[&bgl]);
+            let module =
+                device.create_shader_module_wgsl("edram resolve direct", &shaders::resolve_direct_module(kind, scale));
+            let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: "edram resolve direct",
+                layout: Some(&pl),
+                stage: ProgrammableStage::new(&module, "main"),
+            });
+            (bgl, pipeline)
+        })
+    }
+
     fn resolve(&mut self, device: &Device) -> &(BindGroupLayout, ComputePipeline) {
         let scale = self.scale;
         self.resolve.get_or_insert_with(|| {
@@ -579,7 +607,8 @@ pub struct EdramCache {
     retired_buffers: Vec<Buffer>,
     ownership: OwnershipMap,
     /// EDRAM-layout copy of the tiles dumped for resolves.
-    shadow: Buffer,
+    /// The EDRAM-layout buffer resolves read (made on first use: `--gpu d3d` never needs it).
+    shadow: Option<Buffer>,
     resolve_out: Option<Buffer>,
     readback_pool: Vec<Buffer>,
     /// Stencil transfer scratch targets by (width, height, samples).
@@ -635,15 +664,24 @@ impl EdramCache {
         Self::with_options(device, EdramOptions::default())
     }
 
+    /// The EDRAM-layout buffer (made on first use).
+    fn shadow_buffer(&mut self, device: &Device) -> Buffer {
+        let size = EDRAM_BYTES * u64::from(self.scale * self.scale);
+        self.shadow
+            .get_or_insert_with(|| {
+                device.create_buffer(&BufferDescriptor {
+                    label: "edram shadow",
+                    size,
+                    usage: BufferUsage::Storage | BufferUsage::CopyDst,
+                    mapped_at_creation: false,
+                })
+            })
+            .clone()
+    }
+
     pub fn with_options(device: &Device, options: EdramOptions) -> Self {
         let limits = device.limits();
         let scale = options.resolution_scale.clamp(1, 3);
-        let shadow = device.create_buffer(&BufferDescriptor {
-            label: "edram shadow",
-            size: EDRAM_BYTES * u64::from(scale * scale),
-            usage: BufferUsage::Storage | BufferUsage::CopyDst,
-            mapped_at_creation: false,
-        });
         Self {
             depth32_stencil8: device.has_feature(FeatureName::Depth32FloatStencil8),
             options,
@@ -657,7 +695,7 @@ impl EdramCache {
             outgrown: Vec::new(),
             retired_buffers: Vec::new(),
             ownership: OwnershipMap::default(),
-            shadow,
+            shadow: None,
             resolve_out: None,
             readback_pool: Vec::new(),
             stencil_scratch: HashMap::new(),
@@ -1310,8 +1348,31 @@ struct ClearPlan {
 
 /// A resolve source outside the EDRAM emulation: a host texture standing for one whole surface
 /// (the `--gpu d3d` renderer's D3D surfaces).
+/// The views of an external source's texture the EDRAM shaders bind (made once per texture:
+/// bind groups are cached by view).
+#[derive(Clone)]
+pub struct ExternalViews {
+    attachment: TextureView,
+    read: TextureView,
+    stencil: Option<TextureView>,
+}
+
+impl ExternalViews {
+    pub fn new(texture: &Texture, depth: bool) -> Self {
+        let attachment = texture.create_view(None);
+        let (read, stencil) = if depth {
+            let view = |aspect| texture.create_view(Some(&TextureViewDescriptor { aspect, ..Default::default() }));
+            (view(TextureAspect::DepthOnly), Some(view(TextureAspect::StencilOnly)))
+        } else {
+            (attachment.clone(), None)
+        };
+        Self { attachment, read, stencil }
+    }
+}
+
 pub struct ExternalSource<'a> {
     pub texture: &'a Texture,
+    pub views: &'a ExternalViews,
     pub format: TextureFormat,
     pub width: u32,
     pub height: u32,
@@ -1328,19 +1389,12 @@ pub struct ExternalSource<'a> {
 
 impl ExternalSource<'_> {
     fn host_rt(&self, key: RenderTargetKey) -> HostRt {
-        let attachment = self.texture.create_view(None);
-        let (read, stencil) = if self.depth {
-            let view = |aspect| self.texture.create_view(Some(&TextureViewDescriptor { aspect, ..Default::default() }));
-            (view(TextureAspect::DepthOnly), Some(view(TextureAspect::StencilOnly)))
-        } else {
-            (attachment.clone(), None)
-        };
         HostRt {
             key,
             texture: self.texture.clone(),
-            attachment,
-            read,
-            stencil,
+            attachment: self.views.attachment.clone(),
+            read: self.views.read.clone(),
+            stencil: self.views.stencil.clone(),
             format: self.format,
             samples: self.samples,
             width: self.width,
@@ -1629,22 +1683,21 @@ impl EdramCache {
             None => (None, [0, 0]),
         };
         let source = plan.source;
-        // Dump the source tiles from their owners (or the external source) into the
-        // EDRAM-layout buffer.
+        // Dump the source tiles from their owners into the EDRAM-layout buffer (an external
+        // source is read directly by the resolve shader instead).
         let (base, row_length, rows, pitch) = info.copy_edram_tile_span().expect("copy has a source");
-        let spans: Vec<(u32, u32)> = if row_length >= pitch {
+        let spans: Vec<(u32, u32)> = if external.is_some() {
+            Vec::new()
+        } else if row_length >= pitch {
             vec![(base, (rows * pitch).min(EDRAM_TILE_COUNT))]
         } else {
             (0..rows).map(|r| (base + r * pitch, row_length)).collect()
         };
+        let shadow = (external.is_none()).then(|| self.shadow_buffer(device));
         let mut dumps = Vec::new();
         for (start, length) in spans {
-            let ranges: Vec<OwnedRange> = match external {
-                Some(rt) => vec![OwnedRange { start, end: start + length, owner: rt.key }],
-                None => self.ownership.owners_in(start, length),
-            };
-            for range in ranges {
-                let Some(rt) = external.or_else(|| self.rts.get(&range.owner)) else {
+            for range in self.ownership.owners_in(start, length) {
+                let Some(rt) = self.rts.get(&range.owner) else {
                     continue;
                 };
                 let kind = rt.src_kind();
@@ -1671,7 +1724,7 @@ impl EdramCache {
                 let (layout, pipeline) = self.pipelines.dump(device, kind);
                 let mut entries = vec![
                     BindGroupEntry { binding: 0, resource: params.binding() },
-                    BindGroupEntry { binding: 3, resource: whole(&self.shadow) },
+                    BindGroupEntry { binding: 3, resource: whole(shadow.as_ref().expect("made above")) },
                 ];
                 entries.extend(src_entries(rt));
                 let bind_group = cached_bind_group(&self.groups, device, "edram dump", layout, &entries);
@@ -1726,25 +1779,40 @@ impl EdramCache {
                 info.copy_func,
                 info.copy_ref,
                 info.copy_mask,
+                offset[0] * self.scale,
+                offset[1] * self.scale,
+                0,
+                0,
                 0,
             ],
         );
-        let (layout, pipeline) = self.pipelines.resolve(device);
         // The output buffer is bound whole (the shaders don't take its length), so the group
         // doesn't depend on this resolve's size.
         let resolve_params = params;
-        let bind_group = cached_bind_group(
-            &self.groups,
-            device,
-            "edram resolve",
-            layout,
-            &[
-                BindGroupEntry { binding: 0, resource: resolve_params.binding() },
-                BindGroupEntry { binding: 1, resource: whole(&self.shadow) },
-                BindGroupEntry { binding: 2, resource: whole(&out) },
-            ],
-        );
-        let pipeline = pipeline.clone();
+        let (pipeline, bind_group) = match external {
+            Some(rt) => {
+                let (layout, pipeline) = self.pipelines.resolve_direct(device, rt.src_kind());
+                let mut entries = vec![BindGroupEntry { binding: 0, resource: resolve_params.binding() }];
+                entries.extend(src_entries(rt));
+                entries.push(BindGroupEntry { binding: 3, resource: whole(&out) });
+                (pipeline.clone(), cached_bind_group(&self.groups, device, "edram resolve direct", layout, &entries))
+            }
+            None => {
+                let (layout, pipeline) = self.pipelines.resolve(device);
+                let group = cached_bind_group(
+                    &self.groups,
+                    device,
+                    "edram resolve",
+                    layout,
+                    &[
+                        BindGroupEntry { binding: 0, resource: resolve_params.binding() },
+                        BindGroupEntry { binding: 1, resource: whole(shadow.as_ref().expect("made above")) },
+                        BindGroupEntry { binding: 2, resource: whole(&out) },
+                    ],
+                );
+                (pipeline.clone(), group)
+            }
+        };
         let is_1111 = plan.kind == ResolveCopyKind::Dxt3aAs1111;
         let layout = DestLayout {
             base: info.copy_dest_base,
