@@ -48,8 +48,8 @@ options:
                            mirror=MIB (GPU memory for mirroring guest memory, 32-128; default
                            128, or 64 on phones and tablets in the browser), handheld (the
                            GPU memory budgets used on phones and tablets), load-cap=MIB (guest
-                           MiB of new textures loaded per second, the rest later; 0 = no
-                           cap), upload-cap=MIB (MiB of uploads the GPU may not have consumed
+                           MiB of new textures loaded per second, the rest later; default
+                           no cap, 16 on phones and tablets; 0 = no cap), upload-cap=MIB (MiB of uploads the GPU may not have consumed
                            yet before the renderer waits; default 256, 32 on phones and
                            tablets; 0 = no cap), unshared-upload (uploads copied out
                            of the shared wasm memory first; web only), staging / no-staging (uploads through a ring of mapped

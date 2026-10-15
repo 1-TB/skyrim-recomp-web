@@ -55,8 +55,10 @@ const FLOAT_CONSTANTS_SIZE: u64 = bindings::FLOAT_CONSTANTS_SIZE;
 const BOOL_LOOP_SIZE: u64 = 160;
 const FETCH_SIZE: u64 = bindings::FETCH_CONSTANTS_SIZE;
 /// Phones: guest bytes of new textures loaded per second (see
-/// `CacheConfig::max_load_bytes_per_second`; `--render-debug load-cap=MIB` overrides it).
-const HANDHELD_LOAD_RATE: u64 = u64::MAX;
+/// `CacheConfig::max_load_bytes_per_second`; `--render-debug load-cap=MIB` overrides it, 0: no
+/// cap). Without it an iPhone uploaded 240-270 MiB/s at world entry and Safari closed the tab
+/// right after the first frame (twice); with 16 MiB/s the peak was ~150 MiB/s and it played on.
+const HANDHELD_LOAD_RATE: u64 = 16 << 20;
 /// Bytes uploaded (`write_buffer`/`write_texture`) that may be on their way to the GPU before
 /// the renderer waits for earlier submissions to finish. Browsers copy each upload out of the
 /// page and hand it to their GPU process, which consumes them in order: while that process is
