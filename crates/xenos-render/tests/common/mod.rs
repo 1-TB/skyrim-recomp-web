@@ -98,6 +98,7 @@ impl RenderTargetCache for OneTarget {
             sample_count: 1,
             sample_mask: !0,
             blendable: [true; 4],
+            clears: Default::default(),
         })
     }
 

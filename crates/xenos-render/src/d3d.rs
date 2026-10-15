@@ -121,6 +121,17 @@ pub(crate) struct D3dRenderer {
     frame_log: Vec<String>,
     presents: u64,
     mosaic: Option<Mosaic>,
+    /// Clears not done yet, by texture: the next pass drawing to the texture does them as load
+    /// ops ([`D3dTargets::targets`]) rather than each taking a pass of its own (which on a
+    /// tile-based GPU, as phones have, stores the whole surface for the next pass to load).
+    /// Anything else reading or writing the surfaces does them first ([`D3dRenderer::do_clears`]).
+    pending_clears: Vec<(TextureKey, TextureView, PendingClear)>,
+}
+
+#[derive(Clone, Copy)]
+enum PendingClear {
+    Color(Color),
+    DepthStencil { depth: Option<f32>, stencil: Option<u32> },
 }
 
 /// Presents between per-frame operation logs.
@@ -229,6 +240,7 @@ impl D3dRenderer {
             frame_log: Vec::new(),
             presents: 0,
             mosaic: None,
+            pending_clears: Vec::new(),
         }
     }
 
@@ -253,6 +265,8 @@ impl D3dRenderer {
 
     /// Draws the frame's color surfaces into the mosaic and returns it as the front buffer.
     fn mosaic(&mut self, device: &Device) -> Option<FrontBuffer> {
+        let mut encoder = device.create_command_encoder("d3d surface mosaic");
+        self.do_clears(&mut encoder);
         let mosaic = self.mosaic.get_or_insert_with(|| Mosaic::new(device));
         // Multisampled surfaces are left out (the tile shader reads single-sampled textures).
         let surfaces: Vec<&HostSurface> =
@@ -261,7 +275,6 @@ impl D3dRenderer {
         let cols = (n as f32).sqrt().ceil() as u32;
         let rows = n.div_ceil(cols);
         let (tw, th) = (MOSAIC_SIZE.0 / cols, MOSAIC_SIZE.1 / rows);
-        let mut encoder = device.create_command_encoder("d3d surface mosaic");
         let mut buffers = Vec::new();
         {
             let black = Color { r: 0.1, g: 0.0, b: 0.1, a: 1.0 };
@@ -322,9 +335,9 @@ impl D3dRenderer {
         }
     }
 
-    /// Executes `cmd`, recording its GPU work into `encoder` (the executor's batch); a present
-    /// returns the surface mosaic to show (`--render-debug d3d-surfaces`).
-    pub fn execute(&mut self, device: &Device, cmd: Command, encoder: &mut CommandEncoder) -> Option<FrontBuffer> {
+    /// Executes `cmd` (its GPU work is recorded later, see `pending_clears`); a present returns
+    /// the surface mosaic to show (`--render-debug d3d-surfaces`).
+    pub fn execute(&mut self, device: &Device, cmd: Command) -> Option<FrontBuffer> {
         match cmd {
             Command::SetRenderTarget { index, surface } => {
                 let key = surface.map(|s| self.surface(device, &s));
@@ -350,7 +363,7 @@ impl D3dRenderer {
                         args.flags, args.color, args.z, args.stencil
                     )
                 });
-                self.clear(encoder, &args);
+                self.clear(&args);
             }
             Command::Resolve { args, dest } => {
                 self.use_surface(args.source_target().and_then(|i| self.targets[i as usize]));
@@ -463,6 +476,7 @@ impl D3dRenderer {
                 && let Some(shared) = self.textures.remove(&key)
             {
                 self.retired.push(shared.texture);
+                self.pending_clears.retain(|(k, _, _)| *k != key);
             }
         }
     }
@@ -549,6 +563,9 @@ impl D3dRenderer {
             return;
         }
         self.aliasing.carried += 1;
+        self.do_clears(encoder);
+        let s = &self.surfaces[&key];
+        let p = &self.surfaces[&previous.expect("found above")];
         let edram = self.edram.get_or_insert_with(|| xenos_edram::EdramCache::new(device));
         let done =
             edram.transfer_external(device, encoder, (&p.external([0, 0]), p.edram), (&s.external([0, 0]), s.edram));
@@ -586,43 +603,73 @@ impl D3dRenderer {
     }
 
     /// Clears the bound surfaces the flags name (the whole surface: the title's clear rectangles
-    /// cover the viewport).
-    fn clear(&mut self, encoder: &mut CommandEncoder, args: &ClearArgs) {
+    /// cover the viewport). They're done by the next pass drawing to them, or before anything
+    /// else uses them (see `pending_clears`).
+    fn clear(&mut self, args: &ClearArgs) {
         let rgba = args.rgba().map(f64::from);
         let color = Color { r: rgba[0], g: rgba[1], b: rgba[2], a: rgba[3] };
-        for (i, target) in self.targets.iter().enumerate() {
+        for (i, target) in self.targets.into_iter().enumerate() {
             if args.flags & (1 << i) == 0 {
                 continue;
             }
             if let Some((key, s)) = target.and_then(|t| Some((t, self.surfaces.get(&t)?))) {
                 self.edram_owners.insert(s.edram.base_tiles, key);
-                let pass = encoder.begin_render_pass(
-                    "d3d clear",
-                    &[Some(RenderPassColorAttachment::clear(&s.view, color))],
-                    None,
-                );
-                pass.end();
+                let (texture, view) = (s.texture_key, s.view.clone());
+                self.pend_clear(texture, view, PendingClear::Color(color));
             }
         }
         if args.flags & (clear::ZBUFFER | clear::STENCIL) != 0
             && let Some((key, s)) = self.depth.and_then(|d| Some((d, self.surfaces.get(&d)?)))
         {
             self.edram_owners.insert(s.edram.base_tiles, key);
-            let keep_depth = args.flags & clear::ZBUFFER == 0;
-            let keep_stencil = args.flags & clear::STENCIL == 0;
-            let depth = RenderPassDepthStencilAttachment {
-                view: &s.view,
-                depth_load_op: if keep_depth { LoadOp::Load } else { LoadOp::Clear },
-                depth_store_op: StoreOp::Store,
-                depth_clear_value: if s.float24 { args.z.clamp(0.0, 2.0) * 0.5 } else { args.z.clamp(0.0, 1.0) },
-                depth_read_only: false,
-                stencil_load_op: if keep_stencil { LoadOp::Load } else { LoadOp::Clear },
-                stencil_store_op: StoreOp::Store,
-                stencil_clear_value: args.stencil & 0xFF,
-                stencil_read_only: false,
+            let z = if s.float24 { args.z.clamp(0.0, 2.0) * 0.5 } else { args.z.clamp(0.0, 1.0) };
+            let clear = PendingClear::DepthStencil {
+                depth: (args.flags & clear::ZBUFFER != 0).then_some(z),
+                stencil: (args.flags & clear::STENCIL != 0).then_some(args.stencil & 0xFF),
             };
-            let pass = encoder.begin_render_pass("d3d clear", &[], Some(&depth));
-            pass.end();
+            let (texture, view) = (s.texture_key, s.view.clone());
+            self.pend_clear(texture, view, clear);
+        }
+    }
+
+    /// Adds a clear of `texture`, replacing (for each aspect it clears) an earlier one.
+    fn pend_clear(&mut self, texture: TextureKey, view: TextureView, clear: PendingClear) {
+        let Some((_, _, old)) = self.pending_clears.iter_mut().find(|(k, _, _)| *k == texture) else {
+            self.pending_clears.push((texture, view, clear));
+            return;
+        };
+        *old = match (*old, clear) {
+            (
+                PendingClear::DepthStencil { depth: d0, stencil: s0 },
+                PendingClear::DepthStencil { depth: d1, stencil: s1 },
+            ) => PendingClear::DepthStencil { depth: d1.or(d0), stencil: s1.or(s0) },
+            _ => clear,
+        };
+    }
+
+    /// Records the pending clears, each as a pass of its own.
+    fn do_clears(&mut self, encoder: &mut CommandEncoder) {
+        for (_, view, clear) in self.pending_clears.drain(..) {
+            match clear {
+                PendingClear::Color(color) => {
+                    let attachment = RenderPassColorAttachment::clear(&view, color);
+                    encoder.begin_render_pass("d3d clear", &[Some(attachment)], None).end();
+                }
+                PendingClear::DepthStencil { depth, stencil } => {
+                    let attachment = RenderPassDepthStencilAttachment {
+                        view: &view,
+                        depth_load_op: if depth.is_some() { LoadOp::Clear } else { LoadOp::Load },
+                        depth_store_op: StoreOp::Store,
+                        depth_clear_value: depth.unwrap_or(0.0),
+                        depth_read_only: false,
+                        stencil_load_op: if stencil.is_some() { LoadOp::Clear } else { LoadOp::Load },
+                        stencil_store_op: StoreOp::Store,
+                        stencil_clear_value: stencil.unwrap_or(0),
+                        stencil_read_only: false,
+                    };
+                    encoder.begin_render_pass("d3d clear", &[], Some(&attachment)).end();
+                }
+            }
         }
     }
 }
@@ -763,6 +810,20 @@ impl crate::targets::RenderTargetCache for D3dTargets {
             r.warn_once(w);
         }
         let (width, height, samples, msaa_2x) = size?;
+        // The pass does the clears of its attachments; the others are done before it.
+        let mut clears = crate::targets::AttachmentClears::default();
+        let pending = std::mem::take(&mut r.pending_clears);
+        for (texture, view, clear) in pending {
+            let attached = |a: &Option<(TextureView, TextureFormat)>| a.as_ref().is_some_and(|(v, _)| *v == view);
+            match (clear, colors.iter().position(attached)) {
+                (PendingClear::Color(color), Some(i)) => clears.colors[i] = Some(color),
+                (PendingClear::DepthStencil { depth: d, stencil: s }, _) if attached(&depth) => {
+                    (clears.depth, clears.stencil) = (d, s);
+                }
+                _ => r.pending_clears.push((texture, view, clear)),
+            }
+        }
+        r.do_clears(encoder);
         Some(crate::targets::DrawTargets {
             blendable: colors.each_ref().map(|c| {
                 c.as_ref().is_none_or(|(_, f)| !matches!(*f, TextureFormat::R32Float | TextureFormat::RG32Float))
@@ -773,6 +834,7 @@ impl crate::targets::RenderTargetCache for D3dTargets {
             height,
             sample_count: samples,
             sample_mask: if msaa_2x { 0b1001 } else { !0 },
+            clears,
         })
     }
 
@@ -793,6 +855,7 @@ impl crate::targets::RenderTargetCache for D3dTargets {
             return none;
         };
         let mut r = self.0.borrow_mut();
+        r.do_clears(encoder);
         // The cache is taken out while it runs (the surfaces stay borrowed from `r`).
         let mut edram = r.edram.take().unwrap_or_else(|| xenos_edram::EdramCache::new(device));
         // With predicated tiling the resolve covers one tile, whose screen origin the window

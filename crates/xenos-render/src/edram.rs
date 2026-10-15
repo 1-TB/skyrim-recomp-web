@@ -51,6 +51,7 @@ impl RenderTargetCache for EdramTargets {
                 height: t.height,
                 sample_count: t.sample_count,
                 sample_mask: t.sample_mask,
+                clears: Default::default(),
             }),
             Err(e) => {
                 log::warn!("edram: render targets: {e}");

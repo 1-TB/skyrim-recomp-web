@@ -289,6 +289,8 @@ struct Entry {
     depth_or_array_layers: u32,
     filterable: bool,
     views: [Option<TextureView>; 4],
+    /// The physical bytes `ranges` span, start to end (a quick test for `invalidate`).
+    span: (u64, u64),
     ranges: Vec<GuestRange>,
     hash: u64,
     bytes: u64,
@@ -541,10 +543,10 @@ pub struct TextureCache {
     /// Textures retired before the last `destroy_retired`, released by the next one.
     retiring: Vec<Pooled>,
     /// Textures dropped by [`TextureCache::invalidate`], by key: a reload of the same key from
-    /// the GPU copy fills the same texture again (it runs after the recorded work, which last
-    /// used the old contents before the invalidation, see [`GpuSource::submit`]), so textures read
-    /// from resolve output every frame don't each keep a pooled and a retired copy alive. The
-    /// rest are retired at the end of the frame.
+    /// the GPU copy fills the same texture again (it's recorded after the work that last used
+    /// the old contents, see [`GpuSource::take_encoder`]), so textures read from resolve output
+    /// every frame don't each keep a pooled and a retired copy alive. The rest are retired at
+    /// the end of the frame.
     stale: FxHashMap<TextureKey, Pooled>,
     /// The stale texture offered to the load in progress (taken by `new_texture`).
     reload_into: Option<Pooled>,
@@ -736,21 +738,22 @@ impl TextureCache {
     }
 
     /// Guest physical memory `[addr, addr + len)` changed (e.g. a resolve wrote it): drops every
-    /// texture reading from it. Returns the raw handles of the dropped textures' views (for
-    /// callers remembering bindings). Work using those textures must already be recorded: a
-    /// reload of the same texture this frame may be written into the same texture and views
-    /// (after that work, see [`GpuSource::submit`]).
-    pub fn invalidate(&mut self, addr: u32, len: u32) -> Vec<usize> {
-        let mut dropped_views = Vec::new();
+    /// texture reading from it (bindings remembered with their [`TextureId`]s find out through
+    /// [`TextureCache::touch`]). Work using those textures must already be recorded: a reload of
+    /// the same texture this frame may be written into the same texture and views (after that
+    /// work, in the same batch).
+    pub fn invalidate(&mut self, addr: u32, len: u32) {
         if len == 0 {
-            return dropped_views;
+            return;
         }
         let start = u64::from(addr & PHYSICAL_ADDRESS_MASK);
         let end = start + u64::from(len);
         let (retired, stale) = (&mut self.retired, &mut self.stale);
         let mut invalidated = 0;
         self.textures.retain(|key, e| {
-            let keep = !e.ranges.iter().any(|r| {
+            let keep = e.span.0 >= end
+                || start >= e.span.1
+                || !e.ranges.iter().any(|r| {
                 let (rs, re) = (u64::from(r.address), u64::from(r.address) + u64::from(r.length));
                 rs < end && start < re
             });
@@ -758,13 +761,11 @@ impl TextureCache {
                 if let Some(older) = stale.insert(*key, e.pooled()) {
                     retired.push(older);
                 }
-                dropped_views.extend(e.views.iter().flatten().map(|v| v.raw() as usize));
                 invalidated += 1;
             }
             keep
         });
         self.stats.invalidated += invalidated;
-        dropped_views
     }
 
     /// Frame boundary: textures get revalidated on their next use, old ones are evicted.
@@ -1074,6 +1075,7 @@ impl TextureCache {
             filterable: format::is_filterable(host_format, self.float32_filterable),
             views,
             pool_key,
+            span: span_of(&ranges),
             ranges,
             hash,
             bytes,
@@ -1164,6 +1166,7 @@ impl TextureCache {
             filterable: format::is_filterable(host_format, self.float32_filterable),
             views,
             pool_key,
+            span: span_of(&ranges),
             ranges,
             hash,
             bytes: plan.host_bytes(),
@@ -1439,4 +1442,11 @@ pub fn instruction_filters(binding: &TextureBinding) -> FetchInstructionFilters 
             parsed::AnisoFilter::UseFetchConst => AnisoFilter::UseFetchConst,
         },
     }
+}
+
+/// The physical bytes `ranges` span, from the first one's start to the last one's end.
+fn span_of(ranges: &[GuestRange]) -> (u64, u64) {
+    ranges.iter().fold((u64::MAX, 0), |(s, e), r| {
+        (s.min(u64::from(r.address)), e.max(u64::from(r.address) + u64::from(r.length)))
+    })
 }

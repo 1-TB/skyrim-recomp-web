@@ -19,6 +19,22 @@ pub struct DrawTargets {
     pub sample_mask: u32,
     /// Whether each color target's format supports blending.
     pub blendable: [bool; 4],
+    /// Clears the pass does first (as load ops), in place of passes of their own.
+    pub clears: AttachmentClears,
+}
+
+/// Clear values of a pass's attachments (`None`: keep the contents).
+#[derive(Clone, Copy, Default)]
+pub struct AttachmentClears {
+    pub colors: [Option<gpu_webgpu::Color>; 4],
+    pub depth: Option<f32>,
+    pub stencil: Option<u32>,
+}
+
+impl AttachmentClears {
+    pub fn any(&self) -> bool {
+        self.colors.iter().any(Option::is_some) || self.depth.is_some() || self.stencil.is_some()
+    }
 }
 
 impl DrawTargets {

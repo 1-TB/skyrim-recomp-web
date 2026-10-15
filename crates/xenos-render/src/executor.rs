@@ -921,11 +921,10 @@ impl Executor {
         self.constant_cache = ConstantCache { scratch, values, ..Default::default() };
     }
 
-    /// The batch's encoder for commands recorded outside the executor (`--gpu d3d` clears),
-    /// after the draws recorded so far; the next draw starts a new render pass.
-    pub fn external_encoder(&mut self) -> &mut CommandEncoder {
+    /// Ends the render pass being recorded: the next draw starts a new one (with the render
+    /// targets then current, `--gpu d3d`).
+    pub fn end_pass(&mut self) {
         self.encode_pass();
-        self.encoder()
     }
 
     fn encoder(&mut self) -> &mut CommandEncoder {
@@ -935,7 +934,8 @@ impl Executor {
     /// Encodes the recorded render pass (if any) into the open encoder.
     fn encode_pass(&mut self) {
         let Some(pass) = self.pass.take() else { return };
-        if pass.draws.is_empty() {
+        let clears = pass.targets.clears;
+        if pass.draws.is_empty() && !clears.any() {
             return;
         }
         let constants_group = self.constants_group.clone();
@@ -950,19 +950,26 @@ impl Executor {
         let encoder = self.encoder();
         let colors: Vec<_> = pass.targets.colors[..color_slots(&pass.targets)]
             .iter()
-            .map(|c| c.as_ref().map(|(view, _)| RenderPassColorAttachment::load(view)))
+            .zip(clears.colors)
+            .map(|(c, clear)| {
+                c.as_ref().map(|(view, _)| match clear {
+                    Some(color) => RenderPassColorAttachment::clear(view, color),
+                    None => RenderPassColorAttachment::load(view),
+                })
+            })
             .collect();
         let depth = pass.targets.depth.as_ref().map(|(view, format)| {
             let stencil = has_stencil(*format);
+            let load = |clear: bool| if clear { LoadOp::Clear } else { LoadOp::Load };
             RenderPassDepthStencilAttachment {
                 view,
-                depth_load_op: LoadOp::Load,
+                depth_load_op: load(clears.depth.is_some()),
                 depth_store_op: StoreOp::Store,
-                depth_clear_value: 0.0,
+                depth_clear_value: clears.depth.unwrap_or(0.0),
                 depth_read_only: false,
-                stencil_load_op: if stencil { LoadOp::Load } else { LoadOp::Undefined },
+                stencil_load_op: if stencil { load(clears.stencil.is_some()) } else { LoadOp::Undefined },
                 stencil_store_op: if stencil { StoreOp::Store } else { StoreOp::Undefined },
-                stencil_clear_value: 0,
+                stencil_clear_value: clears.stencil.unwrap_or(0),
                 stencil_read_only: false,
             }
         });
