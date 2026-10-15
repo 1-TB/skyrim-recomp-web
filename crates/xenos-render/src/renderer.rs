@@ -23,6 +23,21 @@ pub(crate) fn now_ms() -> f64 {
     }
 }
 
+/// A start time on [`now_ms`]'s clock, for timings taken often: on the web `Instant` goes
+/// through WASI's `clock_time_get` with a BigInt conversion, several times as slow.
+#[derive(Clone, Copy)]
+pub(crate) struct Stopwatch(f64);
+
+impl Stopwatch {
+    pub fn start() -> Self {
+        Stopwatch(now_ms())
+    }
+
+    pub fn elapsed(self) -> Duration {
+        Duration::from_secs_f64((now_ms() - self.0).max(0.0) / 1000.0)
+    }
+}
+
 /// Creates the EDRAM emulation on the renderer thread once the device exists.
 pub type TargetsFactory = Box<dyn FnOnce(&Device) -> Box<dyn RenderTargetCache> + Send>;
 

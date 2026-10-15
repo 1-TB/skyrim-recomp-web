@@ -220,6 +220,10 @@ struct TextureSet {
     key: Vec<u32>,
     /// Raw handles of the texture views bound.
     views: Vec<usize>,
+    /// The cached textures bound, revalidated when the set is reused in a later frame.
+    textures: Vec<(xenos_texture_cache::TextureKey, xenos_texture_cache::TextureId)>,
+    /// A binding got a fallback (the load failed or was put off): bind again next frame.
+    transient: bool,
     /// Its bind group layout's id (see `texture_layouts`).
     layout_id: u32,
     pipeline_layout: PipelineLayout,
@@ -355,7 +359,7 @@ pub struct Executor {
     timing_sample: bool,
     /// Texture bindings of recent draws by shader pair and the fetch constant words they read
     /// (see `TextureSet`); cleared whenever the texture cache may answer differently.
-    texture_sets: FxHashMap<u64, Rc<TextureSet>>,
+    texture_sets: FxHashMap<u64, (Rc<TextureSet>, u64)>,
     texture_set_key: Vec<u32>,
     device: Device,
     memory: Arc<dyn PhysicalMemory>,
@@ -451,6 +455,10 @@ pub struct ExecutorStats {
     pub memory_upload_bytes: u64,
     /// Times the renderer waited for the GPU to catch up with uploads (`upload_budget`).
     pub upload_waits: u64,
+    /// Texture sets bound anew (not remembered, or their textures changed since).
+    pub texture_set_misses: u64,
+    /// Of those, remembered sets whose textures changed (reloaded or dropped).
+    pub texture_set_stale: u64,
 }
 
 /// The bind group of the shared memory slot buffers and table (recreated when a slot buffer is
@@ -852,8 +860,10 @@ impl Executor {
     /// Frame boundary: submits everything and ages caches.
     pub fn end_frame(&mut self) {
         self.flush();
-        // Textures are revalidated against guest memory once per frame.
-        self.forget_texture_sets();
+        // Sets with fallbacks are made again (their textures may load now); the others are
+        // revalidated when reused (`TextureCache::touch`).
+        let frame = self.frame;
+        self.texture_sets.retain(|_, (set, used)| !set.transient && *used + TEXTURE_GROUP_FRAMES >= frame);
         self.textures.destroy_retired();
         self.targets.end_frame();
         self.shared.end_frame();
@@ -867,7 +877,7 @@ impl Executor {
 
     /// Encodes and submits everything recorded.
     pub fn flush(&mut self) {
-        let started = std::time::Instant::now();
+        let started = crate::renderer::Stopwatch::start();
         self.submit_batch();
         self.times.submits += started.elapsed();
     }
@@ -1077,7 +1087,7 @@ impl Executor {
     }
 
     fn resolve(&mut self) {
-        let started = std::time::Instant::now();
+        let started = crate::renderer::Stopwatch::start();
         self.record_resolve();
         self.times.resolves += started.elapsed();
     }
@@ -1126,11 +1136,9 @@ impl Executor {
     fn finish_resolve(&mut self, written: Option<(u32, u32)>, in_gpu_memory: bool) {
         self.resolving = false;
         if let Some((addr, len)) = written {
-            let dropped = self.textures.invalidate(addr, len);
-            if !dropped.is_empty() {
-                // Only the remembered sets binding a dropped texture are out of date.
-                self.texture_sets.retain(|_, set| !set.views.iter().any(|v| dropped.contains(v)));
-            }
+            // Remembered sets binding a dropped texture are found out when reused (and a texture
+            // reloaded in place keeps its views: sets binding it stay good).
+            self.textures.invalidate(addr, len);
             if in_gpu_memory {
                 self.stats.gpu_resolves += 1;
                 self.shared.mark_gpu_written(addr, len);
@@ -1145,7 +1153,7 @@ impl Executor {
             Stage::Vertex => self.active.vertex.clone(),
             Stage::Pixel => self.active.pixel.clone(),
         }
-        .ok_or(Skip::Warn(format!("draw without a {stage:?} shader")))?;
+        .ok_or_else(|| Skip::Warn(format!("draw without a {stage:?} shader")))?;
         self.shaders.get(&self.device, stage, &code.0, code.1, options).ok_or(Skip::NoPipeline)
     }
 
@@ -1404,7 +1412,7 @@ impl Executor {
         if self.textures.over_budget() {
             self.flush();
             let destroyed = self.textures.trim_submitted();
-            self.texture_sets.retain(|_, set| !set.views.iter().any(|v| destroyed.contains(v)));
+            self.texture_sets.retain(|_, (set, _)| !set.views.iter().any(|v| destroyed.contains(v)));
         }
         let textures = self.texture_set(&vs, ps.as_deref());
 
@@ -1802,8 +1810,8 @@ impl Executor {
     }
 
     /// The textures the shaders' fetches bind under the current fetch constants. Draws mostly
-    /// repeat recent sets, so they're remembered by the shaders and the fetch constant words read
-    /// until the texture cache changes (`forget_texture_sets`).
+    /// repeat recent sets, so they're remembered by the shaders and the fetch constant words read,
+    /// and reused while their textures stay current (checked once per frame) and cached.
     fn texture_set(&mut self, vs: &CachedShader, ps: Option<&CachedShader>) -> Rc<TextureSet> {
         let fetch = self.regs.fetch_constants();
         let key = &mut self.texture_set_key;
@@ -1825,16 +1833,23 @@ impl Executor {
         };
         let memo = !crate::debug::NO_TEXTURE_SET_MEMO.load(std::sync::atomic::Ordering::Relaxed);
         if memo
-            && let Some(set) = self.texture_sets.get(&hash)
+            && let Some((set, used)) = self.texture_sets.get_mut(&hash)
             && set.key == *key
         {
-            return set.clone();
+            if self.textures.touch(&TextureMemory(self.memory.clone()), &set.textures) {
+                *used = self.frame;
+                return set.clone();
+            }
+            self.stats.texture_set_stale += 1;
         }
-        let started = std::time::Instant::now();
+        self.stats.texture_set_misses += 1;
+        let started = crate::renderer::Stopwatch::start();
         let fetch: [u32; 192] = *fetch;
         let texture_memory = TextureMemory(self.memory.clone());
         let mut layout_key = Vec::new();
         let mut views: Vec<(u32, BindingKind)> = Vec::new();
+        let mut textures = Vec::new();
+        let mut transient = false;
         for shader in [Some(vs), ps].into_iter().flatten() {
             for binding in &shader.translation.texture_bindings {
                 let uploaded = self.shared.uploaded;
@@ -1847,6 +1862,10 @@ impl Executor {
                 };
                 let bound = self.textures.bind_with(&self.device, &texture_memory, &fetch, binding, Some(&mut source));
                 self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
+                match bound.texture {
+                    Some(texture) => textures.push(texture),
+                    None => transient = true,
+                }
                 push_texture(&mut layout_key, &mut views, binding, bound);
             }
         }
@@ -1862,6 +1881,8 @@ impl Executor {
         let set = Rc::new(TextureSet {
             key: self.texture_set_key.clone(),
             views: bound_views,
+            textures,
+            transient,
             layout_id,
             pipeline_layout,
             group,
@@ -1870,13 +1891,8 @@ impl Executor {
             self.texture_sets.clear();
         }
         self.times.texture_sets += started.elapsed();
-        self.texture_sets.insert(hash, set.clone());
+        self.texture_sets.insert(hash, (set.clone(), self.frame));
         set
-    }
-
-    /// The texture cache may bind differently now (textures dropped, reloaded or revalidated).
-    fn forget_texture_sets(&mut self) {
-        self.texture_sets.clear();
     }
 
     fn texture_layout(&mut self, key: &[(u32, SlotKind)]) -> (BindGroupLayout, PipelineLayout, u32) {
@@ -2106,7 +2122,7 @@ impl Executor {
         // async creation, and aborts a submit that uses an invalid pipeline).
         #[cfg(not(target_os = "emscripten"))]
         let result = {
-            let started = std::time::Instant::now();
+            let started = crate::renderer::Stopwatch::start();
             self.device.push_error_scope(ErrorFilter::Validation);
             let pipeline = self.device.create_render_pipeline(&desc);
             let result = match self.device.block_on(self.device.pop_error_scope()) {
@@ -2121,7 +2137,7 @@ impl Executor {
         // first use, stalling the GPU process); validation errors come back as a failed result.
         #[cfg(target_os = "emscripten")]
         let pending = {
-            let started = std::time::Instant::now();
+            let started = crate::renderer::Stopwatch::start();
             let pending = self.device.create_render_pipeline_async(&desc);
             self.times.pipelines += started.elapsed();
             pending

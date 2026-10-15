@@ -103,7 +103,7 @@ pub(crate) struct D3dRenderer {
     edram_owners: HashMap<u32, SurfaceKey>,
     /// Surfaces sharing EDRAM, as found when binding them (logged with the surface counts).
     aliasing: AliasingStats,
-    aliasing_seen: std::collections::HashSet<String>,
+    aliasing_seen: std::collections::HashSet<(bool, Layout, Layout)>,
     /// Textures replaced while the executor's batch may still use them, destroyed at the end of
     /// the frame (after the batch is submitted).
     retired: Vec<Texture>,
@@ -538,10 +538,13 @@ impl D3dRenderer {
             return;
         }
         if !same_layout {
-            let what = format!("same base {base}: {} then {}", describe(p), describe(s));
             self.aliasing.same_base_other_layout += 1;
-            if self.aliasing_seen.len() < 64 && self.aliasing_seen.insert(what.clone()) {
-                log::info!("d3d renderer: EDRAM aliasing not carried over: {what}");
+            if self.aliasing_seen.len() < 64 && self.aliasing_seen.insert((false, layout(p), layout(s))) {
+                log::info!(
+                    "d3d renderer: EDRAM aliasing not carried over: same base {base}: {} then {}",
+                    describe(p),
+                    describe(s)
+                );
             }
             return;
         }
@@ -564,20 +567,20 @@ impl D3dRenderer {
         let s = &self.surfaces[&key];
         let range = edram_range(s);
         let now = self.presents;
-        let mut found = Vec::new();
         for (&base, owner) in &self.edram_owners {
             if base == range.0 || *owner == key {
                 continue;
             }
             let Some(o) = self.surfaces.get(owner).filter(|o| o.last_used == now) else { continue };
             if ranges_overlap(range, edram_range(o)) {
-                found.push(format!("{} over {}", describe(s), describe(o)));
-            }
-        }
-        for what in found {
-            self.aliasing.overlap_other_base += 1;
-            if self.aliasing_seen.len() < 64 && self.aliasing_seen.insert(what.clone()) {
-                log::info!("d3d renderer: EDRAM ranges overlap, not carried over: {what}");
+                self.aliasing.overlap_other_base += 1;
+                if self.aliasing_seen.len() < 64 && self.aliasing_seen.insert((true, layout(s), layout(o))) {
+                    log::info!(
+                        "d3d renderer: EDRAM ranges overlap, not carried over: {} over {}",
+                        describe(s),
+                        describe(o)
+                    );
+                }
             }
         }
     }
@@ -659,6 +662,14 @@ fn ranges_overlap(a: (u32, u32), b: (u32, u32)) -> bool {
     // Ranges wrap around the end of EDRAM.
     let starts_in = |x: (u32, u32), y: (u32, u32)| (y.0.wrapping_sub(x.0) & (EDRAM_TILE_COUNT - 1)) < x.1;
     starts_in(a, b) || starts_in(b, a)
+}
+
+/// What [`describe`] tells about a surface: depth, width, height, samples, EDRAM format, base
+/// and tiles.
+type Layout = (bool, u32, u32, u32, u32, u32, u32);
+
+fn layout(s: &HostSurface) -> Layout {
+    (s.depth, s.width, s.height, s.samples, s.edram.format, s.edram.base_tiles, edram_range(s).1)
 }
 
 fn describe(s: &HostSurface) -> String {

@@ -775,22 +775,44 @@ async function profileWorkers(seconds) {
   }
   note(`profiling ${workers.size} workers for ${seconds} s`);
   await new Promise((r) => setTimeout(r, seconds * 1000));
+  let index = 0;
   for (const id of workers.keys()) {
     const reply = await send(id, 'Profiler.stop');
     const profile = reply?.result?.profile;
     if (!profile) continue;
+    const nameOf = (n) => n.callFrame.functionName || `(${n.callFrame.url.split('/').pop()})`;
     const self = new Map();
     let total = 0;
     for (const n of profile.nodes) {
-      const name = n.callFrame.functionName || `(${n.callFrame.url.split('/').pop()})`;
-      self.set(name, (self.get(name) ?? 0) + (n.hitCount ?? 0));
+      self.set(nameOf(n), (self.get(nameOf(n)) ?? 0) + (n.hitCount ?? 0));
       total += n.hitCount ?? 0;
     }
     const busy = total - (self.get('(idle)') ?? 0) - (self.get('(program)') ?? 0);
     if (busy <= 0) continue;
-    const top = [...self.entries()].filter(([n]) => n !== '(idle)').sort((a, b) => b[1] - a[1]).slice(0, 15);
-    note(`profile of ${workers.get(id)?.title ?? id} (${total} samples):\n` +
-      top.map(([n, c]) => `  ${((100 * c) / total).toFixed(1).padStart(5)}%  ${n}`).join('\n'));
+    // Inclusive time: each node's subtree, counted once per function (not again for recursion).
+    const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+    const inclusive = new Map();
+    const walk = (node, active) => {
+      let hits = node.hitCount ?? 0;
+      const name = nameOf(node);
+      const outer = !active.has(name);
+      if (outer) active.add(name);
+      for (const child of node.children ?? []) hits += walk(byId.get(child), active);
+      if (outer) {
+        active.delete(name);
+        inclusive.set(name, (inclusive.get(name) ?? 0) + hits);
+      }
+      return hits;
+    };
+    walk(profile.nodes[0], new Set());
+    const lines = (map, n) => [...map.entries()]
+      .filter(([name]) => !['(idle)', '(root)', '(program)'].includes(name))
+      .sort((a, b) => b[1] - a[1]).slice(0, n)
+      .map(([name, c]) => `  ${((100 * c) / total).toFixed(1).padStart(5)}%  ${name}`).join('\n');
+    const file = join(out, `profile-${index++}.cpuprofile`);
+    writeFileSync(file, JSON.stringify(profile));
+    note(`profile of ${workers.get(id)?.title ?? id} (${total} samples, ${file}):\n${lines(self, 15)}` +
+      (busy > total / 10 ? `\n inclusive:\n${lines(inclusive, 25)}` : ''));
   }
   await cdp.detach();
 }

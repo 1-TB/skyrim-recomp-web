@@ -74,10 +74,10 @@ impl ShaderCache {
                 return None;
             }
         };
-        let started = std::time::Instant::now();
+        let started = crate::renderer::Stopwatch::start();
         let translation = shader.translate(options);
-        let translated = std::time::Instant::now();
-        self.translate_time += translated - started;
+        self.translate_time += started.elapsed();
+        let translated = crate::renderer::Stopwatch::start();
         for w in &translation.warnings {
             log::debug!("shader {stage:?} {hash:016X}: {w}");
         }

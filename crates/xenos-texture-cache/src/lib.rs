@@ -195,7 +195,14 @@ pub struct BoundTexture {
     pub filterable: bool,
     /// No guest data is bound (fallback views only).
     pub fallback: bool,
+    /// The cached texture bound (its key and [`TextureId`]), for [`TextureCache::touch`].
+    pub texture: Option<(TextureKey, TextureId)>,
 }
+
+/// Identifies one host texture of the cache and its views: a reload under the same key keeps
+/// the id only when it fills the same host texture again (in place).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TextureId(u64);
 
 impl BoundTexture {
     pub fn sampler_binding_type(&self) -> SamplerBindingType {
@@ -272,6 +279,7 @@ impl ViewKind {
 }
 
 struct Entry {
+    id: TextureId,
     texture: Texture,
     /// What the texture can be reused for once dropped (see `TexturePool`).
     pool_key: PoolKey,
@@ -291,7 +299,13 @@ struct Entry {
 impl Entry {
     /// The texture and its views, for the pool.
     fn pooled(&self) -> Pooled {
-        Pooled { key: self.pool_key, texture: self.texture.clone(), views: self.views.clone(), bytes: self.bytes }
+        Pooled {
+            key: self.pool_key,
+            texture: self.texture.clone(),
+            views: self.views.clone(),
+            bytes: self.bytes,
+            id: self.id,
+        }
     }
 
     fn supports(&self, kind: ViewKind) -> bool {
@@ -342,6 +356,8 @@ struct Pooled {
     texture: Texture,
     views: [Option<TextureView>; 4],
     bytes: u64,
+    /// The id of the entry it was (kept by a reload in place: same texture and views).
+    id: TextureId,
 }
 
 /// Textures kept for reuse at most per key.
@@ -512,6 +528,8 @@ pub struct TextureCache {
     config: CacheConfig,
     frame: u64,
     textures: FxHashMap<TextureKey, Entry>,
+    /// The last [`TextureId`] given out.
+    next_id: u64,
     samplers: FxHashMap<SamplerKey, Sampler>,
     fallback: Fallback,
     /// Keys whose load failed for reasons independent of memory contents.
@@ -530,6 +548,8 @@ pub struct TextureCache {
     stale: FxHashMap<TextureKey, Pooled>,
     /// The stale texture offered to the load in progress (taken by `new_texture`).
     reload_into: Option<Pooled>,
+    /// The load in progress filled `reload_into`'s texture (its entry keeps the stale id).
+    reloaded_into: bool,
     /// Textures were created past `max_live_bytes` with nothing left to free before the work
     /// recorded in this frame is submitted (see [`TextureCache::over_budget`]).
     over_budget: bool,
@@ -573,6 +593,7 @@ impl TextureCache {
             config,
             frame: 1,
             textures: FxHashMap::default(),
+            next_id: 0,
             samplers: FxHashMap::default(),
             fallback: Fallback::new(device),
             load_allowance: 0.0,
@@ -584,6 +605,7 @@ impl TextureCache {
             retiring: Vec::new(),
             stale: FxHashMap::default(),
             reload_into: None,
+            reloaded_into: false,
             over_budget: false,
             protected: 0,
             pool: TexturePool::default(),
@@ -655,8 +677,10 @@ impl TextureCache {
         let wants_stacked = binding.stacked_texture_binding.is_some();
 
         let mut real: (Option<TextureView>, Option<TextureView>, bool) = (None, None, true);
+        let mut texture = None;
         if let Some(key) = self.texture(device, memory, &fetch, dwords, gpu) {
             let entry = self.textures.get_mut(&key).expect("texture just resolved");
+            texture = Some((key, entry.id));
             let main = entry.view(main_kind);
             let stacked = if wants_stacked { entry.view(ViewKind::D2Array) } else { None };
             if main.is_none() && stacked.is_none() {
@@ -686,7 +710,29 @@ impl TextureCache {
             sample_type: if filterable { TextureSampleType::Float } else { TextureSampleType::UnfilterableFloat },
             filterable,
             fallback,
+            texture: texture.filter(|_| !fallback),
         }
+    }
+
+    /// Marks the textures `bound` as used in this frame, after checking (once per frame, as a
+    /// bind does) that their guest memory didn't change. Returns false if one did, or was dropped
+    /// or replaced since: then the bindings made with them are out of date (bind again, which
+    /// reloads them).
+    pub fn touch(&mut self, memory: &dyn GuestMemory, bound: &[(TextureKey, TextureId)]) -> bool {
+        let frame = self.frame;
+        for (key, id) in bound {
+            let Some(entry) = self.textures.get_mut(key).filter(|e| e.id == *id) else { return false };
+            if entry.validated != frame {
+                let hash = hash_ranges(memory, &entry.ranges, &mut self.scratch, &mut self.stats.hashed_bytes);
+                if hash != entry.hash {
+                    return false;
+                }
+                entry.validated = frame;
+            }
+            entry.last_used = frame;
+            self.stats.hits += 1;
+        }
+        true
     }
 
     /// Guest physical memory `[addr, addr + len)` changed (e.g. a resolve wrote it): drops every
@@ -878,13 +924,20 @@ impl TextureCache {
             }
         }
         self.reload_into = self.stale.remove(&key);
+        let stale_id = self.reload_into.as_ref().map(|p| p.id);
+        self.reloaded_into = false;
         let loaded = self.load(device, memory, fetch, gpu);
+        let in_place = stale_id.filter(|_| self.reloaded_into);
         if let Some(unused) = self.reload_into.take() {
             self.retired.push(unused);
         }
         match loaded {
-            Ok(entry) => {
+            Ok(mut entry) => {
                 self.stats.loads += 1;
+                entry.id = in_place.unwrap_or_else(|| {
+                    self.next_id += 1;
+                    TextureId(self.next_id)
+                });
                 self.textures.insert(key, entry);
                 Some(key)
             }
@@ -930,9 +983,11 @@ impl TextureCache {
         }
         // Hash before reading the data: a concurrent guest write in between is caught next frame.
         let ranges = info.memory_ranges();
-        let started = std::time::Instant::now();
+        // Timed only for the debug log (clock reads are slow on the web, and loads are many).
+        let started = log::log_enabled!(log::Level::Debug).then(std::time::Instant::now);
+        let elapsed = || started.map_or(Duration::ZERO, |s| s.elapsed());
         let hash = hash_ranges(memory, &ranges, &mut self.scratch, &mut self.stats.hashed_bytes);
-        let hashed = started.elapsed();
+        let hashed = elapsed();
         // From the GPU copy of guest memory, like Xenia: required where only it is current
         // (resolve output, also when a texture only partly covers it), and otherwise cheaper
         // than uploading the texture's bytes, as textures are reloaded whole when any of their
@@ -948,7 +1003,7 @@ impl TextureCache {
         if self.config.gpu_conversion
             && let Some(entry) = self.load_converting_on_gpu(device, memory, fetch, &info, caps, ranges.clone(), hash)
         {
-            let total = started.elapsed();
+            let total = elapsed();
             if total.as_millis() >= 50 {
                 log::debug!(
                     "texture cache: {} {width}x{height}x{layers} took {total:?} on the GPU path",
@@ -959,7 +1014,7 @@ impl TextureCache {
         }
         let loaded = load_texture(fetch, memory, &LoadOptions { caps, signed: false, row_alignment: 1 })
             .map_err(|e| e.to_string())?;
-        let converted = started.elapsed();
+        let converted = elapsed();
         let host_format = loaded.mapping.host_format;
         if !format::is_float_sampleable(host_format) {
             return Err(format!("host format {} is not float-sampleable", host_format.webgpu_name()));
@@ -995,7 +1050,7 @@ impl TextureCache {
             );
             bytes += level.data.len() as u64;
         }
-        let total = started.elapsed();
+        let total = elapsed();
         if total.as_millis() >= 50 {
             log::debug!(
                 "texture cache: {} {width}x{height}x{layers} took {total:?} (hash {hashed:?}, convert {:?}, upload {:?})",
@@ -1018,6 +1073,7 @@ impl TextureCache {
             bytes,
             last_used: self.frame,
             validated: self.frame,
+            id: TextureId(0),
         })
     }
 
@@ -1083,6 +1139,7 @@ impl TextureCache {
         match data {
             GpuData::Shared(gpu) => {
                 if !self.gpu_loader.encode(device, gpu, &plan, &texture) {
+                    self.reloaded_into = false;
                     return None;
                 }
                 self.stats.gpu_loads += 1;
@@ -1106,6 +1163,7 @@ impl TextureCache {
             bytes: plan.host_bytes(),
             last_used: self.frame,
             validated: self.frame,
+            id: TextureId(0),
         })
     }
 
@@ -1126,6 +1184,7 @@ impl TextureCache {
             && let Some(p) = self.reload_into.take_if(|p| p.key == key)
         {
             self.stats.reloaded_in_place += 1;
+            self.reloaded_into = true;
             return (p.texture, p.views);
         }
         if fills_all
