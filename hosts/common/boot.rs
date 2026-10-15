@@ -41,7 +41,8 @@ options:
                            check the D3D device's register copy and the decoded call
                            arguments against the command stream at every draw)
   --gpu-sync               the command processor waits for the renderer at fences, interrupts
-                           and occlusion reports instead of going on (as before)
+                           and occlusion reports instead of going on (default on phones and
+                           tablets in the browser); --no-gpu-sync: never
   --resolution-scale N     draw at N (1, 2 or 3) times the console's resolution along each axis
                            (default 1)
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
@@ -128,7 +129,10 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             "--tap" => o.taps.push(parse_tap(&value()?)?),
             "--hold" => o.holds.push(parse_hold(&value()?)?),
             "--render-debug" => xenos_render::debug::enable(&value()?)?,
-            "--gpu-sync" => kernel_hle::gpu::SYNC_EFFECTS.store(true, std::sync::atomic::Ordering::Relaxed),
+            "--gpu-sync" => kernel_hle::gpu::SYNC_EFFECTS.store(kernel_hle::gpu::SYNC_FORCED_ON, std::sync::atomic::Ordering::Relaxed),
+            "--no-gpu-sync" => {
+                kernel_hle::gpu::SYNC_EFFECTS.store(kernel_hle::gpu::SYNC_FORCED_OFF, std::sync::atomic::Ordering::Relaxed)
+            }
             "--gpu" => {
                 let mode = value()?;
                 kernel_hle::d3d::set_gpu_mode(&mode)?;

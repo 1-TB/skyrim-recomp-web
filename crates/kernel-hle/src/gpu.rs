@@ -208,8 +208,21 @@ pub trait GpuBackend: Send + Sync {
     }
 }
 
-/// `--gpu-sync`: the command processor waits for the renderer at each [`Deferred`] effect.
-pub static SYNC_EFFECTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether the command processor waits for the renderer at each [`Deferred`] effect: one of
+/// the `SYNC_*` values (`--gpu-sync` / `--no-gpu-sync`; see [`set_sync_default`]).
+pub static SYNC_EFFECTS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(SYNC_DEFAULT_OFF);
+pub const SYNC_DEFAULT_OFF: u8 = 0;
+pub const SYNC_DEFAULT_ON: u8 = 1;
+pub const SYNC_FORCED_OFF: u8 = 2;
+pub const SYNC_FORCED_ON: u8 = 3;
+
+/// Sets whether effects wait for the renderer unless an option chose already. iPhones close
+/// the tab within a minute of play when they don't (the cause isn't known yet), so phones and
+/// tablets in the browser wait.
+pub fn set_sync_default(on: bool) {
+    let value = if on { SYNC_DEFAULT_ON } else { SYNC_DEFAULT_OFF };
+    let _ = SYNC_EFFECTS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| (v < SYNC_FORCED_OFF).then_some(value));
+}
 
 /// An effect the CPU can observe that waits until the renderer has executed the commands sent
 /// before it, as the GPU reaches it on the console. The command processor goes on meanwhile.
@@ -702,7 +715,7 @@ impl CommandProcessor<'_> {
     /// round trip through the renderer worker's event loop, ~20 per frame).
     fn defer(&mut self, opcode: u32, action: Deferred) {
         self.flush_registers();
-        let sync = SYNC_EFFECTS.load(Ordering::Relaxed);
+        let sync = matches!(SYNC_EFFECTS.load(Ordering::Relaxed), SYNC_DEFAULT_ON | SYNC_FORCED_ON);
         match self.backend.as_ref().and_then(|b| b.submitted()).filter(|_| !sync) {
             Some(seq) => {
                 self.deferred.push_back((seq, action));

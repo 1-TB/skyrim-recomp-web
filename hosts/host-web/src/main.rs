@@ -101,8 +101,9 @@ fn main() {
         // SAFETY: no arguments; proxied to the page's thread.
         if unsafe { skyrt_handheld() } != 0 {
             // Browsers on phones and tablets close tabs long before desktop ones.
-            log::info!("phone or tablet: smaller GPU memory budgets");
+            log::info!("phone or tablet: smaller GPU memory budgets; the GPU waits for the renderer at fences");
             xenos_render::handheld_budgets();
+            kernel_hle::gpu::set_sync_default(true);
         }
         let memory = std::sync::Arc::new(gpu::GuestPhysical(kernel));
         match xenos_render::web::start(memory, "#canvas", gpu::render_targets()) {
