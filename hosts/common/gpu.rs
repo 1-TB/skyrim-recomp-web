@@ -95,67 +95,101 @@ pub fn install(kernel: &'static Kernel, handle: RendererHandle) {
 /// Logs the memory the runtime holds: right away whenever guest commits or GPU memory grew by
 /// [`REPORT_GROWTH`] since the last line, else every [`REPORT_PERIOD`]. Phones close tabs that
 /// use too much without an error, so the last line before a silent stop shows what grew.
+/// Checked by the main thread's watchdog ([`memory_report_tick`]) rather than a thread of its
+/// own: on the web each thread is a worker, ~8 MiB each in WebKit.
 pub fn start_memory_report() {
-    const REPORT_GROWTH: u64 = 16 << 20;
-    const REPORT_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
-    let spawned = std::thread::Builder::new().name("memory-report".into()).spawn(|| {
-        let mib = |b: u64| b >> 20;
-        let mut last = (0u64, 0u64);
-        let mut last_at = std::time::Instant::now() - REPORT_PERIOD;
-        // Upload bytes (write_buffer + write_texture): browsers copy each upload out of the
-        // shared wasm memory, which counts against the page's process (WebKit's in particular).
-        let uploaded = || {
-            let c = gpu_webgpu::counters::snapshot();
-            c.write_buffer_bytes + c.write_texture_bytes
-        };
-        let (mut uploads_at_report, mut uploads_at_tick, mut peak_tick) = (uploaded(), uploaded(), 0u64);
-        let mut tick_at = std::time::Instant::now();
-        loop {
-            let now_uploaded = uploaded();
-            let tick = tick_at.elapsed().as_secs_f64().max(0.001);
-            peak_tick = peak_tick.max(((now_uploaded - uploads_at_tick) as f64 / tick) as u64);
-            (uploads_at_tick, tick_at) = (now_uploaded, std::time::Instant::now());
-            let committed = runtime_core::memory::committed_bytes();
-            let (gpu, gpu_peak) = gpu_webgpu::memory::totals();
-            let grew = committed >= last.0 + REPORT_GROWTH || gpu >= last.1 + REPORT_GROWTH;
-            if grew || last_at.elapsed() >= REPORT_PERIOD {
-                #[cfg(target_os = "emscripten")]
-                let wasm = format!(
-                    ", host heap {} MiB, wasm memory {} MiB",
-                    mib(runtime_core::memory::host_heap_top()),
-                    mib(core::arch::wasm32::memory_size(0) as u64 * 65536)
-                );
-                #[cfg(not(target_os = "emscripten"))]
-                let wasm = String::new();
-                let (pool_used, pool_size) = runtime_core::memory::linear_pool_usage();
-                // On GPU growth, what grew: a phone can be killed before the next report.
-                let labels = if gpu >= last.1 + REPORT_GROWTH {
-                    let top: Vec<String> = gpu_webgpu::memory::live_by_label()
-                        .into_iter()
-                        .take(6)
-                        .map(|g| format!("{} \"{}\" {} MiB ({})", g.kind, g.label, mib(g.bytes), g.count))
-                        .collect();
-                    format!("; largest: {}", top.join(", "))
-                } else {
-                    String::new()
-                };
-                let rate = (now_uploaded - uploads_at_report) as f64 / last_at.elapsed().as_secs_f64().max(0.001);
-                log::info!(
-                    "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB){wasm}; uploads {:.1} MiB/s (peak {:.1} MiB/s){labels}",
-                    mib(committed),
-                    mib(gpu),
-                    mib(gpu_peak),
-                    rate / f64::from(1 << 20),
-                    peak_tick as f64 / f64::from(1 << 20)
-                );
-                last = (committed, gpu);
-                last_at = std::time::Instant::now();
-                (uploads_at_report, peak_tick) = (now_uploaded, 0);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(250));
+    *MEMORY_REPORT.lock().unwrap() = Some(MemoryReport::new());
+}
+
+/// Checks the memory report started with [`start_memory_report`]; called every
+/// [`MEMORY_REPORT_TICK`].
+pub fn memory_report_tick() {
+    if let Some(report) = MEMORY_REPORT.lock().unwrap().as_mut() {
+        report.tick();
+    }
+}
+
+pub const MEMORY_REPORT_TICK: std::time::Duration = std::time::Duration::from_millis(250);
+const REPORT_GROWTH: u64 = 16 << 20;
+const REPORT_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
+
+static MEMORY_REPORT: std::sync::Mutex<Option<MemoryReport>> = std::sync::Mutex::new(None);
+
+struct MemoryReport {
+    /// Guest committed and GPU bytes at the last line.
+    last: (u64, u64),
+    last_at: std::time::Instant,
+    uploads_at_report: u64,
+    uploads_at_tick: u64,
+    /// Highest upload rate between two ticks since the last line.
+    peak_tick: u64,
+    tick_at: std::time::Instant,
+}
+
+/// Upload bytes (write_buffer + write_texture): browsers copy each upload out of the shared
+/// wasm memory, which counts against the page's process (WebKit's in particular).
+fn uploaded() -> u64 {
+    let c = gpu_webgpu::counters::snapshot();
+    c.write_buffer_bytes + c.write_texture_bytes
+}
+
+impl MemoryReport {
+    fn new() -> Self {
+        let now = std::time::Instant::now();
+        MemoryReport {
+            last: (0, 0),
+            last_at: now - REPORT_PERIOD,
+            uploads_at_report: uploaded(),
+            uploads_at_tick: uploaded(),
+            peak_tick: 0,
+            tick_at: now,
         }
-    });
-    if let Err(e) = spawned {
-        log::error!("memory report thread: {e}");
+    }
+
+    fn tick(&mut self) {
+        let mib = |b: u64| b >> 20;
+        let now_uploaded = uploaded();
+        let tick = self.tick_at.elapsed().as_secs_f64().max(0.001);
+        self.peak_tick = self.peak_tick.max(((now_uploaded - self.uploads_at_tick) as f64 / tick) as u64);
+        (self.uploads_at_tick, self.tick_at) = (now_uploaded, std::time::Instant::now());
+        let committed = runtime_core::memory::committed_bytes();
+        let (gpu, gpu_peak) = gpu_webgpu::memory::totals();
+        let last = self.last;
+        let grew = committed >= last.0 + REPORT_GROWTH || gpu >= last.1 + REPORT_GROWTH;
+        if !grew && self.last_at.elapsed() < REPORT_PERIOD {
+            return;
+        }
+        #[cfg(target_os = "emscripten")]
+        let wasm = format!(
+            ", host heap {} MiB, wasm memory {} MiB",
+            mib(runtime_core::memory::host_heap_top()),
+            mib(core::arch::wasm32::memory_size(0) as u64 * 65536)
+        );
+        #[cfg(not(target_os = "emscripten"))]
+        let wasm = String::new();
+        let (pool_used, pool_size) = runtime_core::memory::linear_pool_usage();
+        // On GPU growth, what grew: a phone can be killed before the next report.
+        let labels = if gpu >= last.1 + REPORT_GROWTH {
+            let top: Vec<String> = gpu_webgpu::memory::live_by_label()
+                .into_iter()
+                .take(6)
+                .map(|g| format!("{} \"{}\" {} MiB ({})", g.kind, g.label, mib(g.bytes), g.count))
+                .collect();
+            format!("; largest: {}", top.join(", "))
+        } else {
+            String::new()
+        };
+        let rate = (now_uploaded - self.uploads_at_report) as f64 / self.last_at.elapsed().as_secs_f64().max(0.001);
+        log::info!(
+            "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB){wasm}; uploads {:.1} MiB/s (peak {:.1} MiB/s){labels}",
+            mib(committed),
+            mib(gpu),
+            mib(gpu_peak),
+            rate / f64::from(1 << 20),
+            self.peak_tick as f64 / f64::from(1 << 20)
+        );
+        self.last = (committed, gpu);
+        self.last_at = std::time::Instant::now();
+        (self.uploads_at_report, self.peak_tick) = (now_uploaded, 0);
     }
 }

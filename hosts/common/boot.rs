@@ -354,10 +354,10 @@ pub fn run(
 /// How long presenting may stop before the watchdog reports blocked threads.
 const STALL_REPORT_AFTER: Duration = Duration::from_secs(10);
 
-/// Waits for the title to exit (None once `limit` passes). Meanwhile, if the
-/// title has presented frames and then stops for [`STALL_REPORT_AFTER`], logs
-/// the blocked guest threads once per stall: a hung title is otherwise
-/// indistinguishable from a slow one.
+/// Waits for the title to exit (None once `limit` passes), checking the memory report
+/// (`gpu::memory_report_tick`). Meanwhile, if the title has presented frames and then stops
+/// for [`STALL_REPORT_AFTER`], logs the blocked guest threads once per stall: a hung title is
+/// otherwise indistinguishable from a slow one.
 fn wait_for_title(kernel: &'static Kernel, limit: Option<Duration>) -> Option<u32> {
     let start = std::time::Instant::now();
     let mut last_swaps = 0;
@@ -365,8 +365,8 @@ fn wait_for_title(kernel: &'static Kernel, limit: Option<Duration>) -> Option<u3
     let mut reported = false;
     loop {
         let step = match limit {
-            Some(l) => (l.saturating_sub(start.elapsed())).min(Duration::from_secs(1)),
-            None => Duration::from_secs(1),
+            Some(l) => (l.saturating_sub(start.elapsed())).min(crate::gpu::MEMORY_REPORT_TICK),
+            None => crate::gpu::MEMORY_REPORT_TICK,
         };
         if let Some(code) = kernel.wait_for_exit_timeout(step) {
             return Some(code);
@@ -374,6 +374,7 @@ fn wait_for_title(kernel: &'static Kernel, limit: Option<Duration>) -> Option<u3
         if limit.is_some_and(|l| start.elapsed() >= l) {
             return None;
         }
+        crate::gpu::memory_report_tick();
         kernel.check_progress();
         let swaps = kernel.gpu.swap_count();
         if swaps != last_swaps {
