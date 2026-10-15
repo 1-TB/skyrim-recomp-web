@@ -64,4 +64,8 @@ fn main() {
     let device = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib/device.js");
     println!("cargo:rerun-if-changed={}", device.display());
     println!("cargo:rustc-link-arg=--js-library={}", device.display());
+    // Terminates the workers of exited threads beyond a few spares.
+    let pool = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib/worker_pool.js");
+    println!("cargo:rerun-if-changed={}", pool.display());
+    println!("cargo:rustc-link-arg=--pre-js={}", pool.display());
 }
