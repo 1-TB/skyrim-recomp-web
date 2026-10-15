@@ -115,6 +115,60 @@ fn main() {
     }
 }
 
+/// `clock_gettime` (and libc's internal `__clock_gettime`, behind `time`, `gettimeofday`...)
+/// without the WASI import Emscripten's libc goes through: that import takes its (ignored)
+/// precision as an i64, which JavaScriptCore boxes in a heap BigInt on every call. The guest
+/// threads read the clock millions of times a minute, and in WebKit those BigInts were never
+/// collected on workers that don't return to their event loop: Safari's memory grew by
+/// megabytes a second until iOS closed the tab. Same clocks as Emscripten's: the page's
+/// `Date.now()` for CLOCK_REALTIME, `performance.timeOrigin + performance.now()` (shared by
+/// all threads) otherwise.
+#[cfg(target_os = "emscripten")]
+mod clock {
+    #[repr(C)]
+    pub struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i32,
+        _pad: i32,
+    }
+
+    unsafe extern "C" {
+        fn emscripten_get_now() -> f64;
+        fn emscripten_date_now() -> f64;
+    }
+
+    const CLOCK_REALTIME: i32 = 0;
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+    const EINVAL: i32 = 28;
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn __clock_gettime(clk: i32, ts: *mut Timespec) -> i32 {
+        if !(0..=CLOCK_THREAD_CPUTIME_ID).contains(&clk) || ts.is_null() {
+            // SAFETY: errno is thread-local and always valid.
+            unsafe { *__errno_location() = EINVAL };
+            return -1;
+        }
+        // SAFETY: imports without arguments.
+        let ms = unsafe { if clk == CLOCK_REALTIME { emscripten_date_now() } else { emscripten_get_now() } };
+        let ns = (ms * 1e6) as i64;
+        // SAFETY: the caller passes a valid timespec.
+        unsafe {
+            *ts = Timespec { tv_sec: ns.div_euclid(1_000_000_000), tv_nsec: ns.rem_euclid(1_000_000_000) as i32, _pad: 0 };
+        }
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn clock_gettime(clk: i32, ts: *mut Timespec) -> i32 {
+        // SAFETY: as for `__clock_gettime`.
+        unsafe { __clock_gettime(clk, ts) }
+    }
+
+    unsafe extern "C" {
+        fn __errno_location() -> *mut i32;
+    }
+}
+
 /// Controller state from the page (Gamepad API or keyboard), called from the
 /// browser's main thread: XINPUT_GAMEPAD fields for port `user` (0-3).
 #[cfg(target_os = "emscripten")]
