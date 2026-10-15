@@ -9,9 +9,12 @@ use xenos_shader::{Shader, ShaderStage, Translation, TranslationOptions};
 
 pub struct CachedShader {
     pub module: ShaderModule,
+    /// The translation's metadata; its WGSL is dropped once the module exists (see
+    /// [`CachedShader::wgsl`]).
     pub translation: Translation,
     /// The decoded microcode (vertex shaders are run on the CPU to bound unclipped draws).
     pub shader: Shader,
+    options: TranslationOptions,
     /// Identifies this (microcode, options) pair in pipeline keys.
     pub id: u64,
 }
@@ -86,6 +89,16 @@ impl ShaderCache {
         let module = device.create_shader_module_wgsl(&format!("{stage:?} {hash:016X}"), &translation.wgsl);
         self.module_time += translated.elapsed();
         self.next_id += 1;
-        Some(Rc::new(CachedShader { module, translation, shader, id: self.next_id }))
+        // Hundreds of shaders' source would stay in the heap (wasm memory, which never shrinks).
+        let mut translation = translation;
+        translation.wgsl = String::new();
+        Some(Rc::new(CachedShader { module, translation, shader, options: options.clone(), id: self.next_id }))
+    }
+}
+
+impl CachedShader {
+    /// The module's WGSL, translated again (for diagnostics).
+    pub fn wgsl(&self) -> String {
+        self.shader.translate(&self.options).wgsl
     }
 }

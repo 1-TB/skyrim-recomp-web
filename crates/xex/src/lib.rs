@@ -366,6 +366,11 @@ impl Xex {
         })
     }
 
+    /// Frees the image (once it's been copied into guest memory): reads of it fail afterwards.
+    pub fn discard_image(&mut self) {
+        self.image = Vec::new();
+    }
+
     /// Big-endian dword at a guest address inside the image.
     pub fn read_image_u32(&self, addr: u32) -> Result<u32> {
         let off = addr.checked_sub(self.image_base()).ok_or(Error::AddressOutOfImage(addr))? as usize;

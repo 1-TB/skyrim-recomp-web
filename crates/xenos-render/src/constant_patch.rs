@@ -159,7 +159,7 @@ impl ConstantPatcher {
     /// stage's previous block of this submission. Returns its offset. Check
     /// [`ConstantPatcher::has_room`] first.
     pub fn push(&mut self, stage: u32, previous: Option<&[u8]>, data: &[u8], window: u64) -> u32 {
-        debug_assert!(data.len() % 16 == 0 && data.len() <= INDICES * 16);
+        debug_assert!(data.len().is_multiple_of(16) && data.len() <= INDICES * 16);
         let offset = self.cursor.next_multiple_of(self.alignment);
         assert!(offset + window <= BLOCK_BUFFER_BYTES, "float constant blocks full");
         self.cursor = offset + (data.len() as u64).max(16);

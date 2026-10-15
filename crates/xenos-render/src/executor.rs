@@ -1802,7 +1802,7 @@ impl Executor {
                 if base.with_extension("wgsl").exists() {
                     continue;
                 }
-                let _ = std::fs::write(base.with_extension("wgsl"), &shader.translation.wgsl);
+                let _ = std::fs::write(base.with_extension("wgsl"), shader.wgsl());
                 let disasm = xenos_shader::disassemble(stage, &code).unwrap_or_else(|e| format!("{e:?}"));
                 let _ = std::fs::write(base.with_extension("txt"), disasm);
             }
@@ -2191,9 +2191,9 @@ impl Executor {
                     key.sample_mask,
                 );
                 if self.pipeline_failures <= 3 {
-                    log::warn!("renderer: rejected pipeline's vertex shader {}:\n{}", vs.id, vs.translation.wgsl);
+                    log::warn!("renderer: rejected pipeline's vertex shader {}:\n{}", vs.id, vs.wgsl());
                     if let Some(ps) = ps {
-                        log::warn!("renderer: rejected pipeline's pixel shader {}:\n{}", ps.id, ps.translation.wgsl);
+                        log::warn!("renderer: rejected pipeline's pixel shader {}:\n{}", ps.id, ps.wgsl());
                     }
                 }
                 self.pipelines.insert(key, PipelineEntry::Failed);

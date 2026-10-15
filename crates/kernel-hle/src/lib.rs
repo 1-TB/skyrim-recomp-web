@@ -105,7 +105,7 @@ impl Kernel {
     /// patches the import table and starts the clock updater. The kernel lives
     /// for the rest of the process.
     pub fn new(
-        rt: Runtime,
+        mut rt: Runtime,
         vfs: Vfs,
         stubs: StubConfig,
         import_names: &'static [ImportName],
@@ -124,6 +124,10 @@ impl Kernel {
             }
             module_names[i] = name.clone();
         }
+
+        // The image is in guest memory now; its copy (tens of MiB) only served the import records.
+        let imports = rt.xex.imports().map_err(|e| e.to_string())?;
+        rt.xex.discard_image();
 
         let tls_count = rt.threads.tls_template().slot_count;
         let tls_count = if tls_count != 0 { tls_count } else { runtime_core::thread::DEFAULT_TLS_SLOTS };
@@ -157,7 +161,7 @@ impl Kernel {
             rt,
         }));
 
-        kernel.patch_imports(&ids)?;
+        kernel.patch_imports(&ids, &imports)?;
         // Video driver state the title reads before calling any Vd function.
         xboxkrnl::init_critical_section_at(
             kernel,
@@ -169,14 +173,13 @@ impl Kernel {
         Ok(kernel)
     }
 
-    fn patch_imports(&self, ids: &[ModuleId]) -> Result<(), String> {
+    fn patch_imports(&self, ids: &[ModuleId], imports: &[xex::Import]) -> Result<(), String> {
         let libraries = self.rt.xex.import_libraries().map_err(|e| e.to_string())?;
-        let imports = self.rt.xex.imports().map_err(|e| e.to_string())?;
         let id_of =
             |lib: &str| libraries.iter().position(|l| l.name == lib).map(|i| ids[i]).unwrap_or(ModuleId(u32::MAX));
         let mem = self.mem();
         let (mut functions, mut variables) = (0, 0);
-        for imp in &imports {
+        for imp in imports {
             let module = id_of(&imp.library);
             match imp.thunk_addr {
                 Some(thunk) => {

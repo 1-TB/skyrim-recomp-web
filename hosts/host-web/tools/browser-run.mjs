@@ -9,7 +9,14 @@
 //          --dist web-dist --game <game dir> --profile <browser profile dir> --out <output dir>
 //          [--seconds 120] [--shot-every 10] [--args "--log info"] [--port 8091] [--reload-after S]
 //          [--stacks-at S[,S...]] [--audio] [--profile-at S:SECONDS] [--stream] [--saves DIR]
-//          [--step "CONDITION => ACTIONS" ...] [--step-timeout S] [--allocators]
+//          [--step "CONDITION => ACTIONS" ...] [--step-timeout S] [--allocators] [--browser webkit]
+//
+// `--browser webkit` runs Playwright's WebKit (WPE MiniBrowser, the engine of Safari) instead:
+// it has no WebGPU, so the runtime runs without a renderer, but guest CPU speed and the page
+// process's memory (WPEWebProcess, measured as "renderer") are Safari's. Profiling, stack dumps
+// and allocator dumps need Chromium. WPE needs ICU 74, libxml2, flite and libbacktrace on the
+// library path (set PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 if they're copied into its
+// sys/lib rather than installed).
 //
 // `--shot-every 0` turns the periodic screenshots off. `--allocators` adds Chromium's memory-infra
 // allocator sizes per process to each measurement (slow; only for finding where memory goes).
@@ -153,7 +160,8 @@ const logPath = join(out, 'log.txt');
 writeFileSync(logPath, '');
 
 const require = createRequire(join(process.env.PW_DIR ?? '.', 'noop.js'));
-const { chromium } = require('playwright');
+const { chromium, webkit } = require('playwright');
+const browser = option('browser', 'chromium');
 
 function listFiles(dir, base = dir) {
   const files = [];
@@ -235,12 +243,14 @@ const args = (process.env.CHROME_ARGS ??
   .split(/\s+/).filter(Boolean);
 if (audio) args.push('--autoplay-policy=no-user-gesture-required');
 if (allocatorDumps) args.push('--remote-debugging-port=0');
-const context = await chromium.launchPersistentContext(profile, {
-  channel: 'chromium',
-  headless: !!process.env.HEADLESS,
-  args,
-  viewport: { width: 1400, height: 1100 },
-});
+const context = browser === 'webkit'
+  ? await webkit.launchPersistentContext(profile, { headless: !!process.env.HEADLESS, viewport: { width: 1400, height: 1100 } })
+  : await chromium.launchPersistentContext(profile, {
+    channel: 'chromium',
+    headless: !!process.env.HEADLESS,
+    args,
+    viewport: { width: 1400, height: 1100 },
+  });
 // Worker errors reach the page only as opaque ErrorEvents: log their details from the Worker.
 await context.addInitScript(() => {
   const Base = globalThis.Worker;
@@ -443,7 +453,18 @@ function browserProcesses() {
   }
   return procs
     .filter((p) => ours.has(p.pid))
-    .map((p) => ({ pid: p.pid, type: (p.cmd.find((a) => a.startsWith('--type=')) ?? '--type=browser').slice(7) }));
+    .map((p) => ({ pid: p.pid, type: processType(p.cmd) }));
+}
+
+/// Chromium's `--type` of a process, or for WebKit the matching kind of its auxiliary processes.
+function processType(cmd) {
+  const type = cmd.find((a) => a.startsWith('--type='));
+  if (type) return type.slice(7);
+  const exe = cmd[0]?.split('/').pop() ?? '';
+  if (/WebProcess/.test(exe)) return 'renderer';
+  if (/GPUProcess/.test(exe)) return 'gpu-process';
+  if (/NetworkProcess/.test(exe)) return 'network';
+  return 'browser';
 }
 
 /// Proportional set size (KiB) of this browser's processes by type, from /proc.
