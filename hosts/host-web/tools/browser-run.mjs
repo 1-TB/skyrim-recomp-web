@@ -602,7 +602,9 @@ async function measure(seconds, label) {
     window.__uaMemory = null;
     performance.measureUserAgentSpecificMemory?.().then((m) => { window.__uaMemory = m; }, () => {});
   });
+  const [swapsFrom, swapsAt] = [await swapCount(), Date.now()];
   await pumpFor(seconds);
+  const titleSwapsPerSecond = ((await swapCount()) - swapsFrom) / ((Date.now() - swapsAt) / 1000);
   const window_ = lines.slice(from);
   const perf = window_.map((l) => PERF.exec(l)).filter(Boolean).map((m) => m.slice(1).map(Number));
   const perFrame = window_.map((l) => PER_FRAME.exec(l)).filter(Boolean).map((m) => m.slice(1).map(Number));
@@ -629,6 +631,8 @@ async function measure(seconds, label) {
     at: Number(elapsed().toFixed(1)),
     reports: perf.length,
     fps: mean(perf, 0),
+    // The title's swaps, renderer or not (without one, as in WebKit, the game's own pace).
+    titleSwapsPerSecond,
     drawsPerFrame: mean(perf, 1),
     rendererExecutingPct: mean(perf, 2),
     rendererGpuWaitPct: mean(perf, 3),
@@ -660,6 +664,7 @@ function writeSummary(status) {
   const table = [
     ['', ...measurements.map((m) => m.label)],
     ['fps', ...measurements.map((m) => f(m.fps))],
+    ['title swaps/s', ...measurements.map((m) => f(m.titleSwapsPerSecond))],
     ['draws/frame', ...measurements.map((m) => f(m.drawsPerFrame, 0))],
     ['renderer executing %', ...measurements.map((m) => f(m.rendererExecutingPct, 0))],
     ['renderer waiting for GPU %', ...measurements.map((m) => f(m.rendererGpuWaitPct, 0))],
