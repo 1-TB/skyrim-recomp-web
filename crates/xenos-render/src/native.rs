@@ -224,6 +224,9 @@ fn run(
     let mut presents = Vec::new();
     let mut busy = Duration::ZERO;
     let mut report_at = std::time::Instant::now();
+    let mut report_calls = gpu_webgpu::counters::snapshot();
+    let mut report_times = renderer.executor.times();
+    let mut report_draws = renderer.executor.stats.draws;
 
     loop {
         instance.process_events();
@@ -262,12 +265,31 @@ fn run(
         }
         let window = report_at.elapsed();
         if window >= Duration::from_secs(5) {
-            let fps = presents.len() as f64 / window.as_secs_f64();
+            let frames = presents.len() as u64;
+            let fps = frames as f64 / window.as_secs_f64();
+            let draws = renderer.executor.stats.draws;
             log::info!(
-                "perf: {fps:.1} fps; renderer busy {:.0}%; {}",
+                "perf: {fps:.1} fps, {} draws/frame; renderer busy {:.0}%; {}",
+                (draws - report_draws) / frames.max(1),
                 100.0 * busy.as_secs_f64() / window.as_secs_f64(),
                 crate::renderer::pacing(&mut presents, &mut renderer.swap_timings)
             );
+            let calls = gpu_webgpu::counters::snapshot();
+            log::info!("perf: per frame: {}", crate::renderer::calls_per_frame(&calls.since(&report_calls), frames));
+            let times = renderer.executor.times();
+            let ms = |now: Duration, then: Duration| (now - then).as_secs_f64() * 1000.0;
+            log::info!(
+                "perf: renderer time: {:.0} ms binding new texture sets, {:.0} ms creating pipelines, {:.0} ms on \
+                 shaders, {:.0} ms recording resolves, {:.0} ms submitting",
+                ms(times.texture_sets, report_times.texture_sets),
+                ms(times.pipelines, report_times.pipelines),
+                ms(times.shaders, report_times.shaders),
+                ms(times.resolves, report_times.resolves),
+                ms(times.submits, report_times.submits),
+            );
+            report_calls = calls;
+            report_times = times;
+            report_draws = draws;
             busy = Duration::ZERO;
             report_at = std::time::Instant::now();
         }
