@@ -6,7 +6,8 @@
 //   * A WebAssembly branch for PPCFPSCRRegister. Wasm has no dynamic rounding
 //     mode or flush-to-zero control, so the guest's requested mode is tracked in
 //     a per-thread emulated register (mffs/mtfsf round-trip) but every float op
-//     still rounds to nearest-even and keeps denormals.
+//     still rounds to nearest-even and keeps denormals; switching the flush mode
+//     is a no-op there.
 //   * mftb reads skyrt_guest_timebase() (50 MHz, the rate KeQueryPerformanceFrequency
 //     reports) on every host instead of the host TSC / cntvct.
 //   * Every guest memory access goes through PPC_EA (the skyrt XenonRecomp patch
@@ -473,6 +474,15 @@ struct PPCFPSCRRegister
         setcsr(csr);
     }
 
+#if defined(__wasm__)
+    // Wasm always keeps denormals and nothing reads the flush bits back (loadFromHost returns
+    // the rounding mode only), so switching modes, which the recompiler emits around most
+    // float instructions, does nothing.
+    inline void enableFlushModeUnconditional() noexcept {}
+    inline void disableFlushModeUnconditional() noexcept {}
+    inline void enableFlushMode() noexcept {}
+    inline void disableFlushMode() noexcept {}
+#else
     inline void enableFlushModeUnconditional() noexcept
     {
         csr |= FlushMask;
@@ -502,6 +512,7 @@ struct PPCFPSCRRegister
             setcsr(csr);
         }
     }
+#endif
 };
 
 // Every register keeps its field even when the recompiler's *_as_local options turn it into a
