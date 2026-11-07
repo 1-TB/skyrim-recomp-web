@@ -10,7 +10,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 | --- | --- | --- |
 | Boot, menus, New Game, loading saves | Works | Works |
 | Renderer | Native Metal (default); wgpu kept for A/B | Native Metal (default) |
-| Riverwood save frame rate | ~47 fps at 1× (~49 with `--no-msaa`), GPU-bound (see GPU budget) | 40–50 fps at 1× (Nov 7 morning build, before the later speedups) |
+| Riverwood save frame rate | ~53 fps at 1× (Whiterun ~50), GPU-bound | 60 fps (cap) at 1×; uncapped ~56 in town, 95–110 in lighter scenes; renderer CPU-bound |
 | Character clothing, grass (alpha-tested) | Correct | Correct (float24 depth) |
 | Streaky thatch/roof textures | Fixed (float24 depth) | Correct |
 | Frame cap | 120 fps (`--vblank-hz 240` default) | 120 fps + `CADisableMinimumFrameDurationOnPhone` |
@@ -20,6 +20,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 7 | Phone findings, more overlap | Texture loads write RGBA8/RGBA16F/R32F/RGBA32F textures directly (no copy); 1 MiB × 32 constant sets; user-interactive QoS for guest/renderer threads; iOS no longer waits at fences (`--gpu-sync` restores; it pinned the phone at 60 fps); perf line reports presenting separately. Mac 47 → 53 fps; phone holds 60 at 1× and is renderer-CPU-bound above that (~17 ms/frame of renderer work in town vs ~8.6 ms on the Mac) |
 | Nov 7 | Submissions overlap, CPU-written constants | Fetch constants decoded on the CPU per draw; texture loads read the mirror in place (no gather blit); per-submission buffers rotate (constant blocks, index rings) so a submission no longer waits for the previous one; on Metal constant blocks are written straight into shared memory (no patch dispatch); float constant diff walks set bits; `--no-msaa` + iOS Anti-aliasing setting. Mac 42 → 47.4 fps |
 | Nov 7 | Freeze fix, GPU profiling, compute passes | lwarx/stwcx. reservations carry a version (ABA in the guest's lock-free lists left a cycle in a job list: thread 0xE spun forever; 0/8 hangs after); constant patcher walks only its stage's records; store and texture-load shaders without variable-indexed local arrays; consecutive compute passes share one Metal encoder; naga loop bounding off; the native renderer blocks on GPU progress instead of spinning (renderer busy 63% → 32%); `--autoplay` in args.txt for scripted iOS runs |
 | Nov 7 | Pixel shader speed, settings, MetalFX | Mac town 24 → 39.6 fps: branch-free `xe_tex_post` (format conversion and swizzle only when needed), PS parameter register written through a `switch` (a variable index put all registers in scratch memory); `--anisotropy N`, `--metalfx` (MetalFX spatial upscaling in the presenter); iOS settings panel at launch (`settings.txt`), FPS counter, full-resolution drawable (view scale factor was 1); GPU pass timing on Metal (`gpu-time`, per-target pass labels), `solid` debug mode; wgpu-native dropped on Apple |
@@ -64,6 +65,12 @@ likely dependency waits in the render-to-texture chains), vertex 4.3 ms, texture
 blits 1.3 ms (texture-load copies, index gathers), GPU idle ~12% (encoder transitions). Float24
 depth costs ~4 ms (no hidden-surface removal with shader depth writes) and is needed for
 correctness. Renderer CPU ~8 ms/frame (37% of a core at 45 fps).
+
+Phone (iPhone 18 Pro Max, 1×): GPU has headroom; the renderer thread is the limit in dense
+scenes (~94% busy at ~56 fps). Renderer CPU per frame on the Mac (Time Profiler): Executor::draw
+~6 ms (constants ~1.7, texture binding ~0.7, sync ~0.6, Metal encoding ~1.3), register writes
+~1 ms. A Time Profiler run on the device (`xcrun xctrace record --device <udid> --attach
+Skyrim --template 'Time Profiler'`) is the next step there.
 
 Remaining ideas, largest first: render-to-texture shortcut (a resolve whose destination is
 sampled with the same format becomes a texture copy instead of resolve → guest memory → texture
