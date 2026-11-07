@@ -46,6 +46,11 @@ impl RegisterFile {
     pub fn write(&mut self, index: u32, value: u32) {
         let i = index as usize;
         if let Some(r) = self.values.get_mut(i) {
+            // Titles rewrite constants before every draw, mostly with the values they have:
+            // those writes change nothing to compare or upload.
+            if *r == value {
+                return;
+            }
             *r = value;
             if (FLOAT_CONSTANTS..FETCH_CONSTANTS).contains(&i) {
                 let v = (i - FLOAT_CONSTANTS) / 4;
