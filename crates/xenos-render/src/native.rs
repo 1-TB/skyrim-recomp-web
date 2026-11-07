@@ -257,6 +257,9 @@ fn run(
     let every = options.dump_every.max(1);
     let mut presents = Vec::new();
     let mut busy = Duration::ZERO;
+    // Time in presenting (mostly waiting for the window's next drawable), left out of `busy`.
+    let mut present_time = Duration::ZERO;
+    let mut present_reported = Duration::ZERO;
     let mut report_at = std::time::Instant::now();
     let mut report_calls = gpu_webgpu::counters::snapshot();
     let mut report_times = renderer.executor.times();
@@ -274,7 +277,9 @@ fn run(
         renderer.pump(handle, Some(Duration::from_millis(5)), None, |r, size| {
             let Some((w, h)) = size else { return };
             if let Some(p) = presentation.as_mut() {
+                let started = std::time::Instant::now();
                 p.present(&r.device, &r.presenter);
+                present_time += started.elapsed();
             }
             presents.push(std::time::Instant::now());
             let Some(dir) = &options.dump_dir else { return };
@@ -301,7 +306,12 @@ fn run(
         // Time spent executing commands (not waiting for the title to submit some, nor for the
         // GPU to free constant buffers).
         if handle.completed() != before || renderer.backlog_len() > 0 {
-            busy += started.elapsed().saturating_sub(std::mem::take(&mut renderer.executor.floats.waited));
+            let presenting = present_time - present_reported;
+            present_reported = present_time;
+            busy += started
+                .elapsed()
+                .saturating_sub(std::mem::take(&mut renderer.executor.floats.waited))
+                .saturating_sub(presenting);
         }
         renderer.executor.floats.waited = Duration::ZERO;
         // Waiting for the GPU (frames in flight, a resolve, uploads): block until it gets
@@ -315,9 +325,10 @@ fn run(
             let fps = frames as f64 / window.as_secs_f64();
             let draws = renderer.executor.stats.draws;
             log::info!(
-                "perf: {fps:.1} fps, {} draws/frame; renderer busy {:.0}%; {}",
+                "perf: {fps:.1} fps, {} draws/frame; renderer busy {:.0}%, presenting {:.0}%; {}",
                 (draws - report_draws) / frames.max(1),
                 100.0 * busy.as_secs_f64() / window.as_secs_f64(),
+                100.0 * present_time.as_secs_f64() / window.as_secs_f64(),
                 crate::renderer::pacing(&mut presents, &mut renderer.swap_timings)
             );
             let calls = gpu_webgpu::counters::snapshot();
@@ -337,6 +348,8 @@ fn run(
             report_times = times;
             report_draws = draws;
             busy = Duration::ZERO;
+            present_time = Duration::ZERO;
+            present_reported = Duration::ZERO;
             report_at = std::time::Instant::now();
         }
     }
