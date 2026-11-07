@@ -23,7 +23,7 @@ use gpu_webgpu::*;
 pub const BLOCK_BUFFER_BYTES: u64 = 4 << 20;
 /// Bytes of each set's block buffer with direct writes: sets are made per submission in
 /// flight, so they're kept smaller (a submission that fills one is made early).
-const DIRECT_BLOCK_BUFFER_BYTES: u64 = 2 << 20;
+const DIRECT_BLOCK_BUFFER_BYTES: u64 = 1 << 20;
 /// Patch records per submission at most (more needs a submission first).
 const MAX_RECORDS: usize = 16384;
 /// Changed vec4s per submission at most.
@@ -80,8 +80,9 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 /// (with one set, every submission waited for the GPU to finish the previous one). With direct
 /// writes there are as many as submissions in flight need (see [`ConstantPatcher::rewind`]).
 pub const SETS: usize = 3;
-/// Most sets with direct writes (2 MiB of blocks each); past that a submission waits.
-const MAX_SETS: usize = 16;
+/// Most sets with direct writes (1 MiB of blocks each, 32 MiB in all); past that a submission
+/// waits. How far ahead of the GPU the renderer may record matters: 16 sets cost ~10% fps.
+const MAX_SETS: usize = 32;
 
 struct Set {
     /// The blocks, bound to the draws' float constant bindings.
