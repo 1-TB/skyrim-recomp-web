@@ -70,6 +70,9 @@ struct State {
     status_seen: u64,
     /// A gamepad was connected at the last poll (the touch controls hide while one is).
     pad_connected: bool,
+    /// Thermal state and Low Power Mode at the last tick: either one makes iOS hold the
+    /// display at 60 Hz, which the fps figures alone don't show.
+    power_seen: Option<(isize, bool)>,
 }
 
 thread_local! {
@@ -88,6 +91,7 @@ thread_local! {
         sent: None,
         status_seen: 0,
         pad_connected: false,
+        power_seen: None,
     });
 }
 
@@ -264,6 +268,7 @@ define_class!(
             with_state(|s| {
                 poll_input(s);
                 update_status(s);
+                log_power_state(s);
                 if let (Some(fps), Some(kernel)) = (&mut s.fps, KERNEL.get()) {
                     fps.update(kernel.gpu.swap_count());
                 }
@@ -447,6 +452,20 @@ fn update_status(s: &mut State) {
     if let Some(text) = crate::status::take_change(&mut s.status_seen) {
         label.setHidden(text.is_none());
         label.setText(text.map(|t| NSString::from_str(&t)).as_deref());
+    }
+}
+
+fn log_power_state(s: &mut State) {
+    // SAFETY: NSProcessInfo's thermalState (NSInteger) and isLowPowerModeEnabled (BOOL).
+    let state: (isize, bool) = unsafe {
+        let info: Retained<AnyObject> = msg_send![AnyClass::get(c"NSProcessInfo").unwrap(), processInfo];
+        (msg_send![&*info, thermalState], msg_send![&*info, isLowPowerModeEnabled])
+    };
+    if s.power_seen != Some(state) {
+        const THERMAL: [&str; 4] = ["nominal", "fair", "serious", "critical"];
+        let thermal = THERMAL.get(state.0 as usize).copied().unwrap_or("unknown");
+        log::info!("power: thermal state {thermal}, low power mode {}", if state.1 { "on" } else { "off" });
+        s.power_seen = Some(state);
     }
 }
 
