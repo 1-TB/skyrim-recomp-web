@@ -226,11 +226,24 @@ where
     F: FnOnce() + Send + 'static,
 {
     std::thread::Builder::new().name(name).stack_size(HOST_STACK_SIZE).spawn(move || {
+        prefer_performance_cores();
         if let Some(hook) = THREAD_START_HOOK.get() {
             hook();
         }
         f()
     })
+}
+
+/// Asks the OS to schedule the calling thread like the UI (Apple: the user-interactive QoS
+/// class), so it runs on performance cores: threads without a QoS class can be left on the
+/// efficiency cores of an iPhone, where the title's threads and the renderer ran slower.
+/// Elsewhere it does nothing.
+pub fn prefer_performance_cores() {
+    #[cfg(target_vendor = "apple")]
+    // SAFETY: changes only the calling thread's scheduling class.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
+    }
 }
 
 /// The hardware thread an affinity mask selects: its highest set bit among the

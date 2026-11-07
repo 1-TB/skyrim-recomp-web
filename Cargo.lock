@@ -2656,6 +2656,7 @@ version = "0.1.0"
 dependencies = [
  "d3d-hle",
  "gpu-webgpu",
+ "libc",
  "log",
  "naga",
  "png",

@@ -135,6 +135,12 @@ pub fn start(
     let handle = RendererHandle::new();
     let renderer = handle.clone();
     std::thread::Builder::new().name("renderer".into()).spawn(move || {
+        // As the title's threads (runtime_core::thread::prefer_performance_cores).
+        #[cfg(target_vendor = "apple")]
+        // SAFETY: changes only this thread's scheduling class.
+        unsafe {
+            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
+        }
         if let Err(e) = run(&renderer, memory, &options, targets) {
             log::error!("renderer stopped: {e}");
         }
