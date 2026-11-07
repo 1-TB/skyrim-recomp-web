@@ -123,6 +123,24 @@ struct Shown {
     group: BindGroup,
 }
 
+/// MetalFX upscaling for one frame size and output size.
+struct Upscale {
+    scaler: SpatialScaler,
+    /// (frame, output) sizes it was made for.
+    sizes: ((u32, u32), (u32, u32)),
+    /// The scaler's output with the identity swizzle (the frame's was applied going in).
+    group: BindGroup,
+}
+
+/// Scale frames up to the window with MetalFX instead of bicubic filtering (where available).
+static METALFX: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Presenters scale frames up to the window with MetalFX's spatial scaler when the GPU backend
+/// has it (Metal), and with bicubic filtering otherwise.
+pub fn set_metalfx(on: bool) {
+    METALFX.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub(crate) struct Presenter {
     pipeline: RenderPipeline,
     layout: BindGroupLayout,
@@ -132,6 +150,12 @@ pub(crate) struct Presenter {
     shown: Option<Shown>,
     /// Swaps shown so far.
     pub frames: u64,
+    format: TextureFormat,
+    /// The identity channel mapping, for showing the upscaled frame.
+    identity: Buffer,
+    upscale: std::cell::RefCell<Option<Upscale>>,
+    /// MetalFX couldn't scale between these sizes (not retried for them).
+    upscale_failed: std::cell::Cell<Option<((u32, u32), (u32, u32))>>,
 }
 
 /// The largest rectangle with the frame's aspect that fits the target, centred.
@@ -200,7 +224,26 @@ impl Presenter {
             usage: BufferUsage::Uniform | BufferUsage::CopyDst,
             mapped_at_creation: false,
         });
-        Presenter { pipeline, layout, sampler, swizzle, shown: None, frames: 0 }
+        let identity = device.create_buffer(&BufferDescriptor {
+            label: "present identity swizzle",
+            size: 16,
+            usage: BufferUsage::Uniform | BufferUsage::CopyDst,
+            mapped_at_creation: false,
+        });
+        let bytes: Vec<u8> = [0u32, 1, 2, 3].iter().flat_map(|v| v.to_le_bytes()).collect();
+        device.queue().write_buffer(&identity, 0, &bytes);
+        Presenter {
+            pipeline,
+            layout,
+            sampler,
+            swizzle,
+            shown: None,
+            frames: 0,
+            format: target_format,
+            identity,
+            upscale: std::cell::RefCell::new(None),
+            upscale_failed: std::cell::Cell::new(None),
+        }
     }
 
     /// Shows `front` from now on (or keeps the previous frame if there is none).
@@ -233,7 +276,24 @@ impl Presenter {
     }
 
     /// Draws the latest front buffer into `target` (black if there is none yet).
-    pub(crate) fn encode(&self, encoder: &mut CommandEncoder, target: &TextureView, width: u32, height: u32) {
+    pub(crate) fn encode(
+        &self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        if let Some(shown) = &self.shown {
+            let (x, y, w, h) = letterbox((shown.width, shown.height), (width, height));
+            let out = (w.round() as u32, h.round() as u32);
+            if METALFX.load(std::sync::atomic::Ordering::Relaxed)
+                && (out.0 > shown.width || out.1 > shown.height)
+                && self.encode_upscaled(device, encoder, shown, target, (x.round(), y.round()), out)
+            {
+                return;
+            }
+        }
         let mut pass =
             encoder.begin_render_pass("present", &[Some(RenderPassColorAttachment::clear(target, BACKGROUND))], None);
         if let Some(shown) = &self.shown {
@@ -244,6 +304,66 @@ impl Presenter {
             pass.draw(3, 1, 0, 0);
         }
         pass.end();
+    }
+
+    /// Draws the frame into the MetalFX scaler's input (1:1, applying its swizzle), scales it to
+    /// `out` and copies that to `target` at `origin` (1:1). `false` if MetalFX can't.
+    fn encode_upscaled(
+        &self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        shown: &Shown,
+        target: &TextureView,
+        origin: (f32, f32),
+        out: (u32, u32),
+    ) -> bool {
+        let sizes = ((shown.width, shown.height), out);
+        if self.upscale_failed.get() == Some(sizes) {
+            return false;
+        }
+        let mut upscale = self.upscale.borrow_mut();
+        if upscale.as_ref().is_none_or(|u| u.sizes != sizes) {
+            *upscale = None;
+            let Some(scaler) = device.create_spatial_scaler(sizes.0, out, self.format) else {
+                log::warn!("present: MetalFX can't scale {}x{} to {}x{}; using bicubic filtering", sizes.0.0, sizes.0.1, out.0, out.1);
+                self.upscale_failed.set(Some(sizes));
+                return false;
+            };
+            log::info!("present: MetalFX scales {}x{} to {}x{}", sizes.0.0, sizes.0.1, out.0, out.1);
+            let group = device.create_bind_group(
+                "present upscaled",
+                &self.layout,
+                &[
+                    BindGroupEntry { binding: 0, resource: BindingResource::TextureView(scaler.output()) },
+                    BindGroupEntry { binding: 1, resource: BindingResource::Sampler(&self.sampler) },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: BindingResource::Buffer { buffer: &self.identity, offset: 0, size: None },
+                    },
+                ],
+            );
+            *upscale = Some(Upscale { scaler, sizes, group });
+        }
+        let u = upscale.as_ref().expect("made above");
+        let mut pass = encoder.begin_render_pass(
+            "present metalfx input",
+            &[Some(RenderPassColorAttachment::clear(u.scaler.input(), BACKGROUND))],
+            None,
+        );
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &shown.group, &[]);
+        pass.set_viewport(0.0, 0.0, shown.width as f32, shown.height as f32, 0.0, 1.0);
+        pass.draw(3, 1, 0, 0);
+        pass.end();
+        encoder.spatial_scale(&u.scaler);
+        let mut pass =
+            encoder.begin_render_pass("present", &[Some(RenderPassColorAttachment::clear(target, BACKGROUND))], None);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &u.group, &[]);
+        pass.set_viewport(origin.0, origin.1, out.0 as f32, out.1 as f32, 0.0, 1.0);
+        pass.draw(3, 1, 0, 0);
+        pass.end();
+        true
     }
 }
 

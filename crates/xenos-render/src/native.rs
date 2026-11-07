@@ -110,7 +110,7 @@ impl Presentation {
         };
         let view = frame.texture.create_view(None);
         let mut encoder = device.create_command_encoder("present");
-        presenter.encode(&mut encoder, &view, self.configured.0, self.configured.1);
+        presenter.encode(device, &mut encoder, &view, self.configured.0, self.configured.1);
         device.queue().submit([encoder.finish("present")]);
         frame.present();
     }
@@ -332,7 +332,7 @@ fn run(
 /// Renders the current front buffer into `target`, reads it back and writes a PNG.
 fn dump(device: &Device, presenter: &crate::present::Presenter, target: &Offscreen, path: &Path) -> Result<()> {
     let mut encoder = device.create_command_encoder("dump");
-    presenter.encode(&mut encoder, &target.view, target.width, target.height);
+    presenter.encode(device, &mut encoder, &target.view, target.width, target.height);
     encoder.copy_texture_to_buffer(
         &TexelCopyTextureInfo::whole(&target.texture),
         &TexelCopyBufferInfo { buffer: &target.readback, offset: 0, bytes_per_row: target.row, rows_per_image: None },

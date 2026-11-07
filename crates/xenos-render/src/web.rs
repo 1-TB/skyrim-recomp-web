@@ -301,7 +301,7 @@ impl Running {
             let frame = surface.current_frame()?;
             let view = frame.texture.create_view(None);
             let mut encoder = device.create_command_encoder("present");
-            self.renderer.presenter.encode(&mut encoder, &view, size.0, size.1);
+            self.renderer.presenter.encode(&self.renderer.device, &mut encoder, &view, size.0, size.1);
             device.queue().submit([encoder.finish("present")]);
             frame.present();
             self.presents.push(std::time::Instant::now());

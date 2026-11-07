@@ -1,7 +1,6 @@
 # XcodeGen spec for the iOS app around the host-ios static library. `cargo xtask build-ios`
-# builds the library (and with --wgpu the wgpu-native framework) into target/ios/, writes
-# target/ios/local.xcconfig (signing team and bundle id) and generates the project from this file
-# (as project.gen.yml, without the framework unless --wgpu).
+# builds the library into target/ios/, writes target/ios/local.xcconfig (signing team and bundle
+# id) and generates the project from this file.
 name: SkyrimRecomp
 options:
   deploymentTarget:
@@ -16,10 +15,8 @@ targets:
     sources:
       - path: main.c
     dependencies:
-      - framework: ../../../target/ios/wgpu_native.framework
-        embed: true
-        codeSign: true
       - sdk: Metal.framework
+      - sdk: MetalFX.framework
       - sdk: QuartzCore.framework
       - sdk: UIKit.framework
       - sdk: Foundation.framework

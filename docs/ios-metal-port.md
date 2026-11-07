@@ -10,7 +10,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 | --- | --- | --- |
 | Boot, menus, New Game, loading saves | Works | Works |
 | Renderer | Native Metal (default); wgpu kept for A/B | Native Metal (default) |
-| Riverwood save frame rate | ~24 fps, renderer ~57% busy | not yet measured with float24 depth |
+| Riverwood save frame rate | ~40 fps at 1×, GPU-bound (pixel shaders) | ~34 fps at 2× (GPU ~30 ms) |
 | Character clothing, grass (alpha-tested) | Correct | Correct (float24 depth) |
 | Streaky thatch/roof textures | Fixed (float24 depth) | Correct |
 | Frame cap | 120 fps (`--vblank-hz 240` default) | 120 fps + `CADisableMinimumFrameDurationOnPhone` |
@@ -20,9 +20,10 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 7 | Pixel shader speed, settings, MetalFX | Mac town 24 → 39.6 fps: branch-free `xe_tex_post` (format conversion and swizzle only when needed), PS parameter register written through a `switch` (a variable index put all registers in scratch memory); `--anisotropy N`, `--metalfx` (MetalFX spatial upscaling in the presenter); iOS settings panel at launch (`settings.txt`), FPS counter, full-resolution drawable (view scale factor was 1); GPU pass timing on Metal (`gpu-time`, per-target pass labels), `solid` debug mode; wgpu-native dropped on Apple |
 | Nov 7 | Float24 depth (root cause of missing textures) | Pixel shaders round depth to Xbox D24FS8 float24 precision (`xe_float24_depth`, `DEPTH_FLOAT24` system flag, `[[depth(less)]]` conservative depth); iOS alpha workarounds removed; 240 Hz vblank default; debug modes `ps-probe`, `hash-pages`, `verify-loads`, `float32-depth`, `--gpu-sync-draws` |
 | Nov 6 | Alpha-test investigation on Metal | Failed alpha tests clear the sample mask instead of `discard` (iOS default); debug modes `alpha-mask`, `alpha-discard`, `alpha-view-kill`, `alpha-depth-bias=N`; `cargo xtask build-ios --simulator` |
-| Nov 6 | Native Metal backend | `crates/gpu-webgpu/src/metal/`: naga WGSL→MSL per pipeline, safe math, `preserveInvariance`, pipeline sample mask emulated in the shader, zero-initialised buffers/textures, upload ring, `--render-debug msl-dump`. Hosts default to it; `--wgpu` / `--no-default-features` keep wgpu |
+| Nov 6 | Native Metal backend | `crates/gpu-webgpu/src/metal/`: naga WGSL→MSL per pipeline, safe math, `preserveInvariance`, pipeline sample mask emulated in the shader, zero-initialised buffers/textures, upload ring, `--render-debug msl-dump`. Hosts always use it on Apple targets (wgpu-native support dropped Nov 7) |
 | Nov 6 | Shared GPU types split | `gpu-webgpu` descriptors in `src/desc.rs`; backend chosen at compile time (`metal_backend` cfg = feature `metal` on Apple targets) |
 | Before | `ios-port` commit f8fd449 | iOS app (UIKit scene host, touch, gamepads, Documents layout, logs, args.txt), d3d path default for TU 0x0A02, raised memory limits |
 | Before | Crash fixes | XMA context-array register, ARM barriers for `sync`/`lwsync`/`eieio`, Darwin page discard zeroing, missing-function reports with guest state |
@@ -75,11 +76,9 @@ cargo build --release -p host-native
 ./target/release/skyrim-native --game-dir game --content <copy of target/phone-saves/content> \
   --gpu-sync --vblank-hz 120 --run-for 150 --dump-frames <dir> --dump-every 200 \
   --tap START@15 --tap START@20 --tap A@30 --tap A@38
-# Old wgpu binary for A/B: target/release/skyrim-native-wgpu (needs WGPU_NATIVE_DIR)
 
 # iPhone
-cargo xtask build-ios --release --launch          # Metal
-cargo xtask build-ios --release --launch --wgpu   # wgpu-native
+cargo xtask build-ios --release --launch
 # Simulator (builds and installs; launching is unreliable with Xcode 27.2, see above)
 cargo xtask build-ios --release --install --simulator
 ```
@@ -93,14 +92,13 @@ xcrun devicectl device copy from --device <id> --domain-type appDataContainer --
   --source Documents/logs --destination <dir>      # also Documents/frames, Documents/target/shader-dump/msl
 ```
 
-Useful `--render-debug` modes: `ps-probe=FRAME:XxY,...` (per-draw alpha-test records at chosen pixels), `msl-dump`, `alpha-view`, `alpha-view-kill`, `alpha-mask`,
+Useful `--render-debug` modes: `gpu-time` (GPU ms per pass label), `solid` (constant-colour pixel shaders), `ps-probe=FRAME:XxY,...` (per-draw alpha-test records at chosen pixels), `msl-dump`, `alpha-view`, `alpha-view-kill`, `alpha-mask`,
 `alpha-discard`, `no-alpha-test`, `cpu-texture`, `trace-frame=N`, `texture-mib=N`.
 
 ## Backlog
 
 | Priority | Item |
 | --- | --- |
-| 1 | Performance toward 120 fps (guest CPU bound; float24 depth costs ~15%) |
+| 1 | Performance toward 120 fps: GPU-bound on translated pixel shaders (solid-colour shaders: 71 fps); float24 depth ~15%; renderer CPU ~15 ms/frame |
 | 2 | Metal performance: direct writes into shared buffers instead of staged blits, cheaper per-draw binding, memoryless MSAA targets |
-| 4 | GPU pass timing on Metal (`gpu-time` reports unavailable) |
 | 5 | Pre-existing e2e allocation-check failure |

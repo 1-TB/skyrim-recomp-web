@@ -71,6 +71,16 @@ const MAX_REMEMBERED_FAILURES: usize = 4096;
 /// Upper limit of WebGPU `maxAnisotropy`.
 const MAX_ANISOTROPY: u16 = 16;
 
+/// Least anisotropy of trilinear samplers created afterwards (see [`set_min_anisotropy`]).
+static MIN_ANISOTROPY: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(1);
+
+/// Raises the anisotropy of trilinear samplers to at least `n` (1 to 16; 1 keeps the title's),
+/// a quality setting the console couldn't afford: ground and roads stay sharp at grazing angles.
+/// Samplers already created keep theirs, so set it before the renderer starts.
+pub fn set_min_anisotropy(n: u16) {
+    MIN_ANISOTROPY.store(n.clamp(1, MAX_ANISOTROPY), std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Optional device features as the xenos-texture host capabilities (BC passthrough with
 /// `texture-compression-bc`, 16-bit normalized formats with `texture-formats-tier1`).
 /// wgpu-native's `WGPUNativeFeature_TextureFormat16bitNorm` also enables them.
@@ -1481,7 +1491,9 @@ impl TextureCache {
         }
         let all_linear =
             key.mag == FilterMode::Linear && key.min == FilterMode::Linear && key.mip == MipmapFilterMode::Linear;
-        if !all_linear {
+        if all_linear {
+            key.anisotropy = key.anisotropy.max(MIN_ANISOTROPY.load(std::sync::atomic::Ordering::Relaxed));
+        } else {
             key.anisotropy = 1;
         }
         let lod_min = if desc.lod_min_clamp.is_finite() { desc.lod_min_clamp.clamp(0.0, 32.0) } else { 0.0 };

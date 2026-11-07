@@ -90,6 +90,10 @@ pub(crate) static TEXTURE_MIB: AtomicU64 = AtomicU64::new(0);
 /// running their pixel shaders (depth, stencil and blending as set), to tell lost geometry from
 /// pixels the shader throws away.
 pub(crate) static SOLID_SKINNED: AtomicBool = AtomicBool::new(false);
+
+/// `solid` (native): like `solid-skinned` for every draw with a pixel shader, to measure what
+/// the pixel shaders cost against rasterizing and storing alone.
+pub(crate) static SOLID_ALL: AtomicBool = AtomicBool::new(false);
 /// `vs-capture=N` (native): in frame N and every 600th after, skinned draws store the clip-space
 /// positions their vertex shaders output, which are logged after the frame (0 = off). For telling a draw that renders
 /// nothing because its vertices are wrong from one whose pixels are lost later.
@@ -202,6 +206,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "no-a2c" => &NO_A2C,
         "single-sample" => &SINGLE_SAMPLE,
         "solid-skinned" => &SOLID_SKINNED,
+        "solid" => &SOLID_ALL,
         "no-alpha-test" => &NO_ALPHA_TEST,
         "alpha-view" => &ALPHA_VIEW,
         "alpha-view-kill" => &ALPHA_VIEW_KILL,
@@ -242,7 +247,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, single-sample, solid-skinned, no-alpha-test, no-skinned-alpha-test, alpha-view, alpha-view-kill, hash-pages, verify-loads, no-carry, alpha-no-depth, alpha-depth-bias=N, bias-scale=N, vs-capture=N, ps-probe=FRAME:XxY, texture-mib=N, d3d-surfaces, gpu-time, msl-dump, float32-depth, alpha-mask, alpha-discard, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, unshared-upload, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, single-sample, solid, solid-skinned, no-alpha-test, no-skinned-alpha-test, alpha-view, alpha-view-kill, hash-pages, verify-loads, no-carry, alpha-no-depth, alpha-depth-bias=N, bias-scale=N, vs-capture=N, ps-probe=FRAME:XxY, texture-mib=N, d3d-surfaces, gpu-time, msl-dump, float32-depth, alpha-mask, alpha-discard, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, unshared-upload, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };

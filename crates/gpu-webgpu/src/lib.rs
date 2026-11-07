@@ -69,6 +69,10 @@ mod resource;
 mod surface;
 #[cfg(not(metal_backend))]
 pub mod timing;
+#[cfg(not(metal_backend))]
+mod upscale;
+#[cfg(not(metal_backend))]
+pub use upscale::SpatialScaler;
 
 #[cfg(not(metal_backend))]
 pub use buffer::Buffer;
@@ -94,8 +98,8 @@ pub use metal::timing;
 #[cfg(metal_backend)]
 pub use metal::{
     Adapter, BindGroup, BindGroupLayout, Buffer, CommandBuffer, CommandEncoder, ComputePass, ComputePipeline, Device,
-    Instance, PipelineLayout, Queue, RenderPass, RenderPipeline, Sampler, ShaderModule, Surface, SurfaceFrame, Texture,
-    TextureView, UNSHARED_UPLOADS,
+    Instance, PipelineLayout, Queue, RenderPass, RenderPipeline, Sampler, ShaderModule, SpatialScaler, Surface, SurfaceFrame,
+    Texture, TextureView, UNSHARED_UPLOADS,
 };
 
 pub use desc::*;

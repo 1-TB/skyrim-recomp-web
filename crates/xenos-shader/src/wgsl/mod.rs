@@ -1109,9 +1109,9 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
             y = bitcast<f32>(bitcast<u32>(y) ^ 0x80000000u);
         }}
         let line_bit = select(0u, 0x80000000u, (flags & {line}u) != 0u);
-        let gen_register = xe_system.ps_param_gen_register;
-        if (gen_register < {count}u) {{
-            xe_r[gen_register] = vec4<f32>(x, y, bitcast<f32>(line_bit), 0.0);
+        let xe_gen = vec4<f32>(x, y, bitcast<f32>(line_bit), 0.0);
+        switch (xe_system.ps_param_gen_register) {{
+{cases}            default: {{}}
         }}
     }}
 ",
@@ -1119,7 +1119,12 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
                 polygonal = flags::PRIMITIVE_POLYGONAL,
                 point = flags::PRIMITIVE_POINT,
                 line = flags::PRIMITIVE_LINE,
-                count = self.register_count,
+                // One case per register rather than `xe_r[register]`: indexing the registers by
+                // a variable anywhere makes GPU compilers keep all of them in per-pixel scratch
+                // memory instead of registers, which made these shaders several times slower.
+                cases = (0..self.register_count)
+                    .map(|i| format!("            case {i}u: {{ xe_r[{i}] = xe_gen; }}\n"))
+                    .collect::<String>(),
             )
             .unwrap();
         }

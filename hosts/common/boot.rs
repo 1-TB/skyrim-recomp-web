@@ -48,6 +48,10 @@ options:
                            tablets in the browser); --no-gpu-sync: never
   --resolution-scale N     draw at N (1, 2 or 3) times the console's resolution along each axis
                            (default 1)
+  --anisotropy N           at least Nx anisotropic filtering (1-16) where the title samples
+                           trilinearly (default 1: the title's own)
+  --metalfx                scale frames up to the window with MetalFX (Apple GPUs) instead of
+                           bicubic filtering
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
                            scissor (shade one pixel per draw), nodraw (record but skip draw calls),
                            frames=N (let the renderer run N frames ahead of the GPU; default 2),
@@ -152,6 +156,14 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             "--resolution-scale" => {
                 let scale = value()?.parse().map_err(|e| format!("--resolution-scale: {e}"))?;
                 xenos_render::set_resolution_scale(scale)?;
+            }
+            "--metalfx" => xenos_render::set_metalfx(true),
+            "--anisotropy" => {
+                let n: u16 = value()?.parse().map_err(|e| format!("--anisotropy: {e}"))?;
+                if !(1..=16).contains(&n) {
+                    return Err(format!("--anisotropy {n}: not 1 to 16"));
+                }
+                xenos_render::set_min_anisotropy(n);
             }
             "--run-for" => {
                 let secs: f64 = value()?.parse().map_err(|e| format!("--run-for: {e}"))?;

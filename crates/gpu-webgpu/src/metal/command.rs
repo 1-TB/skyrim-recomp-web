@@ -41,7 +41,7 @@ impl std::fmt::Debug for CommandBuffer {
 }
 
 pub struct CommandEncoder {
-    raw: MtlCommandBuffer,
+    pub(crate) raw: MtlCommandBuffer,
     blit: Option<Id<dyn MTLBlitCommandEncoder>>,
     device: Device,
 }
@@ -138,7 +138,7 @@ impl CommandEncoder {
         self.blit.as_deref().unwrap()
     }
 
-    fn end_blit(&mut self) {
+    pub(crate) fn end_blit(&mut self) {
         if let Some(b) = self.blit.take() {
             b.endEncoding();
         }
@@ -217,6 +217,7 @@ impl CommandEncoder {
                 d.setRenderTargetHeight(h as usize);
                 d.setDefaultRasterSampleCount(samples as usize);
             }
+            super::timing::render_pass(&self.raw, label, &d);
             self.raw.renderCommandEncoderWithDescriptor(&d)
         })
         .expect("cannot create a Metal render encoder");
@@ -239,7 +240,11 @@ impl CommandEncoder {
     pub fn begin_compute_pass(&mut self, label: &str) -> ComputePass<'_> {
         crate::counters::add(&crate::counters::count::compute_passes, 1);
         self.end_blit();
-        let raw = autoreleasepool(|_| self.raw.computeCommandEncoder()).expect("cannot create a Metal compute encoder");
+        let raw = autoreleasepool(|_| match super::timing::compute_pass(&self.raw, label) {
+            Some(d) => self.raw.computeCommandEncoderWithDescriptor(&d),
+            None => self.raw.computeCommandEncoder(),
+        })
+        .expect("cannot create a Metal compute encoder");
         set_label!(raw, label);
         ComputePass {
             raw,
@@ -372,6 +377,7 @@ impl CommandEncoder {
             self.raw.setLabel(Some(&ns(label)));
         }
         let _ = &self.device;
+        super::timing::finished(&self.raw);
         CommandBuffer { raw: self.raw.clone() }
     }
 }

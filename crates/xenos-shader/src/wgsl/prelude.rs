@@ -1,7 +1,8 @@
 //! WGSL helper functions included in every translated shader (unused ones cost nothing).
 
 /// Packed per-format texture information, indexed by `xenos::TextureFormat`: bits 0:2 component
-/// count, then four 6-bit fixed-point component widths (0 = float, compressed or unknown).
+/// count, then four 6-bit fixed-point component widths (0 = float, compressed or unknown). A
+/// `const` array (a `switch`, or a `var<private>` array, measured slower on Metal).
 pub(crate) fn texture_format_table() -> String {
     // (component count, widths) per format 0..63.
     const FORMATS: [(u32, [u32; 4]); 64] = [
@@ -74,7 +75,7 @@ pub(crate) fn texture_format_table() -> String {
         .iter()
         .map(|(count, w)| format!("{}u", count | (w[0] << 3) | (w[1] << 9) | (w[2] << 15) | (w[3] << 21)))
         .collect();
-    format!("var<private> xe_texture_formats: array<u32, 64> = array<u32, 64>({});\n", entries.join(", "))
+    format!("const xe_texture_formats: array<u32, 64> = array<u32, 64>({});\n", entries.join(", "))
 }
 
 pub(crate) const PRELUDE: &str = r#"
@@ -373,13 +374,6 @@ fn xe_color_range(c: vec4<f32>, range: u32) -> vec4<f32> {
     return clamp(finite, vec4<f32>(-32.0), vec4<f32>(32.0));
 }
 
-fn xe_tex_swizzle_component(v: vec4<f32>, s: u32) -> f32 {
-    if (s < 4u) {
-        return v[s];
-    }
-    return select(0.0, 1.0, s == 5u);
-}
-
 // Turns host sampling results (guest data components in RGBA) into the guest tfetch result:
 // replication of the last component of the format, signedness, number format, the fetch constant
 // swizzle and the exponent bias.
@@ -390,20 +384,50 @@ fn xe_tex_post(sampled: vec4<f32>, fc: u32) -> vec4<f32> {
     let info = xe_texture_formats[w1 & 63u];
     let count = max(info & 7u, 1u);
     let integer = (w3 & 1u) != 0u;
-    var data: vec4<f32>;
-    for (var i = 0u; i < 4u; i = i + 1u) {
-        let c = min(i, count - 1u);
-        let width = (info >> (3u + 6u * c)) & 63u;
-        let sign = (w0 >> (2u + 2u * c)) & 3u;
-        data[i] = xe_tex_component(sampled[c], sign, width, integer);
+    // Replication of the format's last component, without indexing by a variable (which
+    // compiles to per-pixel scratch memory on some GPUs).
+    let ry = select(sampled.x, sampled.y, count > 1u);
+    let rz = select(ry, sampled.z, count > 2u);
+    let rw = select(rz, sampled.w, count > 3u);
+    var data = vec4<f32>(sampled.x, ry, rz, rw);
+    // Nearly every fetch is of unsigned, non-integer data, which needs no conversion; the
+    // branch is uniform (fetch constants are per draw).
+    if ((w0 & 0x3FCu) != 0u || integer) {
+        let widths = vec4<u32>(info >> 3u, info >> 9u, info >> 15u, info >> 21u) & vec4<u32>(63u);
+        let wc = xe_tex_replicate(widths, count);
+        let signs = vec4<u32>(w0 >> 2u, w0 >> 4u, w0 >> 6u, w0 >> 8u) & vec4<u32>(3u);
+        let sc = xe_tex_replicate(signs, count);
+        data = vec4<f32>(
+            xe_tex_component(data.x, sc.x, wc.x, integer),
+            xe_tex_component(data.y, sc.y, wc.y, integer),
+            xe_tex_component(data.z, sc.z, wc.z, integer),
+            xe_tex_component(data.w, sc.w, wc.w, integer));
     }
     let swizzle = (w3 >> 1u) & 0xFFFu;
-    let result = vec4<f32>(
-        xe_tex_swizzle_component(data, swizzle & 7u),
-        xe_tex_swizzle_component(data, (swizzle >> 3u) & 7u),
-        xe_tex_swizzle_component(data, (swizzle >> 6u) & 7u),
-        xe_tex_swizzle_component(data, (swizzle >> 9u) & 7u));
+    var result = data;
+    // 0x688: x, y, z, w.
+    if (swizzle != 0x688u) {
+        let sel = vec4<u32>(swizzle, swizzle >> 3u, swizzle >> 6u, swizzle >> 9u) & vec4<u32>(7u);
+        result = vec4<f32>(
+            xe_tex_swizzle_select(data, sel.x),
+            xe_tex_swizzle_select(data, sel.y),
+            xe_tex_swizzle_select(data, sel.z),
+            xe_tex_swizzle_select(data, sel.w));
+    }
     return result * ldexp(1.0, extractBits(bitcast<i32>(w3), 13u, 6u));
+}
+
+// Component `s` of a fetch swizzle (0-3: x-w, 5: 1, else 0) by selects, not indexing.
+fn xe_tex_swizzle_select(v: vec4<f32>, s: u32) -> f32 {
+    let c = select(select(select(v.x, v.y, s == 1u), v.z, s == 2u), v.w, s == 3u);
+    return select(select(0.0, 1.0, s == 5u), c, s < 4u);
+}
+
+// `v` with its components past the first `count` replaced by the last of those.
+fn xe_tex_replicate(v: vec4<u32>, count: u32) -> vec4<u32> {
+    let y = select(v.x, v.y, count > 1u);
+    let z = select(y, v.z, count > 2u);
+    return vec4<u32>(v.x, y, z, select(z, v.w, count > 3u));
 }
 
 fn xe_compare(function: u32, a: f32, b: f32) -> bool {

@@ -10,7 +10,7 @@ build = "build.rs"
 [features]
 # Render natively on Metal (Apple targets; ignored elsewhere) instead of linking a webgpu.h implementation; shaders
 # stay WGSL and are translated to MSL by naga with options chosen here.
-metal = ["dep:naga", "dep:objc2", "dep:objc2-foundation", "dep:objc2-metal", "dep:objc2-quartz-core", "dep:objc2-core-foundation", "dep:block2"]
+metal = ["dep:naga", "dep:objc2", "dep:objc2-foundation", "dep:objc2-metal", "dep:objc2-quartz-core", "dep:objc2-core-foundation", "dep:block2", "dep:objc2-metal-fx"]
 
 [dependencies]
 log.workspace = true
@@ -23,6 +23,7 @@ objc2-metal = { version = "0.3.2", optional = true }
 objc2-quartz-core = { version = "0.3.2", optional = true }
 objc2-core-foundation = { version = "0.3.2", optional = true }
 block2 = { version = "0.6.2", optional = true }
+objc2-metal-fx = { version = "0.3.2", default-features = false, features = ["std", "MTLFXSpatialScaler"], optional = true }
 
 [dev-dependencies]
 png = "=0.17.16"

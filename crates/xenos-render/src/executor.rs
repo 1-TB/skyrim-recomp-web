@@ -1027,7 +1027,24 @@ impl Executor {
                 stencil_read_only: false,
             }
         });
-        let mut rp = encoder.begin_render_pass("xenos draws", &colors, depth.as_ref());
+        // `gpu-time` tells passes apart by their targets and draw count.
+        let label = if crate::debug::GPU_TIME.load(std::sync::atomic::Ordering::Relaxed) {
+            let t = &pass.targets;
+            let formats: Vec<String> =
+                t.colors.iter().flatten().map(|(_, f)| format!("{f:?}").replace("WGPUTextureFormat", "")).collect();
+            format!(
+                "xenos draws {}x{} x{} [{}]{} {} draws",
+                t.width,
+                t.height,
+                t.sample_count,
+                formats.join(","),
+                if t.depth.is_some() { "+depth" } else { "" },
+                pass.draws.len().next_power_of_two()
+            )
+        } else {
+            "xenos draws".to_string()
+        };
+        let mut rp = encoder.begin_render_pass(&label, &colors, depth.as_ref());
         rp.set_bind_group(bindings::SHARED_MEMORY_GROUP, &shared_group, &[]);
         // Each WebGPU call has a fixed cost (in browsers especially): state equal to the previous
         // draw's isn't set again, and index buffers are bound whole once, each draw selecting
@@ -2770,13 +2787,14 @@ impl Executor {
         ps: Option<&CachedShader>,
         layout: &PipelineLayout,
     ) -> Option<RenderPipeline> {
-        if !crate::debug::SOLID_SKINNED.load(std::sync::atomic::Ordering::Relaxed) || ps.is_none() {
+        let all = crate::debug::SOLID_ALL.load(std::sync::atomic::Ordering::Relaxed);
+        if !(all || crate::debug::SOLID_SKINNED.load(std::sync::atomic::Ordering::Relaxed)) || ps.is_none() {
             return None;
         }
         if let Some(p) = self.solid_pipelines.get(key) {
             return Some(p.clone());
         }
-        let skinned = self.vs_skinned(vs);
+        let skinned = all || self.vs_skinned(vs);
         let targets: Vec<(usize, &ColorKey)> =
             key.colors[..key.color_slots].iter().enumerate().filter_map(|(i, c)| Some((i, c.as_ref()?))).collect();
         let integer = targets.iter().any(|(_, c)| {

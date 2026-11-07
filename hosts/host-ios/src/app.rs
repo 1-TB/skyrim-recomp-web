@@ -11,6 +11,8 @@
 //!   the touches. A display link calls its `tick:` every frame: controller state (touch
 //!   screen, gamepad, hardware keyboard) is merged and sent to the title, and the touch controls
 //!   and status line are redrawn.
+//!
+//! The settings panel (settings.rs) covers the view at launch; its Play button boots the title.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,6 +34,7 @@ use objc2_ui_kit::{
 use xenos_render::native::{Window as RenderWindow, WindowHandles};
 
 use crate::pads::{self, Reading};
+use crate::settings::{FpsLabel, Panel, Settings};
 use crate::touch::{Overlay, Touchpad};
 
 /// The kernel, once the title has booted (input goes nowhere before that).
@@ -42,11 +45,18 @@ pub fn attach(kernel: &'static Kernel) {
     let _ = KERNEL.set(kernel);
 }
 
-type Boot = Box<dyn FnOnce(RenderWindow)>;
+type Boot = Box<dyn FnOnce(RenderWindow, Settings)>;
 
 /// Main-thread state: everything UIKit's callbacks share.
 struct State {
     boot: Option<Boot>,
+    /// Where the settings are kept.
+    settings_path: std::path::PathBuf,
+    /// The settings panel, until Play is tapped.
+    panel: Option<Panel>,
+    /// The renderer's window, handed to `boot` on Play.
+    render_window: Option<RenderWindow>,
+    fps: Option<FpsLabel>,
     /// Drawable size in pixels, read by the renderer thread.
     size: Arc<AtomicU64>,
     /// Kept alive: the scene only holds its window weakly.
@@ -63,6 +73,10 @@ struct State {
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State {
         boot: None,
+        settings_path: std::path::PathBuf::new(),
+        panel: None,
+        render_window: None,
+        fps: None,
         size: Arc::new(AtomicU64::new(0)),
         window: None,
         overlay: None,
@@ -81,17 +95,21 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
 }
 
 /// Runs UIKit on this (the main) thread; never returns. `boot` gets the window for the renderer
-/// once it exists and must start the title on another thread.
-pub fn run(boot: impl FnOnce(RenderWindow) + 'static) -> Result<(), String> {
+/// and the settings chosen (kept in `settings_path`) once Play is tapped, and must start the
+/// title on another thread.
+pub fn run(settings_path: std::path::PathBuf, boot: impl FnOnce(RenderWindow, Settings) + 'static) -> Result<(), String> {
     let mtm = MainThreadMarker::new().ok_or("not on the main thread")?;
-    with_state(|s| s.boot = Some(Box::new(boot)));
+    with_state(|s| {
+        s.boot = Some(Box::new(boot));
+        s.settings_path = settings_path;
+    });
     // Registered before UIKit looks them up by name (the scene delegate through Info.plist).
     let _ = (SkyrtSceneDelegate::class(), SkyrtViewController::class(), SkyrtView::class());
     let delegate = NSString::from_str(&SkyrtAppDelegate::class().name().to_string_lossy());
     UIApplication::main(None, Some(&delegate), mtm)
 }
 
-fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+pub(crate) fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
     CGRect { origin: CGPoint { x, y }, size: CGSize { width: w, height: h } }
 }
 
@@ -215,11 +233,38 @@ define_class!(
             touches_changed(self, touches, Phase::Up);
         }
 
+        /// The settings panel's Play button: saves the settings and boots the title.
+        #[unsafe(method(settingsPlay:))]
+        fn settings_play(&self, _sender: &AnyObject) {
+            let mtm = self.mtm();
+            let boot = with_state(|s| {
+                let panel = s.panel.take()?;
+                let settings = panel.settings();
+                settings.save(&s.settings_path);
+                panel.remove();
+                // Touches on the panel reached the controls under it too.
+                s.touch.reset();
+                if settings.show_fps {
+                    s.fps = Some(FpsLabel::new(mtm, self));
+                }
+                Some((s.boot.take()?, s.render_window.take()?, settings))
+            })
+            .flatten();
+            layout(self);
+            if let Some((boot, window, settings)) = boot {
+                log::info!("settings: {settings:?}");
+                boot(window, settings);
+            }
+        }
+
         #[unsafe(method(tick:))]
         fn tick(&self, _link: &CADisplayLink) {
             with_state(|s| {
                 poll_input(s);
                 update_status(s);
+                if let (Some(fps), Some(kernel)) = (&mut s.fps, KERNEL.get()) {
+                    fps.update(kernel.gpu.swap_count());
+                }
                 if let Some(overlay) = &mut s.overlay {
                     overlay.draw(&mut s.touch, !s.pad_connected);
                 }
@@ -250,6 +295,11 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
         log::error!("the view controller has no game view");
         return;
     };
+    // A view backed by a CAMetalLayer keeps a scale factor of 1 unless told otherwise, which
+    // made the drawable the screen's size in points (a third of its pixels on a 3x iPhone).
+    let native = scene.screen().nativeScale();
+    view.setContentScaleFactor(native);
+    log::info!("screen scale {native}");
     let overlay = Overlay::new(mtm, &view);
     let status = status_label(mtm, &view);
     UIApplication::sharedApplication(mtm).setIdleTimerDisabled(true);
@@ -263,17 +313,15 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
     }
     // The layer lives as long as the view, which the window keeps for the life of the process.
     let layer = Retained::as_ptr(&view.layer()).cast::<AnyObject>() as usize;
-    let boot = with_state(|s| {
+    with_state(|s| {
         s.overlay = Some(overlay);
         s.status = Some(status);
         s.window = Some(window);
-        s.boot.take().map(|b| (b, s.size.clone()))
-    })
-    .flatten();
+        let settings = Settings::load(&s.settings_path);
+        s.panel = Some(Panel::new(mtm, &view, &settings, &view));
+        s.render_window = Some(RenderWindow { handles: WindowHandles::Metal { layer }, size: s.size.clone() });
+    });
     layout(&view);
-    if let Some((boot, size)) = boot {
-        boot(RenderWindow { handles: WindowHandles::Metal { layer }, size });
-    }
 }
 
 /// Fits the drawable to the view, the controls to its safe area (clear of the Dynamic Island
@@ -296,6 +344,12 @@ fn layout(view: &SkyrtView) {
         {
             overlay.set_area(area);
             s.touch.resize(area.size.width, area.size.height);
+        }
+        if let Some(panel) = &s.panel {
+            panel.layout(bounds, area);
+        }
+        if let Some(fps) = &s.fps {
+            fps.layout(area);
         }
         if let Some(status) = &s.status {
             let margin = area.size.width * 0.1;

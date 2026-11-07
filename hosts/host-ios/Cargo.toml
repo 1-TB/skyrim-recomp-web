@@ -11,14 +11,10 @@ name = "host_ios"
 path = "src/lib.rs"
 crate-type = ["staticlib"]
 
-[features]
-default = ["metal"]
-# Render on Metal directly (Apple targets); without it the host links wgpu-native.
-metal = ["gpu-webgpu/metal"]
-
 [dependencies]
 d3d-hle.workspace = true
-gpu-webgpu.workspace = true
+# Renders on Metal on Apple targets (the feature is ignored elsewhere).
+gpu-webgpu = { workspace = true, features = ["metal"] }
 guest-sys.workspace = true
 kernel-hle.workspace = true
 libc.workspace = true

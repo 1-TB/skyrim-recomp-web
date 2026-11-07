@@ -77,6 +77,14 @@ pub fn set_resolution_scale(scale: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Trilinear texture sampling of renderers started afterwards uses at least `n`x anisotropic
+/// filtering (1 to 16; 1 keeps the title's own settings).
+pub fn set_min_anisotropy(n: u16) {
+    xenos_texture_cache::set_min_anisotropy(n);
+}
+
+pub use present::set_metalfx;
+
 /// Guest physical memory, shared with the emulated CPU.
 pub trait PhysicalMemory: Send + Sync {
     /// Copies `out.len()` bytes starting at physical address `addr`. Unmapped bytes read as 0.

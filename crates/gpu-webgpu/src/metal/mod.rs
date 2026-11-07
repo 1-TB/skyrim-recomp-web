@@ -17,6 +17,7 @@ mod resource;
 mod shader;
 mod surface;
 pub mod timing;
+mod upscale;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -34,6 +35,7 @@ pub use command::{CommandBuffer, CommandEncoder, ComputePass, RenderPass};
 pub use resource::{BindGroup, BindGroupLayout, Buffer, PipelineLayout, Sampler, Texture, TextureView};
 pub use shader::{ComputePipeline, RenderPipeline, ShaderModule};
 pub use surface::{Surface, SurfaceFrame};
+pub use upscale::SpatialScaler;
 
 use crate::pending::{Completer, Pending};
 use crate::{

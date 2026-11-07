@@ -9,8 +9,10 @@
 //!   (the app waits until it appears, so copy it last);
 //! * `content/`: saves and other title content;
 //! * `logs/`: one log per run (stderr is copied there; Xcode's console still shows it);
+//! * `settings.txt`: the choices made in the settings panel shown at launch (settings.rs);
 //! * `args.txt` (optional): extra command-line options, as for `skyrim-native`, one or more per
-//!   line; lines starting with `#` are ignored. `--dump-frames DIR --dump-every N` writes every
+//!   line; lines starting with `#` are ignored. They come after the settings' options, so they
+//!   override them. `--dump-frames DIR --dump-every N` writes every
 //!   Nth presented frame to `DIR` (in Documents) as PNG.
 
 mod app;
@@ -23,6 +25,7 @@ mod crash;
 #[path = "../../common/gpu.rs"]
 mod gpu;
 mod pads;
+mod settings;
 mod status;
 mod touch;
 
@@ -47,31 +50,38 @@ pub extern "C" fn skyrt_ios_main() {
     let _ = std::env::set_current_dir(&docs);
     tee_stderr(&docs.join("logs"));
     let extra = read_args(&docs.join("args.txt"));
-    let mut args = vec![
-        "--game-dir".to_string(),
-        docs.join("game").display().to_string(),
-        "--content".to_string(),
-        docs.join("content").display().to_string(),
-    ];
-    args.extend(extra);
-    let mut opts = match boot::parse(args.into_iter(), &["--dump-frames", "--dump-every"]) {
-        Ok(o) => o,
-        Err(msg) => {
-            // The usage text is no help on a phone; show what was wrong with args.txt.
-            let first = msg.lines().next().unwrap_or_default().to_string();
-            eprintln!("args.txt: {msg}");
-            status::set(format!("args.txt: {first}"));
-            boot::Options { log: "info".into(), ..Default::default() }
-        }
-    };
-    opts.vblank_hz.get_or_insert(boot::NATIVE_VBLANK_HZ);
-    if let Err(e) = kernel_hle::logging::init(&opts.log) {
+    // The log level is needed now; the other options are read once Play is tapped.
+    let log_level = extra.iter().position(|a| a == "--log").and_then(|i| extra.get(i + 1)).cloned();
+    if let Err(e) = kernel_hle::logging::init(log_level.as_deref().unwrap_or("info")) {
         eprintln!("{e}");
     }
     log::info!("documents: {}", docs.display());
     crash::install();
     runtime_core::thread::set_thread_start_hook(crash::install_alt_stack);
-    let result = app::run(move |window| {
+    let settings_path = docs.join("settings.txt");
+    let result = app::run(settings_path, move |window, settings| {
+        let mut args = vec![
+            "--game-dir".to_string(),
+            docs.join("game").display().to_string(),
+            "--content".to_string(),
+            docs.join("content").display().to_string(),
+        ];
+        args.extend(settings.args());
+        args.extend(extra);
+        let mut opts = match boot::parse(args.into_iter(), &["--dump-frames", "--dump-every"]) {
+            Ok(o) => o,
+            Err(msg) => {
+                // The usage text is no help on a phone; show what was wrong with args.txt.
+                let first = msg.lines().next().unwrap_or_default().to_string();
+                eprintln!("args.txt: {msg}");
+                status::set(format!("args.txt: {first}"));
+                let mut o = boot::Options { log: "info".into(), ..Default::default() };
+                o.game_dir = Some(docs.join("game"));
+                o.content = Some(docs.join("content"));
+                o
+            }
+        };
+        opts.vblank_hz.get_or_insert(boot::NATIVE_VBLANK_HZ);
         let spawned =
             std::thread::Builder::new().name("boot".into()).stack_size(16 << 20).spawn(move || start(opts, window));
         if let Err(e) = spawned {
