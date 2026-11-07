@@ -387,7 +387,7 @@ pub struct Executor {
     /// The constants bind group of each of the patcher's buffer sets.
     constants_groups: Vec<BindGroup>,
     /// Constant blocks, built on the GPU from per-draw patches.
-    floats: ConstantPatcher,
+    pub(crate) floats: ConstantPatcher,
     shared_group: BindGroup,
     /// [`SharedMemory::generation`] `shared_group` was made for.
     shared_generation: u64,

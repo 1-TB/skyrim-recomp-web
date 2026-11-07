@@ -292,10 +292,12 @@ fn run(
         for e in device.take_errors() {
             log::error!("renderer: GPU error: {e:?}");
         }
-        // Time spent executing commands (not waiting for the title to submit some).
+        // Time spent executing commands (not waiting for the title to submit some, nor for the
+        // GPU to free constant buffers).
         if handle.completed() != before || renderer.backlog_len() > 0 {
-            busy += started.elapsed();
+            busy += started.elapsed().saturating_sub(std::mem::take(&mut renderer.executor.floats.waited));
         }
+        renderer.executor.floats.waited = Duration::ZERO;
         // Waiting for the GPU (frames in flight, a resolve, uploads): block until it gets
         // somewhere rather than spinning through pump (which kept a core busy reading clocks).
         if renderer.executor.busy() {
