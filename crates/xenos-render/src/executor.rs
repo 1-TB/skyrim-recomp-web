@@ -1855,18 +1855,29 @@ impl Executor {
             let written = self.regs.float_written(stage);
             let mut mask = [0u32; 8];
             values.clear();
-            for i in 0..count {
-                let changed = if i >= have {
-                    true
-                } else if written[i / 64] >> (i % 64) & 1 != 0 {
-                    self.regs.float_vec4(base + i) != block.data[i * 16..i * 16 + 16]
-                } else {
-                    false
-                };
-                if changed {
-                    mask[i / 32] |= 1 << (i % 32);
-                    values.extend_from_slice(&self.regs.float_vec4(base + i));
+            // Only the written vec4s the block has are compared (walking the set bits: a draw
+            // writes few of the 256), then those past its end are taken as they are; `values`
+            // stays in index order.
+            let compared = have.min(count);
+            for (w, &word) in written.iter().enumerate() {
+                let first = w * 64;
+                if first >= compared {
+                    break;
                 }
+                let mut bits = if compared - first < 64 { word & ((1u64 << (compared - first)) - 1) } else { word };
+                while bits != 0 {
+                    let i = first + bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
+                    let v = self.regs.float_vec4(base + i);
+                    if v[..] != block.data[i * 16..i * 16 + 16] {
+                        mask[i / 32] |= 1 << (i % 32);
+                        values.extend_from_slice(&v);
+                    }
+                }
+            }
+            for i in compared..count {
+                mask[i / 32] |= 1 << (i % 32);
+                values.extend_from_slice(&self.regs.float_vec4(base + i));
             }
             if values.is_empty() {
                 // The block has these values (beyond `count` it keeps its own, still compared
