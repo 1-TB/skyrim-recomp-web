@@ -216,10 +216,11 @@ const PARAMS_STRIDE: u64 = 256;
 /// textures.
 #[derive(Default)]
 pub(crate) struct GpuLoader {
-    /// Plain-store and atomic variants.
-    pipelines: [Option<(BindGroupLayout, ComputePipeline)>; 2],
-    /// Variants writing straight into a texture, per format (see [`direct_format`]).
-    direct_pipelines: Vec<(TextureFormat, BindGroupLayout, ComputePipeline)>,
+    /// Per variant (plain stores, atomics, or writing straight into a texture of a format, see
+    /// [`direct_format`]): its layout and module.
+    variants: rustc_hash::FxHashMap<Variant, (BindGroupLayout, PipelineLayout, ShaderModule)>,
+    /// Pipelines per variant and specialization (see [`LOAD_SPECIALIZED`]).
+    pipelines: rustc_hash::FxHashMap<(Variant, [u32; LOAD_SPECIALIZED.len()]), ComputePipeline>,
     /// Per-level parameters, in slots.
     params: Option<Buffer>,
     /// Next free parameter slot.
@@ -267,78 +268,48 @@ fn ensure(
 }
 
 impl GpuLoader {
-    fn pipeline(&mut self, device: &Device, atomic: bool) -> &(BindGroupLayout, ComputePipeline) {
-        self.pipelines[atomic as usize].get_or_insert_with(|| {
-            let entry = |binding, ty| BindGroupLayoutEntry {
-                binding,
-                visibility: ShaderStage::Compute,
-                ty: BindingType::Buffer {
-                    ty,
-                    has_dynamic_offset: ty == BufferBindingType::Uniform,
-                    min_binding_size: 0,
+    /// The pipeline of `variant` specialized for `plan` (its levels share the specialized
+    /// parameters).
+    fn pipeline(&mut self, device: &Device, variant: Variant, plan: &Plan) -> (BindGroupLayout, ComputePipeline) {
+        let params = plan.levels.first().map_or([0; 32], |l| l.params);
+        let spec = LOAD_SPECIALIZED.map(|i| params[i]);
+        let (bgl, layout, module) = self.variants.entry(variant).or_insert_with(|| {
+            let entry = |binding, ty| BindGroupLayoutEntry { binding, visibility: ShaderStage::Compute, ty };
+            let buffer = |ty| BindingType::Buffer {
+                ty,
+                has_dynamic_offset: ty == BufferBindingType::Uniform,
+                min_binding_size: 0,
+            };
+            let output = match variant {
+                Variant::Buffer { .. } => buffer(BufferBindingType::Storage),
+                Variant::Direct(format) => BindingType::StorageTexture {
+                    access: StorageTextureAccess::WriteOnly,
+                    format,
+                    view_dimension: TextureViewDimension::D2,
                 },
             };
             let bgl = device.create_bind_group_layout(
                 "texture gpu load",
-                &[
-                    entry(0, BufferBindingType::Uniform),
-                    entry(1, BufferBindingType::ReadOnlyStorage),
-                    entry(2, BufferBindingType::Storage),
-                ],
+                &[entry(0, buffer(BufferBindingType::Uniform)), entry(1, buffer(BufferBindingType::ReadOnlyStorage)), entry(2, output)],
             );
             let layout = device.create_pipeline_layout("texture gpu load", &[&bgl]);
-            let module = device.create_shader_module_wgsl("texture gpu load", &shader_variant(SHADER, atomic));
-            let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-                label: "texture gpu load",
-                layout: Some(&layout),
-                stage: ProgrammableStage::new(&module, "main"),
-            });
-            (bgl, pipeline)
-        })
-    }
-
-    fn direct_pipeline(&mut self, device: &Device, format: TextureFormat) -> (BindGroupLayout, ComputePipeline) {
-        if let Some((_, bgl, pipeline)) = self.direct_pipelines.iter().find(|(f, ..)| *f == format) {
-            return (bgl.clone(), pipeline.clone());
-        }
-        let bgl = device.create_bind_group_layout(
-            "texture gpu load direct",
-            &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStage::Compute,
-                    ty: BindingType::Buffer { ty: BufferBindingType::Uniform, has_dynamic_offset: true, min_binding_size: 0 },
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStage::Compute,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::ReadOnlyStorage,
-                        has_dynamic_offset: false,
-                        min_binding_size: 0,
-                    },
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStage::Compute,
-                    ty: BindingType::StorageTexture {
-                        access: StorageTextureAccess::WriteOnly,
-                        format,
-                        view_dimension: TextureViewDimension::D2,
-                    },
-                },
-            ],
-        );
-        let layout = device.create_pipeline_layout("texture gpu load direct", &[&bgl]);
-        let module =
-            device.create_shader_module_wgsl("texture gpu load direct", &direct_shader_variant(SHADER, format));
-        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: "texture gpu load direct",
-            layout: Some(&layout),
-            stage: ProgrammableStage::new(&module, "main"),
+            let source = match variant {
+                Variant::Buffer { atomic } => shader_variant(SHADER, atomic),
+                Variant::Direct(format) => direct_shader_variant(SHADER, format),
+            };
+            let module = device.create_shader_module_wgsl("texture gpu load", &specialize_load(&source));
+            (bgl, layout, module)
         });
-        self.direct_pipelines.push((format, bgl.clone(), pipeline.clone()));
-        (bgl, pipeline)
+        let pipeline = self.pipelines.entry((variant, spec)).or_insert_with(|| {
+            let names: Vec<String> = LOAD_SPECIALIZED.iter().map(|i| format!("L{i}")).collect();
+            let constants: Vec<(&str, f64)> = names.iter().map(String::as_str).zip(spec.map(f64::from)).collect();
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: "texture gpu load",
+                layout: Some(layout),
+                stage: ProgrammableStage { module, entry_point: "main", constants: &constants },
+            })
+        });
+        (bgl.clone(), pipeline.clone())
     }
 
     /// Fills `texture` from the GPU copy of guest memory and submits the work: each level's raw
@@ -484,7 +455,7 @@ impl GpuLoader {
         let (out, params) = (self.out.clone().expect("ensured"), self.params.clone().expect("ensured"));
         // Host texels narrower than a dword share dwords between invocations.
         let atomic = plan.levels.first().is_some_and(|l| l.params[19] < 4);
-        let (bgl, pipeline) = self.pipeline(device, atomic).clone();
+        let (bgl, pipeline) = self.pipeline(device, Variant::Buffer { atomic }, plan);
         let mut groups = Vec::with_capacity(plan.levels.len());
         // The levels' parameters, in consecutive slots.
         let first_slot = self.param_cursor;
@@ -578,7 +549,7 @@ impl GpuLoader {
             self.groups.clear();
         }
         let params = self.params.clone().expect("ensured");
-        let (bgl, pipeline) = self.direct_pipeline(device, texture.format());
+        let (bgl, pipeline) = self.pipeline(device, Variant::Direct(texture.format()), plan);
         let first_slot = self.param_cursor;
         for (level, (_, base)) in plan.levels.iter().zip(sources) {
             let mut words = level.params;
@@ -877,6 +848,36 @@ fn write_texel(out: u32, texel: vec2<u32>, unit: u32, o: vec4<u32>) {{
     source
         .replace("DST_DECL", &format!("@group(0) @binding(2) var<storage, read_write> dst: {ty};"))
         .replace("WRITE_TEXEL", &write)
+}
+
+/// How a load writes its texels.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Variant {
+    /// Into the output buffer, with atomics where texels share dwords.
+    Buffer { atomic: bool },
+    /// Into a storage texture of this format.
+    Direct(TextureFormat),
+}
+
+/// Parameters a load pipeline is specialized on (tiled, 3D, bytes per block, endianness,
+/// conversion, output bytes per texel, component count): override constants `L<index>`, read
+/// instead of the parameter unless left at their default. They're the same for every level of
+/// a texture and few combinations occur; folded in, the compiler keeps only the paths a format
+/// takes (with all of them live it spilled registers).
+const LOAD_SPECIALIZED: [usize; 7] = [1, 2, 6, 15, 16, 19, 24];
+const LOAD_UNSPECIALIZED: u32 = 0xFFFF_FFFF;
+
+fn specialize_load(source: &str) -> String {
+    let mut body = source.to_string();
+    let mut decls = String::new();
+    for i in LOAD_SPECIALIZED {
+        body = body.replace(&format!("prm({i}u)"), &format!("prm_{i}()"));
+        decls += &format!(
+            "override L{i}: u32 = {LOAD_UNSPECIALIZED}u;\n\
+             fn prm_{i}() -> u32 {{ return select(prm({i}u), L{i}, L{i} != {LOAD_UNSPECIALIZED}u); }}\n"
+        );
+    }
+    body + &decls
 }
 
 /// Host formats loads write straight into the texture (`textureStore` into a level of a 2D
