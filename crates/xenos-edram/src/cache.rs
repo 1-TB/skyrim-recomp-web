@@ -195,7 +195,8 @@ struct Pipelines {
     /// `shaders::RESOLVE_SPECIALIZED`).
     resolve_direct: HashMap<SrcKind, (BindGroupLayout, PipelineLayout, ShaderModule)>,
     resolve_direct_pipelines: HashMap<(SrcKind, [u32; 8]), ComputePipeline>,
-    store: [Option<(BindGroupLayout, ComputePipeline)>; 2],
+    store: [Option<(BindGroupLayout, PipelineLayout, ShaderModule)>; 2],
+    store_pipelines: HashMap<(bool, [u32; 6]), ComputePipeline>,
     /// By multisampling: the stencil bit layout, pipeline layout and module.
     stencil_bit_modules: [Option<(BindGroupLayout, PipelineLayout, ShaderModule)>; 2],
     stencil_bits: HashMap<(TextureFormat, u32, u32), RenderPipeline>,
@@ -413,9 +414,10 @@ impl Pipelines {
         &self.clear.as_ref().expect("clear pipeline created first").0
     }
 
-    /// The store shader; `atomic` for 8/16-bit elements.
-    fn store(&mut self, device: &Device, atomic: bool) -> &(BindGroupLayout, ComputePipeline) {
-        self.store[atomic as usize].get_or_insert_with(|| {
+    /// The store shader; `atomic` for 8/16-bit elements, specialized on `spec` (the values of
+    /// `shaders::STORE_SPECIALIZED`).
+    fn store(&mut self, device: &Device, atomic: bool, spec: [u32; 6]) -> (BindGroupLayout, ComputePipeline) {
+        let (bgl, pl, module) = self.store[atomic as usize].get_or_insert_with(|| {
             let storage = |binding, ty| BindGroupLayoutEntry {
                 binding,
                 visibility: ShaderStage::Compute,
@@ -435,13 +437,18 @@ impl Pipelines {
             );
             let pl = device.create_pipeline_layout("edram store", &[&bgl]);
             let module = device.create_shader_module_wgsl("edram store", &shaders::store_module(atomic));
-            let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            (bgl, pl, module)
+        });
+        let pipeline = self.store_pipelines.entry((atomic, spec)).or_insert_with(|| {
+            let names: Vec<String> = shaders::STORE_SPECIALIZED.iter().map(|i| format!("P{i}")).collect();
+            let constants: Vec<(&str, f64)> = names.iter().map(String::as_str).zip(spec.map(f64::from)).collect();
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
                 label: "edram store",
-                layout: Some(&pl),
-                stage: ProgrammableStage::new(&module, "main"),
-            });
-            (bgl, pipeline)
-        })
+                layout: Some(pl),
+                stage: ProgrammableStage { module, entry_point: "main", constants: &constants },
+            })
+        });
+        (bgl.clone(), pipeline.clone())
     }
 
     /// The direct resolve pipeline for `kind` specialized on `spec` (the values of
@@ -1852,10 +1859,7 @@ impl EdramCache {
         };
         let store_target = shared.filter(|t| layout.extent_len != 0 && t.chunks.len() == STORE_DST_BUFFERS as usize);
         let store = store_target.map(|target| {
-            let params = uniform(
-                &self.params,
-                device,
-                &[
+            let params_words = [
                     layout.base & 0x1FFF_FFFF,
                     layout.pitch_aligned,
                     layout.height_aligned,
@@ -1872,14 +1876,19 @@ impl EdramCache {
                     (target.block_bytes / 4).ilog2() | ((target.chunk_bytes / 4).ilog2() << 8),
                     layout.extent_start & 0x1FFF_FFFF,
                     layout.extent_len,
-                ],
+            ];
+            let params = uniform(&self.params, device, &params_words);
+            let words: [u32; 16] = params_words;
+            let (bgl, store_pipeline) = self.pipelines.store(
+                device,
+                layout.bytes_per_element < 4,
+                shaders::STORE_SPECIALIZED.map(|i| words[i]),
             );
-            let (bgl, store_pipeline) = self.pipelines.store(device, layout.bytes_per_element < 4);
             let bind_group = cached_bind_group(
                 &self.groups,
                 device,
                 "edram store",
-                bgl,
+                &bgl,
                 &[
                     BindGroupEntry { binding: 0, resource: params.binding() },
                     BindGroupEntry { binding: 1, resource: whole(&out) },
@@ -1892,7 +1901,7 @@ impl EdramCache {
             );
             let (gx, gy) =
                 if is_1111 { (info.rect.width / 4, info.rect.height / 4) } else { (info.rect.width, info.rect.height) };
-            (store_pipeline.clone(), bind_group, params, gx.div_ceil(8), gy.div_ceil(8))
+            (store_pipeline, bind_group, params, gx.div_ceil(8), gy.div_ceil(8))
         });
         {
             // The size and kind show in GPU traces (and `gpu-time`), where resolves dominate.

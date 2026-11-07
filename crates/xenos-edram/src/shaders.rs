@@ -898,7 +898,27 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 /// log2 of the dwords per block | log2 of the dwords per `dst_N` buffer << 8, extent_start,
 /// extent_len.
 pub(crate) fn store_module(atomic: bool) -> String {
-    shader_variant(STORE, atomic)
+    specialize_prm(&shader_variant(STORE, atomic), &STORE_SPECIALIZED)
+}
+
+/// Store parameters a pipeline is specialized on (3D, bytes per element, endianness, words per
+/// pixel, 1-bit blocks, block/buffer shifts): override constants `P<index>`, as for resolves
+/// (`RESOLVE_SPECIALIZED`).
+pub(crate) const STORE_SPECIALIZED: [usize; 6] = [3, 7, 8, 11, 12, 13];
+
+/// `source` with `prm(<i>u)` of the `indices` read through override constants `P<i>` (the
+/// parameter when left at `RESOLVE_UNSPECIALIZED`).
+fn specialize_prm(source: &str, indices: &[usize]) -> String {
+    let mut body = source.to_string();
+    let mut decls = String::new();
+    for i in indices {
+        body = body.replace(&format!("prm({i}u)"), &format!("prm_{i}()"));
+        decls += &format!(
+            "override P{i}: u32 = {RESOLVE_UNSPECIALIZED}u;\n\
+             fn prm_{i}() -> u32 {{ return select(prm({i}u), P{i}, P{i} != {RESOLVE_UNSPECIALIZED}u); }}\n"
+        );
+    }
+    body + &decls
 }
 
 const STORE: &str = r#"
