@@ -1,3 +1,4 @@
+use crate::desc::*;
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::marker::PhantomData;
@@ -7,14 +8,6 @@ use std::rc::Rc;
 use crate::handle::{label, string, wbool};
 use crate::pending::{Pending, complete};
 use crate::{BufferUsage, Device, Error, MapMode, Result, ffi};
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct BufferDescriptor<'a> {
-    pub label: &'a str,
-    pub size: u64,
-    pub usage: BufferUsage,
-    pub mapped_at_creation: bool,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Map {

@@ -35,7 +35,8 @@ use std::time::{Duration, Instant};
 use rustc_hash::FxHashMap;
 
 use gpu_webgpu::{
-    AddressMode, Device, FeatureName, FilterMode, MipmapFilterMode, Sampler, SamplerBindingType, SamplerDescriptor,
+    AddressMode, BufferDescriptor, BufferUsage, Device, FeatureName, FilterMode, MapMode, MipmapFilterMode, Sampler,
+    SamplerBindingType, SamplerDescriptor, TexelCopyBufferInfo,
     TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureSampleType, TextureUsage,
     TextureView, TextureViewDescriptor, TextureViewDimension, extent, origin,
 };
@@ -114,6 +115,9 @@ pub struct CacheConfig {
     /// uploads its guest memory, and phone browsers copy every upload in the page's process: a
     /// world's first frames could otherwise upload hundreds of MiB at once.
     pub max_load_bytes_per_second: u64,
+    /// Debugging: every texture loaded from the GPU copy of guest memory is read back by
+    /// [`TextureCache::verify_loads`] and compared with the CPU conversion of guest memory.
+    pub verify_loads: bool,
 }
 
 impl Default for CacheConfig {
@@ -129,6 +133,7 @@ impl Default for CacheConfig {
             gpu_conversion: true,
             reuse_textures: true,
             max_load_bytes_per_second: u64::MAX,
+            verify_loads: false,
         }
     }
 }
@@ -563,6 +568,13 @@ pub struct TextureCache {
     scratch: Vec<u8>,
     stats: CacheStats,
     gpu_loader: gpu_load::GpuLoader,
+    /// GPU loads awaiting [`TextureCache::verify_loads`] (with `CacheConfig::verify_loads`).
+    to_verify: Vec<(Texture, TextureFetchConstant, HostCaps)>,
+    /// Mismatching textures reported so far (the log is capped).
+    verify_reports: u32,
+    /// Bound textures are queued for verification too (once per texture), see
+    /// [`TextureCache::verify_bound`].
+    verify_bound: Option<HashSet<TextureKey>>,
 }
 
 impl TextureCache {
@@ -601,6 +613,9 @@ impl TextureCache {
             load_allowance: 0.0,
             allowance_at: std::time::Instant::now(),
             gpu_loader: gpu_load::GpuLoader::default(),
+            to_verify: Vec::new(),
+            verify_reports: 0,
+            verify_bound: None,
             failed: HashSet::new(),
             cpu_load_kinds: HashSet::new(),
             retired: Vec::new(),
@@ -683,6 +698,11 @@ impl TextureCache {
         if let Some(key) = self.texture(device, memory, &fetch, dwords, gpu) {
             let entry = self.textures.get_mut(&key).expect("texture just resolved");
             texture = Some((key, entry.id));
+            if let Some(seen) = self.verify_bound.as_mut()
+                && seen.insert(key)
+            {
+                self.to_verify.push((entry.texture.clone(), fetch.clone(), self.caps));
+            }
             let main = entry.view(main_kind);
             let stacked = if wants_stacked { entry.view(ViewKind::D2Array) } else { None };
             if main.is_none() && stacked.is_none() {
@@ -769,6 +789,105 @@ impl TextureCache {
     }
 
     /// Frame boundary: textures get revalidated on their next use, old ones are evicted.
+    /// Debugging: while on, every texture bound is also queued for [`TextureCache::verify_loads`]
+    /// (once each), to catch textures whose contents went wrong after their load.
+    pub fn verify_bound(&mut self, on: bool) {
+        self.verify_bound = on.then(HashSet::new);
+    }
+
+    /// With `CacheConfig::verify_loads`: reads back the textures loaded from GPU memory since the
+    /// last call (their loads must have been submitted) and compares each level with the CPU
+    /// conversion of guest memory, logging the ones that differ. Guest memory may have changed
+    /// since the load; a texture rewritten in the frame shows up as a mismatch too.
+    pub fn verify_loads(&mut self, device: &Device, memory: &dyn GuestMemory) {
+        for (texture, fetch, caps) in std::mem::take(&mut self.to_verify) {
+            let Ok(cpu) = load_texture(&fetch, memory, &LoadOptions { caps, signed: false, row_alignment: 1 }) else {
+                continue;
+            };
+            let Some((block_bytes, block)) = gpu_webgpu::format_block_info(texture.format()) else { continue };
+            // Resolve output exists only on the GPU: guest memory holds zeros there.
+            if cpu.levels.iter().all(|l| l.data.iter().all(|b| *b == 0)) {
+                continue;
+            }
+            let missing: Vec<u32> =
+                (0..texture.mip_level_count()).filter(|m| !cpu.levels.iter().any(|l| l.level == *m)).collect();
+            if !missing.is_empty() && self.verify_reports < 400 {
+                self.verify_reports += 1;
+                log::warn!(
+                    "verify loads: {:#010X} {} {}x{}: host levels {missing:?} of {} have no guest data (CPU levels {:?})",
+                    fetch.base_address(),
+                    fetch.format.name(),
+                    fetch.width,
+                    fetch.height,
+                    texture.mip_level_count(),
+                    cpu.levels.iter().map(|l| l.level).collect::<Vec<_>>()
+                );
+            }
+            for level in cpu.levels.iter().filter(|l| l.level < texture.mip_level_count()) {
+                let blocks_wide = level.copy_width.div_ceil(block);
+                let rows = level.copy_height.div_ceil(block);
+                let row_bytes = blocks_wide * block_bytes;
+                if row_bytes > level.bytes_per_row || rows == 0 {
+                    continue;
+                }
+                let aligned = row_bytes.next_multiple_of(256);
+                let readback = device.create_buffer(&BufferDescriptor {
+                    label: "verify loads",
+                    size: u64::from(aligned * rows),
+                    usage: BufferUsage::MapRead | BufferUsage::CopyDst,
+                    mapped_at_creation: false,
+                });
+                let mut encoder = device.create_command_encoder("verify loads");
+                encoder.copy_texture_to_buffer(
+                    &TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: level.level,
+                        origin: origin(0, 0, 0),
+                        aspect: TextureAspect::All,
+                    },
+                    &TexelCopyBufferInfo { buffer: &readback, offset: 0, bytes_per_row: aligned, rows_per_image: Some(rows) },
+                    extent(level.copy_width, level.copy_height, 1),
+                );
+                device.queue().submit([encoder.finish("verify loads")]);
+                if device.block_on(readback.map_async(MapMode::Read, 0, None)).is_err() {
+                    continue;
+                }
+                let mut gpu = vec![0u8; (aligned * rows) as usize];
+                if readback.read_mapped(0, &mut gpu).is_err() {
+                    continue;
+                }
+                readback.unmap();
+                readback.destroy();
+                let (mut differ, mut gpu_zero, mut first) = (0u32, 0u32, None);
+                let total = blocks_wide * rows;
+                for r in 0..rows {
+                    let g = &gpu[(r * aligned) as usize..(r * aligned + row_bytes) as usize];
+                    let c = &level.data[(r * level.bytes_per_row) as usize..(r * level.bytes_per_row + row_bytes) as usize];
+                    for (i, (gb, cb)) in g.chunks(block_bytes as usize).zip(c.chunks(block_bytes as usize)).enumerate() {
+                        if gb != cb {
+                            differ += 1;
+                            gpu_zero += u32::from(gb.iter().all(|b| *b == 0));
+                            first.get_or_insert((i as u32, r));
+                        }
+                    }
+                }
+                if differ > 0 && self.verify_reports < 400 {
+                    self.verify_reports += 1;
+                    let (x, y) = first.unwrap_or_default();
+                    log::warn!(
+                        "verify loads: {:#010X} {} {}x{} level {} ({:?}): {differ}/{total} blocks differ ({gpu_zero} zero on the GPU), first at block ({x}, {y})",
+                        fetch.base_address(),
+                        fetch.format.name(),
+                        fetch.width,
+                        fetch.height,
+                        level.level,
+                        texture.format(),
+                    );
+                }
+            }
+        }
+    }
+
     pub fn end_frame(&mut self) {
         self.retired.extend(self.stale.drain().map(|(_, p)| p));
         let ended = self.frame;
@@ -1151,6 +1270,9 @@ impl TextureCache {
                     return None;
                 }
                 self.stats.gpu_loads += 1;
+                if self.config.verify_loads {
+                    self.to_verify.push((texture.clone(), fetch.clone(), caps));
+                }
             }
             GpuData::Memory(memory) => {
                 self.gpu_loader.encode_from_memory(device, memory, &plan, &texture);

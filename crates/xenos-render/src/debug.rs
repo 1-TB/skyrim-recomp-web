@@ -58,12 +58,29 @@ pub(crate) static D3D_SURFACES: AtomicBool = AtomicBool::new(false);
 pub(crate) static NO_A2C: AtomicBool = AtomicBool::new(false);
 /// `--gpu d3d`: multisampled D3D surfaces are drawn single-sampled (as with the handheld budgets).
 pub(crate) static SINGLE_SAMPLE: AtomicBool = AtomicBool::new(false);
-/// `no-skinned-alpha-test`: draws with skinned vertex shaders skip the alpha test (on by default
-/// in the iOS app: see `xenos_render::skip_skinned_alpha_test`).
+/// `no-skinned-alpha-test`: draws with skinned vertex shaders skip the alpha test.
 pub(crate) static NO_SKINNED_ALPHA_TEST: AtomicBool = AtomicBool::new(false);
 /// `alpha-view`: alpha-tested pixels show what the test saw instead of being discarded: red if
 /// the alpha is NaN, green the alpha (0..1), blue if the test passes.
 pub(crate) static ALPHA_VIEW: AtomicBool = AtomicBool::new(false);
+/// `hash-pages`: guest memory is compared by content hash instead of by write marks (the GPU
+/// mirror and the texture cache then notice every change, marked or not): for telling a lost
+/// write mark from a renderer bug.
+pub static HASH_PAGES: AtomicBool = AtomicBool::new(false);
+/// `alpha-no-depth`: alpha-tested draws pass the depth test (to tell what culls their pixels).
+pub(crate) static ALPHA_NO_DEPTH: AtomicBool = AtomicBool::new(false);
+/// `no-carry` (`--gpu d3d`): surfaces sharing an EDRAM base don't inherit each other's contents.
+pub(crate) static NO_CARRY: AtomicBool = AtomicBool::new(false);
+/// `verify-loads`: textures loaded from the GPU copy of guest memory are read back at frame end
+/// and compared with their CPU conversion; differences are logged (slow).
+pub(crate) static VERIFY_LOADS: AtomicBool = AtomicBool::new(false);
+/// `bias-scale=N`: every draw's depth bias (constant and slope) times N.
+pub(crate) static BIAS_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+/// `alpha-depth-bias=N`: constant depth bias added to draws with the alpha test on (0 = none), to
+/// test whether alpha-tested passes lose depth ties against earlier depth-only passes.
+pub(crate) static ALPHA_DEPTH_BIAS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// `alpha-view-kill`: [`ALPHA_VIEW`]'s colors, but failing pixels are still dropped.
+pub(crate) static ALPHA_VIEW_KILL: AtomicBool = AtomicBool::new(false);
 /// `no-alpha-test`: the alpha test is never applied (pixels it would discard are drawn).
 pub(crate) static NO_ALPHA_TEST: AtomicBool = AtomicBool::new(false);
 /// `texture-mib=N`: the texture cache's budget (0 = the default 512 MiB): textures kept within
@@ -77,6 +94,11 @@ pub(crate) static SOLID_SKINNED: AtomicBool = AtomicBool::new(false);
 /// positions their vertex shaders output, which are logged after the frame (0 = off). For telling a draw that renders
 /// nothing because its vertices are wrong from one whose pixels are lost later.
 pub(crate) static VS_CAPTURE_FRAME: AtomicU64 = AtomicU64::new(0);
+/// `ps-probe=FRAME:XxY,XxY...` (native): in frame FRAME and every 300th after, every alpha-tested
+/// draw records, at each listed host pixel it shades, its alpha, the alpha test's function and
+/// reference, the sample mask it kept the pixel with and its depth; logged after the frame. For
+/// comparing what the alpha test decides per draw on two GPUs (`vs-capture` is off meanwhile).
+pub(crate) static PS_PROBE: std::sync::Mutex<Option<(u64, Vec<(u32, u32)>)>> = std::sync::Mutex::new(None);
 
 /// Pass GPU times are measured with timestamp queries and logged with the frame reports.
 pub(crate) static GPU_TIME: AtomicBool = AtomicBool::new(false);
@@ -131,6 +153,37 @@ pub fn enable(mode: &str) -> Result<(), String> {
         log::warn!("renderer experiment: capturing vertex shader positions in frame {n}");
         return Ok(());
     }
+    if let Some(spec) = mode.strip_prefix("ps-probe=") {
+        let bad = || format!("--render-debug {mode}: expected ps-probe=FRAME:XxY[,XxY...]");
+        let (frame, points) = spec.split_once(':').ok_or_else(bad)?;
+        let frame: u64 = frame.parse().map_err(|_| bad())?;
+        let points = points
+            .split(',')
+            .map(|p| {
+                let (x, y) = p.split_once('x').ok_or_else(bad)?;
+                Ok((x.parse().map_err(|_| bad())?, y.parse().map_err(|_| bad())?))
+            })
+            .collect::<Result<Vec<(u32, u32)>, String>>()?;
+        if points.is_empty() || points.len() > 8 {
+            return Err(bad());
+        }
+        log::warn!("renderer experiment: probing pixels {points:?} from frame {frame}");
+        *PS_PROBE.lock().unwrap() = Some((frame, points));
+        // The probe needs the vertex capture's binding; both at once is not supported.
+        VS_CAPTURE_FRAME.store(0, Ordering::Relaxed);
+        return Ok(());
+    }
+    if let Some(n) = mode.strip_prefix("bias-scale=") {
+        let n: u32 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
+        BIAS_SCALE.store(n, Ordering::Relaxed);
+        return Ok(());
+    }
+    if let Some(n) = mode.strip_prefix("alpha-depth-bias=") {
+        let n: i32 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
+        ALPHA_DEPTH_BIAS.store(n, Ordering::Relaxed);
+        log::warn!("renderer experiment: depth bias {n} on alpha-tested draws");
+        return Ok(());
+    }
     if let Some(n) = mode.strip_prefix("frames=") {
         let n: usize = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
         MAX_FRAMES_IN_FLIGHT.store(n.clamp(1, 16), Ordering::Relaxed);
@@ -151,6 +204,11 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "solid-skinned" => &SOLID_SKINNED,
         "no-alpha-test" => &NO_ALPHA_TEST,
         "alpha-view" => &ALPHA_VIEW,
+        "alpha-view-kill" => &ALPHA_VIEW_KILL,
+        "hash-pages" => &HASH_PAGES,
+        "verify-loads" => &VERIFY_LOADS,
+        "no-carry" => &NO_CARRY,
+        "alpha-no-depth" => &ALPHA_NO_DEPTH,
         "no-skinned-alpha-test" => &NO_SKINNED_ALPHA_TEST,
         "d3d-surfaces" => {
             D3D_SURFACES.store(true, Ordering::Relaxed);
@@ -160,9 +218,31 @@ pub fn enable(mode: &str) -> Result<(), String> {
             GPU_TIME.store(true, Ordering::Relaxed);
             return Ok(());
         }
+        "float32-depth" => {
+            xenos_shader::set_float24_depth(false);
+            log::warn!("renderer experiment: float24 depth targets keep float32 precision (layers z-fight)");
+            return Ok(());
+        }
+        "alpha-mask" => {
+            xenos_shader::set_alpha_test_by_sample_mask(true);
+            log::info!("alpha test: failing pixels clear the sample mask instead of discarding");
+            return Ok(());
+        }
+        "alpha-discard" => {
+            xenos_shader::set_alpha_test_by_sample_mask(false);
+            log::info!("alpha test: failing pixels are discarded");
+            return Ok(());
+        }
+        "msl-dump" => {
+            // Relative like the other dumps (on iOS the working directory is Documents).
+            let dir = std::path::PathBuf::from("target/shader-dump/msl");
+            log::info!("Metal backend: writing generated MSL to {}", dir.display());
+            *gpu_webgpu::MSL_DUMP_DIR.lock().unwrap() = Some(dir);
+            return Ok(());
+        }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, single-sample, solid-skinned, no-alpha-test, no-skinned-alpha-test, alpha-view, vs-capture=N, texture-mib=N, d3d-surfaces, gpu-time, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, unshared-upload, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, single-sample, solid-skinned, no-alpha-test, no-skinned-alpha-test, alpha-view, alpha-view-kill, hash-pages, verify-loads, no-carry, alpha-no-depth, alpha-depth-bias=N, bias-scale=N, vs-capture=N, ps-probe=FRAME:XxY, texture-mib=N, d3d-surfaces, gpu-time, msl-dump, float32-depth, alpha-mask, alpha-discard, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, unshared-upload, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };
@@ -203,6 +283,9 @@ pub fn describe() -> String {
     }
     if NO_ALPHA_TEST.load(Ordering::Relaxed) {
         parts.push("no-alpha-test".to_string());
+    }
+    if ALPHA_VIEW_KILL.load(Ordering::Relaxed) {
+        parts.push("alpha-view-kill".to_string());
     }
     if ALPHA_VIEW.load(Ordering::Relaxed) {
         parts.push("alpha-view".to_string());

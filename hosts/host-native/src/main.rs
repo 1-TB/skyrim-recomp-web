@@ -22,13 +22,14 @@ fn main() {
     let args = std::env::args()
         .skip(1)
         .flat_map(|a| if a == "--no-window" || a == "--window" { vec![a, "1".into()] } else { vec![a] });
-    let opts = match boot::parse(args, &["--dump-frames", "--dump-every", "--dump-audio", "--no-window", "--window"]) {
+    let mut opts = match boot::parse(args, &["--dump-frames", "--dump-every", "--dump-audio", "--no-window", "--window"]) {
         Ok(o) => o,
         Err(msg) => {
             eprintln!("usage: skyrim-native --game-dir DIR [options]\n{msg}\n{NATIVE_USAGE}");
             std::process::exit(2);
         }
     };
+    opts.vblank_hz.get_or_insert(boot::NATIVE_VBLANK_HZ);
     if let Err(e) = kernel_hle::logging::init(&opts.log) {
         eprintln!("{e}");
         std::process::exit(2);

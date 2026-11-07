@@ -415,6 +415,13 @@ pub struct Executor {
     /// `solid-skinned`: the magenta pipelines.
     #[cfg(not(target_os = "emscripten"))]
     solid_pipelines: FxHashMap<PipelineKey, RenderPipeline>,
+    /// The fragment function of depth-only draws when depth is rounded to float24.
+    depth_only: Option<ShaderModule>,
+    /// Trace: guest textures already written as PNGs (by base address).
+    trace_textures: std::collections::HashSet<u32>,
+    /// `ps-probe` variants by pipeline (they don't depend on the frame).
+    #[cfg(not(target_os = "emscripten"))]
+    probe_pipelines: FxHashMap<PipelineKey, Option<RenderPipeline>>,
     /// Color targets of traced passes to write out after the next submit (name, size).
     trace_dumps: Vec<(TextureView, u32, u32, String)>,
     textures: TextureCache,
@@ -671,6 +678,10 @@ impl Executor {
             skinned: FxHashMap::default(),
             #[cfg(not(target_os = "emscripten"))]
             solid_pipelines: FxHashMap::default(),
+            depth_only: None,
+            trace_textures: Default::default(),
+            #[cfg(not(target_os = "emscripten"))]
+            probe_pipelines: FxHashMap::default(),
             pipelines: FxHashMap::default(),
             texture_groups: FxHashMap::default(),
             frames_in_flight: Default::default(),
@@ -689,6 +700,7 @@ impl Executor {
                 let config = xenos_texture_cache::CacheConfig {
                     reuse_textures: !crate::debug::NO_TEXTURE_POOL.load(std::sync::atomic::Ordering::Relaxed),
                     gpu_conversion: !crate::debug::CPU_TEXTURES.load(std::sync::atomic::Ordering::Relaxed),
+                    verify_loads: crate::debug::VERIFY_LOADS.load(std::sync::atomic::Ordering::Relaxed),
                     ..Default::default()
                 };
                 // Phones: a hard texture budget (least recently used ones go first) and short
@@ -886,6 +898,12 @@ impl Executor {
     /// Frame boundary: submits everything and ages caches.
     pub fn end_frame(&mut self) {
         self.flush();
+        if crate::debug::VERIFY_LOADS.load(std::sync::atomic::Ordering::Relaxed) {
+            let memory = TextureMemory(self.memory.clone());
+            self.textures.verify_loads(&self.device, &memory);
+            // Traced frames also check every texture they bind.
+            self.textures.verify_bound(crate::debug::tracing(self.frame + 1));
+        }
         #[cfg(not(target_os = "emscripten"))]
         self.report_capture();
         // Sets with fallbacks are made again (their textures may load now); the others are
@@ -1094,13 +1112,97 @@ impl Executor {
             rp.draw_indexed(d.count, 1, (offset / index_size) as u32, 0, 0);
         }
         rp.end();
-        if crate::debug::tracing(self.frame) && pass.targets.sample_count == 1 {
+        if crate::debug::tracing(self.frame) {
             for (slot, color) in pass.targets.colors.iter().enumerate() {
                 let Some((view, format)) = color else { continue };
                 let name = format!("f{}-d{}-rt{slot}-{format:?}", self.frame, self.stats.draws);
-                self.trace_dumps.push((view.clone(), pass.targets.width, pass.targets.height, name));
+                let (width, height) = (pass.targets.width, pass.targets.height);
+                if pass.targets.sample_count == 1 {
+                    self.trace_dumps.push((view.clone(), width, height, name));
+                    continue;
+                }
+                // Multisampled: resolved into a single-sample copy by a pass that only loads.
+                let copy = self.device.create_texture(&TextureDescriptor {
+                    label: "trace resolve",
+                    size: extent(width, height, 1),
+                    format: *format,
+                    usage: TextureUsage::RenderAttachment | TextureUsage::CopySrc,
+                    ..Default::default()
+                });
+                let resolved = copy.create_view(None);
+                let attachment = RenderPassColorAttachment {
+                    resolve_target: Some(&resolved),
+                    ..RenderPassColorAttachment::load(view)
+                };
+                self.encoder().begin_render_pass("trace resolve", &[Some(attachment)], None).end();
+                self.trace_dumps.push((resolved, width, height, format!("{name}-msaa")));
+            }
+            if let Some((view, _)) = &pass.targets.depth {
+                let name = format!("f{}-d{}-depth", self.frame, self.stats.draws);
+                let (width, height, samples) = (pass.targets.width, pass.targets.height, pass.targets.sample_count);
+                if let Some(gray) = self.depth_as_gray(view, width, height, samples) {
+                    self.trace_dumps.push((gray, width, height, name));
+                }
             }
         }
+    }
+
+    /// Trace: draws a depth attachment (sample 0) into an RGBA8 texture, brighter = larger
+    /// depth (the fourth root spreads Skyrim's small reversed-depth values); stencil in blue.
+    fn depth_as_gray(&mut self, view: &TextureView, width: u32, height: u32, samples: u32) -> Option<TextureView> {
+        let texture_type = if samples > 1 { "texture_depth_multisampled_2d" } else { "texture_depth_2d" };
+        let wgsl = format!(
+            "@group(0) @binding(0) var xe_depth: {texture_type};\n\
+             @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
+             \x20   let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));\n\
+             \x20   return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);\n\
+             }}\n\
+             @fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {{\n\
+             \x20   let z = textureLoad(xe_depth, vec2<i32>(p.xy), 0);\n\
+             \x20   let v = sqrt(sqrt(clamp(z, 0.0, 1.0)));\n\
+             \x20   return vec4<f32>(v, v, v, 1.0);\n\
+             }}\n"
+        );
+        let module = self.device.create_shader_module_wgsl("trace depth", &wgsl);
+        let pipeline = self.device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "trace depth",
+            layout: None,
+            vertex: ProgrammableStage::new(&module, "vs"),
+            vertex_buffers: &[],
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                stage: ProgrammableStage::new(&module, "fs"),
+                targets: &[ColorTargetState::new(TextureFormat::RGBA8Unorm)],
+            }),
+        });
+        let group = self.device.create_bind_group(
+            "trace depth",
+            &pipeline.get_bind_group_layout(0),
+            &[BindGroupEntry { binding: 0, resource: BindingResource::TextureView(view) }],
+        );
+        let gray = self
+            .device
+            .create_texture(&TextureDescriptor {
+                label: "trace depth",
+                size: extent(width, height, 1),
+                format: TextureFormat::RGBA8Unorm,
+                usage: TextureUsage::RenderAttachment | TextureUsage::CopySrc,
+                ..Default::default()
+            })
+            .create_view(None);
+        let encoder = self.encoder();
+        let mut rp = encoder.begin_render_pass(
+            "trace depth",
+            &[Some(RenderPassColorAttachment::clear(&gray, Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }))],
+            None,
+        );
+        rp.set_pipeline(&pipeline);
+        rp.set_bind_group(0, &group, &[]);
+        rp.draw(3, 1, 0, 0);
+        rp.end();
+        Some(gray)
     }
 
     fn warn_once(&mut self, message: String) {
@@ -1281,6 +1383,7 @@ impl Executor {
             ps_param_gen: false,
             texture_binding_base: 0,
             vs_expansion: expansion,
+            ps_depth_target: false,
         };
         let vs = self.shader(Stage::Vertex, &vs_options)?;
         let ps = if program.pixel_shader_enabled {
@@ -1291,6 +1394,11 @@ impl Executor {
                 ps_param_gen: program.param_gen_interpolator.is_some(),
                 texture_binding_base: PIXEL_TEXTURE_BINDING_BASE,
                 vs_expansion: VertexExpansion::None,
+                // Same condition as the render target setup's depth binding.
+                ps_depth_target: {
+                    let dc = normalized_depth_control(&self.regs, false);
+                    dc.z_enable || dc.stencil_enable
+                },
             };
             Some(self.shader(Stage::Pixel, &ps_options)?)
         } else {
@@ -1539,6 +1647,14 @@ impl Executor {
             system.alpha_test_reference = test.reference;
         } else {
             system.alpha_test_function = compare_function::ALWAYS;
+        }
+        // Float24 depth targets get depth rounded like the console stores it (with
+        // `--render-debug float24-depth`, see `xenos_shader::set_float24_depth`).
+        if xenos_shader::bindings::float24_rounding()
+            && depth_stencil.enabled
+            && depth_stencil.depth_format == xenos_state::xenos::DepthRenderTargetFormat::D24FS8
+        {
+            f |= flags::DEPTH_FLOAT24;
         }
         system.flags = f;
         system.vertex_base_index = desc.index_params.offset as i32;
@@ -1805,7 +1921,72 @@ impl Executor {
             for b in &shader.translation.texture_bindings {
                 let first = b.fetch_constant as usize * 6;
                 let words: Vec<String> = fetch[first..first + 6].iter().map(|w| format!("{w:08x}")).collect();
-                textures.push(format!("tf{} {}", b.fetch_constant, words.join(" ")));
+                // All-zero 16-byte blocks in the base level's bytes (about w*h of them for the
+                // 1-byte-per-texel block formats): a texture with lost data shows many.
+                let (d1, d2) = (fetch[first + 1], fetch[first + 2]);
+                let (w, h) = ((d2 & 0x1FFF) + 1, ((d2 >> 13) & 0x1FFF) + 1);
+                let len = (w * h).clamp(16, 4 << 20) & !15;
+                let mut bytes = vec![0u8; len as usize];
+                self.memory.read(d1 & 0x1FFF_F000, &mut bytes);
+                let zero = bytes.chunks_exact(16).filter(|c| c.iter().all(|b| *b == 0)).count();
+                textures.push(format!(
+                    "tf{} {} zero16 {zero}/{}",
+                    b.fetch_constant,
+                    words.join(" "),
+                    len / 16
+                ));
+            }
+        }
+        // Alpha-tested draws: their pixel textures decoded on the CPU from guest memory (DXT
+        // decompressed), written as color and alpha PNGs, to see the data the alpha test reads.
+        #[cfg(not(target_os = "emscripten"))]
+        if system.flags & flags::ALPHA_TEST != 0
+            && let Some(ps) = ps
+        {
+            for b in &ps.translation.texture_bindings {
+                let first = b.fetch_constant as usize * 6;
+                let dwords: [u32; 6] = fetch[first..first + 6].try_into().unwrap();
+                let base = dwords[1] & 0x1FFF_F000;
+                if self.trace_textures.len() >= 40 || !self.trace_textures.insert(base) {
+                    continue;
+                }
+                let fetch = xenos_texture::TextureFetchConstant::decode(dwords);
+                let caps = xenos_texture::HostCaps { texture_compression_bc: false, norm16: false };
+                let options = xenos_texture::LoadOptions { caps, signed: false, row_alignment: 1 };
+                let memory = TextureMemory(self.memory.clone());
+                let Ok(loaded) = xenos_texture::load_texture(&fetch, &memory, &options) else { continue };
+                let Some(level) = loaded.levels.iter().find(|l| l.level == 0) else { continue };
+                if level.bytes_per_row != level.copy_width * 4 {
+                    continue;
+                }
+                let (w, h) = (level.width, level.height);
+                let rgb: Vec<u8> = (0..h)
+                    .flat_map(|y| (0..w).map(move |x| (y, x)))
+                    .flat_map(|(y, x)| {
+                        let o = (y * level.bytes_per_row + x * 4) as usize;
+                        [level.data[o], level.data[o + 1], level.data[o + 2], 255]
+                    })
+                    .collect();
+                let alpha: Vec<u8> = (0..h)
+                    .flat_map(|y| (0..w).map(move |x| (y, x)))
+                    .flat_map(|(y, x)| {
+                        let a = level.data[(y * level.bytes_per_row + x * 4 + 3) as usize];
+                        [a, a, a, 255]
+                    })
+                    .collect();
+                for (suffix, data) in [("color", rgb), ("alpha", alpha)] {
+                    let path = std::path::Path::new("target/shader-dump")
+                        .join(format!("tex-{base:08x}-{}-{w}x{h}-{suffix}.png", fetch.format.name()));
+                    let _ = std::fs::create_dir_all("target/shader-dump");
+                    if let Ok(file) = std::fs::File::create(&path) {
+                        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+                        encoder.set_color(png::ColorType::Rgba);
+                        encoder.set_depth(png::BitDepth::Eight);
+                        if let Ok(mut writer) = encoder.write_header() {
+                            let _ = writer.write_image_data(&data);
+                        }
+                    }
+                }
             }
         }
         // Blend state, the first pixel shader constants, and each vertex stream's fetch constant
@@ -1843,6 +2024,21 @@ impl Executor {
             ps_consts.join(" "),
             streams.join(", ")
         );
+        {
+            use xenos_state::registers as reg;
+            log::info!(
+                "trace frame {} draw {}: window scissor {:08x} {:08x} offset {:08x} screen scissor {:08x} {:08x} surface info {:08x} -> scissor {:?}",
+                self.frame,
+                self.stats.draws,
+                regs.reg(reg::PA_SC_WINDOW_SCISSOR_TL),
+                regs.reg(reg::PA_SC_WINDOW_SCISSOR_BR),
+                regs.reg(reg::PA_SC_WINDOW_OFFSET),
+                regs.reg(reg::PA_SC_SCREEN_SCISSOR_TL),
+                regs.reg(reg::PA_SC_SCREEN_SCISSOR_BR),
+                regs.reg(reg::RB_SURFACE_INFO),
+                xenos_state::viewport::scissor(regs, true, false),
+            );
+        }
         log::info!(
             "trace frame {} draw {}: vs {:016x} ps {:?} targets [{}] flags {:#x} textures [{}]",
             self.frame,
@@ -2069,10 +2265,20 @@ impl Executor {
             } else {
                 (0, 0.0)
             };
+            let factor = crate::debug::BIAS_SCALE.load(std::sync::atomic::Ordering::Relaxed);
+            let (bias, slope) = if factor != 1 { (bias.saturating_mul(factor as i32), slope * factor as f32) } else { (bias, slope) };
+            let extra = crate::debug::ALPHA_DEPTH_BIAS.load(std::sync::atomic::Ordering::Relaxed);
+            let bias = if extra != 0 && output.alpha_test.is_some() { bias.saturating_add(extra) } else { bias };
             DepthKey {
                 format: *format,
                 write: depth_stencil.depth_write_enabled,
-                compare: compare(depth_stencil.depth_compare),
+                compare: if crate::debug::ALPHA_NO_DEPTH.load(std::sync::atomic::Ordering::Relaxed)
+                    && output.alpha_test.is_some()
+                {
+                    CompareFunction::Always
+                } else {
+                    compare(depth_stencil.depth_compare)
+                },
                 stencil: [face(depth_stencil.stencil_front), face(depth_stencil.stencil_back)],
                 read_mask: if stencil { u32::from(depth_stencil.stencil_read_mask) } else { 0xFF },
                 write_mask: if stencil { u32::from(depth_stencil.stencil_write_mask) } else { 0 },
@@ -2125,7 +2331,23 @@ impl Executor {
         self.stats.pipelines += 1;
         let vertex = ProgrammableStage::new(&vs.module, vs.translation.entry_point);
         let started = crate::renderer::Stopwatch::start();
-        let pixel = ps.map(|p| (&p.module, p.translation.entry_point));
+        // Depth-only draws round their depth to float24 too (see `float24_rounding`).
+        if ps.is_none() && key.depth.is_some() && xenos_shader::bindings::float24_rounding() && self.depth_only.is_none() {
+            let wgsl = format!(
+                "{}@group({}) @binding({}) var<uniform> xe_system: XeSystemConstants;\n{}\n\
+                 @fragment @early_depth_test(less_equal) fn xe_depth_only(@builtin(position) p: vec4<f32>) -> @builtin(frag_depth) f32 {{\n\
+                 \x20   if ((xe_system.flags & {}u) != 0u) {{ return xe_float24_depth(p.z); }}\n\
+                 \x20   return p.z;\n}}\n",
+                xenos_shader::bindings::SYSTEM_CONSTANTS_WGSL,
+                xenos_shader::bindings::SYSTEM_CONSTANTS_GROUP,
+                xenos_shader::bindings::SYSTEM_CONSTANTS_BINDING,
+                xenos_shader::FLOAT24_DEPTH_WGSL,
+                flags::DEPTH_FLOAT24,
+            );
+            self.depth_only = Some(self.device.create_shader_module_wgsl("depth only", &wgsl));
+        }
+        let depth_only = self.depth_only.clone().filter(|_| ps.is_none() && key.depth.is_some());
+        let pixel = ps.map(|p| (&p.module, p.translation.entry_point)).or(depth_only.as_ref().map(|m| (m, "xe_depth_only")));
         #[cfg(not(target_os = "emscripten"))]
         let result = pipeline_descriptor(&key, vertex, pixel, layout, |desc| create_checked(&self.device, desc));
         // On the web: compiled in the background (a synchronous pipeline would be compiled on
@@ -2332,8 +2554,22 @@ fn is_skinned(wgsl: &str) -> bool {
 #[cfg(not(target_os = "emscripten"))]
 fn capturing(frame: u64) -> bool {
     let first = crate::debug::VS_CAPTURE_FRAME.load(std::sync::atomic::Ordering::Relaxed);
-    first != 0 && frame >= first && (frame - first).is_multiple_of(VS_CAPTURE_EVERY)
+    (first != 0 && frame >= first && (frame - first).is_multiple_of(VS_CAPTURE_EVERY)) || probing(frame).is_some()
 }
+
+/// `ps-probe` frames: the chosen one and every [`PS_PROBE_EVERY`]th after; the pixels to probe.
+#[cfg(not(target_os = "emscripten"))]
+fn probing(frame: u64) -> Option<Vec<(u32, u32)>> {
+    let probe = crate::debug::PS_PROBE.lock().unwrap();
+    let (first, points) = probe.as_ref()?;
+    (frame >= *first && (frame - first).is_multiple_of(PS_PROBE_EVERY)).then(|| points.clone())
+}
+
+#[cfg(not(target_os = "emscripten"))]
+const PS_PROBE_EVERY: u64 = 300;
+/// Probe records kept per frame (4 vec4<u32> each, after a 16-byte counter).
+#[cfg(not(target_os = "emscripten"))]
+const PS_PROBE_RECORDS: u32 = 4096;
 
 #[cfg(not(target_os = "emscripten"))]
 struct VsCapture {
@@ -2342,6 +2578,8 @@ struct VsCapture {
     buffer: Buffer,
     /// Per slot: draw number, vertex and pixel shader ids.
     draws: Vec<(u64, u64, u64)>,
+    /// A `ps-probe` capture (pixel records) rather than vertex positions.
+    probe: bool,
 }
 
 #[cfg(not(target_os = "emscripten"))]
@@ -2358,6 +2596,9 @@ impl Executor {
     ) -> Option<RenderPipeline> {
         if !capturing(self.frame) {
             return None;
+        }
+        if let Some(points) = probing(self.frame) {
+            return self.probe_pipeline(key, vs, ps?, layout_id, &points);
         }
         if !self.device.has_feature(VERTEX_WRITABLE_STORAGE) {
             static ONCE: std::sync::Once = std::sync::Once::new();
@@ -2392,7 +2633,7 @@ impl Executor {
                 &layout,
                 &[BindGroupEntry { binding: 0, resource: BindingResource::Buffer { buffer: &buffer, offset: 0, size: None } }],
             );
-            VsCapture { layout, group, buffer, draws: Vec::new() }
+            VsCapture { layout, group, buffer, draws: Vec::new(), probe: false }
         });
         let slot = capture.draws.len() as u32;
         // Declared before the first binding: directives (`enable`, ...) must come first.
@@ -2430,6 +2671,94 @@ impl Executor {
                 None
             }
         }
+    }
+
+    /// `ps-probe`: for alpha-tested pixel shaders, a variant that also appends a record for every
+    /// probed pixel it shades: draw slot, probe index, alpha, reference, function, flags, the
+    /// sample mask that keeps or kills the pixel (all ones with `discard`), depth and color 0.
+    fn probe_pipeline(
+        &mut self,
+        key: &PipelineKey,
+        vs: &CachedShader,
+        ps: &CachedShader,
+        layout_id: u32,
+        points: &[(u32, u32)],
+    ) -> Option<RenderPipeline> {
+        let capture = self.capture.get_or_insert_with(|| {
+            let layout = self.device.create_bind_group_layout(
+                "ps probe",
+                &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStage::Fragment,
+                    ty: BindingType::Buffer { ty: BufferBindingType::Storage, has_dynamic_offset: false, min_binding_size: 0 },
+                }],
+            );
+            let buffer = self.device.create_buffer(&BufferDescriptor {
+                label: "ps probe",
+                size: 16 + u64::from(PS_PROBE_RECORDS) * 64,
+                usage: BufferUsage::Storage | BufferUsage::CopySrc,
+                mapped_at_creation: false,
+            });
+            let group = self.device.create_bind_group(
+                "ps probe",
+                &layout,
+                &[BindGroupEntry { binding: 0, resource: BindingResource::Buffer { buffer: &buffer, offset: 0, size: None } }],
+            );
+            VsCapture { layout, group, buffer, draws: Vec::new(), probe: true }
+        });
+        capture.draws.push((self.stats.draws + self.stats.skipped_draws, vs.id, ps.id));
+        if let Some(p) = self.probe_pipelines.get(key) {
+            return p.clone();
+        }
+        const RETURN: &str = "    return out;\n}\n";
+        let wgsl = ps.wgsl();
+        let at = wgsl.rfind(RETURN).filter(|_| wgsl.contains("    let xe_alpha = "));
+        let Some(at) = at else {
+            self.probe_pipelines.insert(key.clone(), None);
+            return None;
+        };
+        let mask = if wgsl.contains("xe_alpha_mask") { "out.xe_alpha_mask" } else { "0xFFFFFFFFu" };
+        let mut probe = String::new();
+        for (i, (x, y)) in points.iter().enumerate() {
+            probe.push_str(&format!(
+                "    if (u32(input.frag_coord.x) == {x}u && u32(input.frag_coord.y) == {y}u) {{\n\
+                 \x20       let xe_n = atomicAdd(&xe_probe.count, 1u);\n\
+                 \x20       if (xe_n < {PS_PROBE_RECORDS}u) {{\n\
+                 \x20           xe_probe.records[xe_n * 4u] = vec4<u32>({}u, {}u, {i}u, bitcast<u32>(xe_alpha));\n\
+                 \x20           xe_probe.records[xe_n * 4u + 1u] = vec4<u32>(bitcast<u32>(xe_system.alpha_test_reference), xe_system.alpha_test_function, xe_system.flags, {mask});\n\
+                 \x20           xe_probe.records[xe_n * 4u + 2u] = vec4<u32>(bitcast<u32>(input.frag_coord.z), bitcast<vec3<u32>>(out.color0.xyz));\n\
+                 \x20           xe_probe.records[xe_n * 4u + 3u] = {i0};\n\
+                 \x20       }}\n\
+                 \x20   }}\n",
+                vs.id as u32,
+                ps.id as u32,
+                i0 = if wgsl.contains("@location(0) i0:") { "bitcast<vec4<u32>>(input.i0)" } else { "vec4<u32>(0u)" },
+            ));
+        }
+        let wgsl = format!("{}{probe}{}", &wgsl[..at], &wgsl[at..]);
+        let declaration = format!(
+            "struct XeProbe {{ count: atomic<u32>, pad0: u32, pad1: u32, pad2: u32, records: array<vec4<u32>> }}\n\
+             @group({VS_CAPTURE_GROUP}) @binding(0) var<storage, read_write> xe_probe: XeProbe;\n"
+        );
+        let wgsl = wgsl.replacen("@group(", &format!("{declaration}@group("), 1);
+        let module = self.device.create_shader_module_wgsl("ps probe", &wgsl);
+        let textures = self.texture_layouts.values().find(|(_, _, id)| *id == layout_id).map(|(l, ..)| l.clone())?;
+        let layout = self.device.create_pipeline_layout(
+            "ps probe",
+            &[&self.constants_layout, &self.shared_layout, &textures, &capture.layout],
+        );
+        let vertex = ProgrammableStage::new(&vs.module, vs.translation.entry_point);
+        let pipeline = match pipeline_descriptor(key, vertex, Some((&module, ps.translation.entry_point)), &layout, |desc| {
+            create_checked(&self.device, desc)
+        }) {
+            Ok(pipeline) => Some(pipeline),
+            Err(e) => {
+                log::warn!("ps probe: pipeline for draw with ps {:016x}: {e}", ps.id);
+                None
+            }
+        };
+        self.probe_pipelines.insert(key.clone(), pipeline.clone());
+        pipeline
     }
 
     /// `solid-skinned`: the draw's pipeline with a pixel shader writing magenta to every color
@@ -2487,7 +2816,11 @@ impl Executor {
         }
         let frame = self.frame;
         let Some(capture) = self.capture.take() else { return };
-        let size = u64::from(VS_CAPTURE_DRAWS * VS_CAPTURE_VERTICES * 16);
+        let size = if capture.probe {
+            16 + u64::from(PS_PROBE_RECORDS) * 64
+        } else {
+            u64::from(VS_CAPTURE_DRAWS * VS_CAPTURE_VERTICES * 16)
+        };
         let readback = self.device.create_buffer(&BufferDescriptor {
             label: "vs capture readback",
             size,
@@ -2507,6 +2840,36 @@ impl Executor {
             return;
         }
         readback.unmap();
+        if capture.probe {
+            let words: Vec<u32> = bytes.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+            let count = words[0].min(PS_PROBE_RECORDS) as usize;
+            log::info!("ps probe frame {frame}: {} records ({} probed draws)", words[0], capture.draws.len());
+            let f = f32::from_bits;
+            for r in 0..count {
+                let w = &words[4 + r * 16..4 + r * 16 + 16];
+                log::info!(
+                    "ps probe frame {frame} point {} vs {:x} ps {:x}: alpha {} ref {} func {} test {} mask {:08x} z {} \
+                     color ({}, {}, {}) i0 ({}, {}, {}, {})",
+                    w[2],
+                    w[0],
+                    w[1],
+                    f(w[3]),
+                    f(w[4]),
+                    w[5],
+                    if w[6] & flags::ALPHA_TEST != 0 { "on" } else { "off" },
+                    w[7],
+                    f(w[8]),
+                    f(w[9]),
+                    f(w[10]),
+                    f(w[11]),
+                    f(w[12]),
+                    f(w[13]),
+                    f(w[14]),
+                    f(w[15]),
+                );
+            }
+            return;
+        }
         let floats: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
         for (slot, (draw, vs, ps)) in capture.draws.iter().enumerate() {
             let base = slot * VS_CAPTURE_VERTICES as usize * 4;

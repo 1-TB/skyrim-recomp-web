@@ -208,6 +208,8 @@ pub trait GpuBackend: Send + Sync {
     }
 }
 
+/// `--gpu-sync-draws`: the command processor waits for the renderer after every draw.
+pub static SYNC_DRAWS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Whether the command processor waits for the renderer at each [`Deferred`] effect: one of
 /// the `SYNC_*` values (`--gpu-sync` / `--no-gpu-sync`; see [`set_sync_default`]).
 pub static SYNC_EFFECTS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(SYNC_DEFAULT_OFF);
@@ -842,6 +844,14 @@ impl CommandProcessor<'_> {
         self.flush_registers();
         if let Some(b) = &self.backend {
             b.draw();
+        }
+        // `--gpu-sync-draws`: the renderer executes each draw before the guest continues, so a
+        // buffer the title rewrites right after the draw is read as it was (a test of whether
+        // the renderer lagging the guest is what goes wrong).
+        if SYNC_DRAWS.load(Ordering::Relaxed)
+            && let Some(b) = &self.backend
+        {
+            b.wait_idle();
         }
     }
 

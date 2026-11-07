@@ -580,6 +580,9 @@ impl D3dRenderer {
             }
             return;
         }
+        if crate::debug::NO_CARRY.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         self.aliasing.carried += 1;
         self.do_clears(encoder);
         let s = &self.surfaces[&key];

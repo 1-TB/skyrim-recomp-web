@@ -27,7 +27,7 @@ mod wgsl;
 pub use analysis::{ShaderInfo, TextureFetchUse, VertexAttribute, VertexBinding};
 pub use bindings::{BoolLoopConstants, SystemConstants};
 pub use program::{Program, UcodeError};
-pub use wgsl::{TextureBinding, TextureBindingDimension};
+pub use wgsl::{FLOAT24_DEPTH_WGSL, TextureBinding, TextureBindingDimension, set_alpha_test_by_sample_mask, set_float24_depth};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ShaderStage {
@@ -55,6 +55,9 @@ pub struct TranslationOptions {
     pub texture_binding_base: u32,
     /// Vertex shaders: primitive expansion performed in place of a geometry shader.
     pub vs_expansion: VertexExpansion,
+    /// Pixel shaders: the draw has a depth target, so depth may be written (float24 rounding,
+    /// see [`set_float24_depth`]); without one the shader must not output depth.
+    pub ps_depth_target: bool,
 }
 
 /// Vertex shader primitive expansion (WebGPU has no geometry shaders). In both expanded modes the
@@ -84,6 +87,7 @@ impl Default for TranslationOptions {
             ps_param_gen: true,
             texture_binding_base: 0,
             vs_expansion: VertexExpansion::None,
+            ps_depth_target: false,
         }
     }
 }

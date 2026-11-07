@@ -1,3 +1,4 @@
+use crate::desc::*;
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::marker::PhantomData;
@@ -7,18 +8,10 @@ use crate::command::Queue;
 use crate::handle::{label, string};
 use crate::instance::slice_or_empty;
 use crate::pending::{Pending, complete};
-use crate::{Adapter, Buffer, Error, ErrorFilter, FeatureName, GpuError, Limits, Result, Sampler, TextureView, ffi};
+use crate::{Adapter, Error, ErrorFilter, FeatureName, GpuError, Limits, Result, ffi};
 
 /// Uncaptured errors kept for [`Device::take_errors`]; older ones are only logged.
 const MAX_KEPT_ERRORS: usize = 64;
-
-#[derive(Clone, Debug, Default)]
-pub struct DeviceDescriptor<'a> {
-    pub label: &'a str,
-    pub required_features: &'a [FeatureName],
-    /// `None` takes the WebGPU defaults; use [`Adapter::limits`] to ask for everything.
-    pub required_limits: Option<Limits>,
-}
 
 /// State reachable from the device's callbacks. It is leaked (one small allocation per device)
 /// because wgpu-native may report errors for objects outliving the last `Device` handle and
@@ -150,25 +143,6 @@ pub(crate) fn request(adapter: &Adapter, desc: &DeviceDescriptor<'_>) -> Pending
     };
     unsafe { ffi::wgpuAdapterRequestDevice(adapter.raw(), &raw_desc, info) };
     pending
-}
-
-/// What a bind group entry points at.
-#[derive(Clone, Copy, Debug)]
-pub enum BindingResource<'a> {
-    /// `size: None` binds the rest of the buffer.
-    Buffer {
-        buffer: &'a Buffer,
-        offset: u64,
-        size: Option<u64>,
-    },
-    Sampler(&'a Sampler),
-    TextureView(&'a TextureView),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct BindGroupEntry<'a> {
-    pub binding: u32,
-    pub resource: BindingResource<'a>,
 }
 
 impl BindGroupEntry<'_> {

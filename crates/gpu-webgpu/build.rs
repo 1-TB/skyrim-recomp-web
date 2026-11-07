@@ -12,6 +12,13 @@ use std::path::PathBuf;
 fn main() {
     println!("cargo:rerun-if-env-changed=WGPU_NATIVE_DIR");
     println!("cargo:rerun-if-changed=build.rs");
+    // The Metal backend (feature `metal` on Apple targets; elsewhere the feature does nothing)
+    // links only system frameworks.
+    println!("cargo::rustc-check-cfg=cfg(metal_backend)");
+    if env::var_os("CARGO_FEATURE_METAL").is_some() && env::var("CARGO_CFG_TARGET_VENDOR").as_deref() == Ok("apple") {
+        println!("cargo:rustc-cfg=metal_backend");
+        return;
+    }
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("emscripten") {
         web_example_link_args();
         return;

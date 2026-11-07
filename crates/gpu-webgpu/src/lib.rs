@@ -41,40 +41,66 @@ macro_rules! flag_ops {
 
 #[rustfmt::skip]
 pub mod ffi;
-mod buffer;
-mod command;
 pub mod counters;
-mod device;
+mod desc;
 mod error;
-mod ext;
-mod handle;
-mod instance;
 pub mod memory;
 mod pending;
-mod resource;
 pub mod staging;
-mod surface;
-pub mod timing;
 #[cfg(target_os = "emscripten")]
 pub mod web;
 
-pub use buffer::{Buffer, BufferDescriptor};
-pub use command::{
-    CommandBuffer, CommandEncoder, ComputePass, Queue, RenderPass, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, TexelCopyBufferInfo, TexelCopyTextureInfo, UNSHARED_UPLOADS,
-};
-pub use device::{BindGroupEntry, BindingResource, Device, DeviceDescriptor};
-pub use error::{Error, GpuError, Result};
-pub use instance::{Adapter, AdapterInfo, Instance, RequestAdapterOptions};
-pub use pending::Pending;
+// The webgpu.h backend (wgpu-native natively, emdawnwebgpu on the web).
+#[cfg(not(metal_backend))]
+mod buffer;
+#[cfg(not(metal_backend))]
+mod command;
+#[cfg(not(metal_backend))]
+mod device;
+#[cfg(not(metal_backend))]
+mod ext;
+#[cfg(not(metal_backend))]
+mod handle;
+#[cfg(not(metal_backend))]
+mod instance;
+#[cfg(not(metal_backend))]
+mod resource;
+#[cfg(not(metal_backend))]
+mod surface;
+#[cfg(not(metal_backend))]
+pub mod timing;
+
+#[cfg(not(metal_backend))]
+pub use buffer::Buffer;
+#[cfg(not(metal_backend))]
+pub use command::{CommandBuffer, CommandEncoder, ComputePass, Queue, RenderPass, UNSHARED_UPLOADS};
+#[cfg(not(metal_backend))]
+pub use device::Device;
+#[cfg(not(metal_backend))]
+pub use instance::{Adapter, Instance};
+#[cfg(not(metal_backend))]
 pub use resource::{
-    BindGroup, BindGroupLayout, BindGroupLayoutEntry, BindingType, BlendComponent, BlendState, ColorTargetState,
-    ComputePipeline, ComputePipelineDescriptor, DepthStencilState, FragmentState, MultisampleState, PipelineLayout,
-    PrimitiveState, ProgrammableStage, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerDescriptor,
-    ShaderModule, StencilFaceState, Texture, TextureDescriptor, TextureView, TextureViewDescriptor, VertexAttribute,
-    VertexBufferLayout,
+    BindGroup, BindGroupLayout, ComputePipeline, PipelineLayout, RenderPipeline, Sampler, ShaderModule, Texture,
+    TextureView,
 };
-pub use surface::{Surface, SurfaceCapabilities, SurfaceConfiguration, SurfaceFrame, SurfaceTarget};
+#[cfg(not(metal_backend))]
+pub use surface::{Surface, SurfaceFrame};
+
+// The native Metal backend (Apple targets).
+#[cfg(metal_backend)]
+mod metal;
+#[cfg(metal_backend)]
+pub use metal::timing;
+#[cfg(metal_backend)]
+pub use metal::{
+    Adapter, BindGroup, BindGroupLayout, Buffer, CommandBuffer, CommandEncoder, ComputePass, ComputePipeline, Device,
+    Instance, PipelineLayout, Queue, RenderPass, RenderPipeline, Sampler, ShaderModule, Surface, SurfaceFrame, Texture,
+    TextureView, UNSHARED_UPLOADS,
+};
+
+pub use desc::*;
+pub use error::{Error, GpuError, Result};
+pub use pending::Pending;
 
 pub use ffi::{
     WGPUAdapterType as AdapterType, WGPUAddressMode as AddressMode, WGPUBackendType as BackendType,
@@ -94,9 +120,17 @@ pub use ffi::{
     WGPUVertexStepMode as VertexStepMode,
 };
 
-/// The linked webgpu.h implementation, e.g. `wgpu-native 29.0.1.1`.
+/// Where the Metal backend writes the MSL it generates for each pipeline stage (`None`: nowhere).
+/// The webgpu.h backend compiles shaders inside its implementation and ignores this.
+pub static MSL_DUMP_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// The GPU implementation in use, e.g. `wgpu-native 29.0.1.1`.
 pub fn implementation() -> String {
-    #[cfg(not(target_os = "emscripten"))]
+    #[cfg(metal_backend)]
+    {
+        "native Metal (naga WGSL -> MSL)".to_string()
+    }
+    #[cfg(all(not(metal_backend), not(target_os = "emscripten")))]
     {
         let v = unsafe { ext::native::wgpuGetVersion() };
         format!("wgpu-native {}.{}.{}.{}", v >> 24, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff)

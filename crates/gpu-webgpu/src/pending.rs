@@ -15,6 +15,7 @@ pub struct Pending<T> {
 impl<T> Pending<T> {
     /// A pending value plus the `userdata1` pointer to hand to the callback, which must
     /// eventually pass it to [`complete`] with the same `T`.
+    #[cfg_attr(metal_backend, allow(dead_code))]
     pub(crate) fn new() -> (Self, *mut c_void) {
         let slot: Slot<T> = Rc::new(RefCell::new(None));
         let userdata = Box::into_raw(Box::new(slot.clone())).cast::<c_void>();
@@ -41,8 +42,31 @@ impl<T> std::fmt::Debug for Pending<T> {
     }
 }
 
+/// The completing side of a [`Pending`] made by [`Pending::pair`] (the Metal backend resolves
+/// its operations from Rust rather than through C callbacks).
+#[cfg(metal_backend)]
+pub(crate) struct Completer<T> {
+    slot: Slot<T>,
+}
+
+#[cfg(metal_backend)]
+impl<T> Completer<T> {
+    pub(crate) fn complete(self, value: T) {
+        *self.slot.borrow_mut() = Some(value);
+    }
+}
+
+#[cfg(metal_backend)]
+impl<T> Pending<T> {
+    pub(crate) fn pair() -> (Self, Completer<T>) {
+        let slot: Slot<T> = Rc::new(RefCell::new(None));
+        (Self { slot: slot.clone() }, Completer { slot })
+    }
+}
+
 /// Stores a callback's result. `userdata` must come from [`Pending::new`] for the same `T` and
 /// is consumed.
+#[cfg_attr(metal_backend, allow(dead_code))]
 pub(crate) unsafe fn complete<T>(userdata: *mut c_void, value: T) {
     let slot = unsafe { Box::from_raw(userdata.cast::<Slot<T>>()) };
     *slot.borrow_mut() = Some(value);

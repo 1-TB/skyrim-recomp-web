@@ -41,6 +41,10 @@ impl PhysicalMemory for GuestPhysical {
     }
 
     fn version(&self, addr: u32, len: u32) -> Option<u64> {
+        // `--render-debug hash-pages`: untracked, so callers compare contents.
+        if xenos_render::debug::HASH_PAGES.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
         // Guest stores, recompiled or the kernel's, mark the pages they write.
         Some(runtime_core::dirty::range_version(addr, len))
     }

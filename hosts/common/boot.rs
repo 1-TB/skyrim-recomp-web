@@ -21,8 +21,9 @@ options:
   --run-for SECONDS        stop after this long and print the import summary
   --content DIR            where saves and other title content are stored (read-write)
   --gamertag NAME          name of the signed-in local profile (default Player)
-  --vblank-hz N            vblank interrupts per second (default 60). Skyrim shows a frame every
-                           second vblank, so 120 allows 60 fps and e.g. 1000 removes the cap
+  --vblank-hz N            vblank interrupts per second (default 60 in the browser, 240 natively).
+                           Skyrim shows a frame every second vblank, so 120 allows 60 fps, 240
+                           allows 120 fps and e.g. 1000 removes the cap
                            (physics may misbehave at very high frame rates)
   --slow-calls MS          log kernel calls that take at least MS milliseconds, with their
                            guest callers (what a stalled title thread is waiting on)
@@ -41,6 +42,7 @@ options:
                            d3d-probe (count the Direct3D calls), d3d-verify (also check the
                            D3D device's register copy and the decoded call arguments against
                            the command stream at every draw)
+  --gpu-sync-draws         (debugging) the command processor waits for the renderer after every draw
   --gpu-sync               the command processor waits for the renderer at fences, interrupts
                            and occlusion reports instead of going on (default on phones and
                            tablets in the browser); --no-gpu-sync: never
@@ -91,6 +93,10 @@ pub struct Options {
     pub extra: Vec<(String, String)>,
 }
 
+/// Default `--vblank-hz` of the native hosts: Skyrim shows a frame every second vblank, so 240
+/// lets it run at up to 120 fps (the browser page picks its own rate).
+pub const NATIVE_VBLANK_HZ: u32 = 240;
+
 pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Result<Options, String> {
     let mut o = Options { log: "info".into(), ..Default::default() };
     while let Some(flag) = args.next() {
@@ -133,6 +139,7 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             "--tap" => o.taps.push(parse_tap(&value()?)?),
             "--hold" => o.holds.push(parse_hold(&value()?)?),
             "--render-debug" => xenos_render::debug::enable(&value()?)?,
+            "--gpu-sync-draws" => kernel_hle::gpu::SYNC_DRAWS.store(true, std::sync::atomic::Ordering::Relaxed),
             "--gpu-sync" => kernel_hle::gpu::SYNC_EFFECTS.store(kernel_hle::gpu::SYNC_FORCED_ON, std::sync::atomic::Ordering::Relaxed),
             "--no-gpu-sync" => {
                 kernel_hle::gpu::SYNC_EFFECTS.store(kernel_hle::gpu::SYNC_FORCED_OFF, std::sync::atomic::Ordering::Relaxed)

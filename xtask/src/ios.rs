@@ -1,19 +1,22 @@
 //! `cargo xtask build-ios`: the iOS app (hosts/host-ios) for a device.
 //!
 //! Builds the host-ios static library for aarch64-apple-ios and puts everything the Xcode
-//! project in hosts/host-ios/xcode/ links into target/ios/: the library, wgpu-native as an
-//! embeddable framework (its release ships a bare dylib whose install name is the CI machine's
-//! path), and local.xcconfig with the signing team and bundle id. Then generates the project
-//! with XcodeGen, and with `--install` builds, signs and installs the app on the connected
-//! device (`--launch` also starts it).
+//! project in hosts/host-ios/xcode/ links into target/ios/: the library and local.xcconfig with
+//! the signing team and bundle id. The app renders on Metal directly; with `--wgpu` it links
+//! wgpu-native instead, embedded as a framework (its release ships a bare dylib whose install
+//! name is the CI machine's path). Then generates the project with XcodeGen, and with
+//! `--install` builds, signs and installs the app on the connected device (`--launch` also
+//! starts it). With `--simulator` everything is built for the iOS Simulator instead (in
+//! target/ios-sim/, unsigned) and `--install`/`--launch` target a simulator device.
 //!
 //! The guest is the one in the environment (XENON_RECOMP_OUT etc., as for the other hosts), or
 //! with `--synthetic` the synthetic test title (`cargo xtask e2e` writes it).
 //!
-//! Environment: WGPU_NATIVE_DIR (default ~/tools/wgpu-native/ios-aarch64, an unpacked
-//! wgpu-ios-aarch64-release.zip), SKYRT_IOS_TEAM (default: the first team signed in to Xcode),
+//! Environment: WGPU_NATIVE_DIR (with `--wgpu`; default ~/tools/wgpu-native/ios-aarch64, an
+//! unpacked wgpu-ios-aarch64-release.zip), SKYRT_IOS_TEAM (default: the first team signed in to Xcode),
 //! SKYRT_IOS_BUNDLE_ID (default dev.skyrt.recomp.<team>), SKYRT_IOS_DEVICE (a devicectl device
-//! name or UDID; default the only connected physical device).
+//! name or UDID; default the only connected physical device), SKYRT_IOS_SIMULATOR (simulator
+//! name or UDID; default "iPhone 17 Pro Max").
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,14 +27,21 @@ use crate::{Result, cargo, guest_env, recompile, repo_root, run_tool};
 /// Matches project.yml and the guest C++ build (guest-sys build.rs reads the same variable).
 const DEPLOYMENT_TARGET: &str = "17.0";
 const TARGET: &str = "aarch64-apple-ios";
+const SIMULATOR_TARGET: &str = "aarch64-apple-ios-sim";
 
 pub fn build_ios(args: &[String]) -> Result<()> {
     let has = |f: &str| args.iter().any(|a| a == f);
     let release = has("--release");
     let launch = has("--launch");
     let install = has("--install") || launch;
+    let use_wgpu = has("--wgpu");
+    let simulator = has("--simulator");
+    if simulator && use_wgpu {
+        return Err("--wgpu is for devices only (no wgpu-native simulator framework is wired up)".into());
+    }
+    let target = if simulator { SIMULATOR_TARGET } else { TARGET };
     let root = repo_root();
-    let out = root.join("target/ios");
+    let out = root.join(if simulator { "target/ios-sim" } else { "target/ios" });
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
 
     let wgpu = env::var_os("WGPU_NATIVE_DIR")
@@ -40,9 +50,11 @@ pub fn build_ios(args: &[String]) -> Result<()> {
     let mut build = cargo();
     build
         .current_dir(&root)
-        .args(["build", "-p", "host-ios", "--target", TARGET])
-        .env("WGPU_NATIVE_DIR", &wgpu)
+        .args(["build", "-p", "host-ios", "--target", target])
         .env("IPHONEOS_DEPLOYMENT_TARGET", DEPLOYMENT_TARGET);
+    if use_wgpu {
+        build.env("WGPU_NATIVE_DIR", &wgpu).arg("--no-default-features");
+    }
     if release {
         build.arg("--release");
     }
@@ -61,9 +73,14 @@ pub fn build_ios(args: &[String]) -> Result<()> {
         return Err("building host-ios failed".into());
     }
     let profile = if release { "release" } else { "debug" };
-    let lib = root.join("target").join(TARGET).join(profile).join("libhost_ios.a");
+    let lib = root.join("target").join(target).join(profile).join("libhost_ios.a");
     copy(&lib, &out.join("libhost_ios.a"))?;
-    framework(&wgpu, &out.join("wgpu_native.framework"))?;
+    let framework_dir = out.join("wgpu_native.framework");
+    if use_wgpu {
+        framework(&wgpu, &framework_dir)?;
+    } else if framework_dir.exists() {
+        fs::remove_dir_all(&framework_dir).map_err(|e| e.to_string())?;
+    }
 
     let team = match env::var("SKYRT_IOS_TEAM") {
         Ok(t) => t,
@@ -76,8 +93,13 @@ pub fn build_ios(args: &[String]) -> Result<()> {
     );
     fs::write(out.join("local.xcconfig"), xcconfig).map_err(|e| e.to_string())?;
     let xcode = root.join("hosts/host-ios/xcode");
+    // The spec as built: without wgpu-native's framework unless it is used.
+    let spec = fs::read_to_string(xcode.join("project.yml")).map_err(|e| e.to_string())?;
+    let spec = if use_wgpu { spec } else { without_wgpu_framework(&spec)? };
+    let generated = xcode.join("project.gen.yml");
+    fs::write(&generated, spec).map_err(|e| e.to_string())?;
     run_tool(
-        Command::new("xcodegen").arg("generate").arg("--quiet").arg("--spec").arg(xcode.join("project.yml")),
+        Command::new("xcodegen").arg("generate").arg("--quiet").arg("--spec").arg(&generated),
         "xcodegen (brew install xcodegen)",
     )?;
     let project = xcode.join("SkyrimRecomp.xcodeproj");
@@ -88,6 +110,9 @@ pub fn build_ios(args: &[String]) -> Result<()> {
 
     // The C side is one file; the configuration only matters for its optimization.
     let derived = out.join("derived");
+    if simulator {
+        return run_simulator(&project, &out, &derived, &bundle, launch);
+    }
     run_tool(
         Command::new("xcodebuild")
             .arg("-project")
@@ -120,6 +145,74 @@ pub fn build_ios(args: &[String]) -> Result<()> {
                 &bundle,
             ]),
             "launching the app",
+        )?;
+    }
+    Ok(())
+}
+
+/// Drops the `wgpu_native.framework` dependency (its line and the indented lines below it).
+fn without_wgpu_framework(spec: &str) -> Result<String> {
+    let mut out = String::new();
+    let mut skip_indent = None;
+    let mut found = false;
+    for line in spec.lines() {
+        let indent = line.len() - line.trim_start().len();
+        if let Some(i) = skip_indent {
+            if indent > i {
+                continue;
+            }
+            skip_indent = None;
+        }
+        if line.trim_start().starts_with("- framework:") && line.contains("wgpu_native.framework") {
+            skip_indent = Some(indent);
+            found = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !found {
+        return Err("project.yml has no wgpu_native.framework dependency to drop".into());
+    }
+    Ok(out)
+}
+
+/// Builds the app for the simulator (unsigned, linking the library in `out`), boots the simulator
+/// device and installs the app (`launch`: and starts it).
+fn run_simulator(project: &Path, out: &Path, derived: &Path, bundle: &str, launch: bool) -> Result<()> {
+    let device = env::var("SKYRT_IOS_SIMULATOR").unwrap_or_else(|_| "iPhone 17 Pro Max".to_string());
+    run_tool(
+        Command::new("xcodebuild")
+            .arg("-project")
+            .arg(project)
+            .args(["-scheme", "Skyrim", "-configuration", "Release", "-sdk", "iphonesimulator"])
+            .arg("-destination")
+            .arg(format!("platform=iOS Simulator,name={device}"))
+            .arg("-derivedDataPath")
+            .arg(derived)
+            .arg("SUPPORTED_PLATFORMS=iphonesimulator")
+            .arg(format!("LIBRARY_SEARCH_PATHS={}", out.display()))
+            .args(["CODE_SIGNING_ALLOWED=NO", "-quiet", "build"]),
+        "xcodebuild (simulator)",
+    )?;
+    let app = derived.join("Build/Products/Release-iphonesimulator/Skyrim.app");
+    // Booting an already booted device fails; that is fine.
+    let _ = Command::new("xcrun").args(["simctl", "boot", &device]).status();
+    // Simulator.app ships inside Xcode, where `open -a Simulator` does not look.
+    if let Ok(dev) = Command::new("xcode-select").arg("-p").output() {
+        let app = PathBuf::from(String::from_utf8_lossy(&dev.stdout).trim()).join("Applications/Simulator.app");
+        let _ = Command::new("open").arg(app).status();
+    }
+    run_tool(Command::new("xcrun").args(["simctl", "install", &device]).arg(&app), "installing in the simulator")?;
+    let data = Command::new("xcrun")
+        .args(["simctl", "get_app_container", &device, bundle, "data"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    println!("simulator app data: {}", String::from_utf8_lossy(&data.stdout).trim());
+    if launch {
+        run_tool(
+            Command::new("xcrun").args(["simctl", "launch", "--terminate-running-process", &device, bundle]),
+            "launching in the simulator",
         )?;
     }
     Ok(())

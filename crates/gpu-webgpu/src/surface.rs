@@ -1,11 +1,11 @@
-use std::ffi::c_void;
+use crate::desc::*;
 use std::ptr;
 
 use crate::ext::{self, stype};
 use crate::handle::handle;
 use crate::instance::slice_or_empty;
 use crate::{
-    Adapter, CompositeAlphaMode, Device, Error, Instance, PresentMode, Result, Texture, TextureFormat, TextureUsage,
+    Adapter, Device, Error, Instance, Result, Texture,
     ffi,
 };
 
@@ -16,58 +16,6 @@ handle!(
     wgpuSurfaceAddRef,
     wgpuSurfaceRelease
 );
-
-/// Where a surface presents. Variants that the platform lacks fail with [`Error::Unsupported`].
-#[derive(Clone, Copy, Debug)]
-pub enum SurfaceTarget<'a> {
-    /// CSS selector of a canvas (`"#canvas"`). From a pthread this resolves to the
-    /// OffscreenCanvas that was transferred to it (see [`crate::web::spawn_canvas_thread`]).
-    Canvas(&'a str),
-    Xlib {
-        display: *mut c_void,
-        window: u64,
-    },
-    Xcb {
-        connection: *mut c_void,
-        window: u32,
-    },
-    Wayland {
-        display: *mut c_void,
-        surface: *mut c_void,
-    },
-    Windows {
-        hinstance: *mut c_void,
-        hwnd: *mut c_void,
-    },
-    Metal {
-        layer: *mut c_void,
-    },
-    Android {
-        window: *mut c_void,
-    },
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct SurfaceCapabilities {
-    pub usages: TextureUsage,
-    /// Preferred format first.
-    pub formats: Vec<TextureFormat>,
-    pub present_modes: Vec<PresentMode>,
-    pub alpha_modes: Vec<CompositeAlphaMode>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct SurfaceConfiguration<'a> {
-    pub format: TextureFormat,
-    pub usage: TextureUsage,
-    /// On the web this also resizes the canvas' drawing buffer.
-    pub width: u32,
-    pub height: u32,
-    pub view_formats: &'a [TextureFormat],
-    pub alpha_mode: CompositeAlphaMode,
-    /// The web supports only `Fifo` (or `Undefined`).
-    pub present_mode: PresentMode,
-}
 
 /// The texture to draw this frame; present it with [`SurfaceFrame::present`].
 #[derive(Debug)]

@@ -98,6 +98,14 @@ pub mod flags {
     pub const COLOR_RANGE_7E3: u32 = 1;
     /// 16-bit EDRAM fixed point (k_16_16, k_16_16_16_16): [-32, 32].
     pub const COLOR_RANGE_FIXED16: u32 = 2;
+    /// The depth target is float24 (D24FS8): pixel shaders round their depth to float24 like
+    /// the console's EDRAM stores it (with [`crate::set_float24_depth`]).
+    pub const DEPTH_FLOAT24: u32 = 1 << 18;
+}
+
+/// Whether translated pixel shaders round depth to float24 (`crate::set_float24_depth`).
+pub fn float24_rounding() -> bool {
+    crate::wgsl::float24_depth()
 }
 
 /// Alpha test comparison functions (`xenos::CompareFunction`).

@@ -23,6 +23,54 @@ use crate::parsed::{
 use crate::program::{Instruction, Program};
 use crate::{ShaderStage, TranslationOptions, VertexExpansion};
 
+/// Failing the alpha test clears the pixel's sample mask instead of executing `discard`
+/// (see [`set_alpha_test_by_sample_mask`]).
+static ALPHA_TEST_BY_SAMPLE_MASK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes failed alpha tests drop the pixel through an all-zero `@builtin(sample_mask)` output
+/// (no color, depth or stencil is written) rather than `discard` (`--render-debug alpha-mask`,
+/// for comparing the two). Set before translating any shader.
+pub fn set_alpha_test_by_sample_mask(on: bool) {
+    ALPHA_TEST_BY_SAMPLE_MASK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn alpha_test_by_sample_mask() -> bool {
+    ALPHA_TEST_BY_SAMPLE_MASK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Pixel shaders output depth rounded to float24 where `flags::DEPTH_FLOAT24` says the target is
+/// float24 (see [`set_float24_depth`]).
+static FLOAT24_DEPTH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Makes every pixel shader write its depth, truncated to float24 (20e4) precision while
+/// `flags::DEPTH_FLOAT24` is set. The console stores D24FS8 depth as float24, so nearly
+/// coplanar layers (thatch over roof boards, clothing over a body) often get equal depth and
+/// the later one passes a greater-or-equal test; at float32 precision the rasterizer's
+/// rounding decides pixel by pixel which layer wins, leaving holes in runs along rows (Xenia's
+/// `depth_float24_convert_in_pixel_shader`). On by default; the shaders declare that they only
+/// lower depth, which keeps early depth testing for greater-or-equal tests. Set before
+/// translating any shader.
+pub fn set_float24_depth(on: bool) {
+    FLOAT24_DEPTH.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn float24_depth() -> bool {
+    FLOAT24_DEPTH.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// WGSL of `xe_float24_depth(host_z)`: host depth holds half the guest value (see xenos-edram's
+/// `pack_depth`), so the guest value is truncated to float24 (4-bit exponent biased by 15,
+/// 20-bit mantissa, denormals below 2^-14) and halved again.
+pub const FLOAT24_DEPTH_WGSL: &str = "fn xe_float24_depth(z: f32) -> f32 {
+    let g = clamp(z * 2.0, 0.0, 1.9999998);
+    if (g < 6.1035156e-05) {
+        // Denormals: steps of 2^-34.
+        return floor(g * 17179869184.0) / 17179869184.0 * 0.5;
+    }
+    return bitcast<f32>(bitcast<u32>(g) & 0xFFFFFFF8u) * 0.5;
+}
+";
+
 /// Kind of WGSL texture declared for a texture binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TextureBindingDimension {
@@ -1010,7 +1058,13 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
         }
         m.push_str("}\n\n");
         let colors = self.info.writes_color_targets & 0xF;
-        let has_output = colors != 0 || self.info.writes_depth;
+        let float24 = float24_depth() && self.options.ps_depth_target;
+        let writes_depth = self.info.writes_depth || float24;
+        let has_output = colors != 0 || writes_depth;
+        if float24 {
+            m.push_str(FLOAT24_DEPTH_WGSL);
+            m.push('\n');
+        }
         if has_output {
             m.push_str("struct XePixelOutput {\n");
             for i in 0..4 {
@@ -1018,12 +1072,20 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
                     writeln!(m, "    @location({i}) color{i}: vec4<f32>,").unwrap();
                 }
             }
-            if self.info.writes_depth {
+            if writes_depth {
                 m.push_str("    @builtin(frag_depth) depth: f32,\n");
+            }
+            if colors & 1 != 0 && alpha_test_by_sample_mask() {
+                m.push_str("    @builtin(sample_mask) xe_alpha_mask: u32,\n");
             }
             m.push_str("}\n\n");
         }
         m.push_str("@fragment\n");
+        // Truncating a positive depth only lowers it: the GPU may still test early against
+        // greater-or-equal (the depth the shader writes from its own code is unconstrained).
+        if float24 && !self.info.writes_depth {
+            m.push_str("@early_depth_test(less_equal)\n");
+        }
         if has_output {
             m.push_str("fn xe_ps_main(input: XePixelInput) -> XePixelOutput {\n");
         } else {
@@ -1065,17 +1127,17 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
             m.push_str("    xe_out_depth = input.frag_coord.z;\n");
         }
         m.push_str("    xe_ucode();\n");
-        // The alpha test is decided last, after the outputs are assembled, and with the
-        // comparison written out (compare functions are a less | equal | greater mask) rather
-        // than calling xe_compare: on iOS 27 (A20 Pro), with the test where the shader's color
-        // was still being produced, pixels that passed were discarded (Skyrim's characters drew
-        // without their clothing) while the same shader without the discard showed them passing.
+        // The alpha test is decided last, after the outputs are assembled, with the comparison
+        // written out (compare functions are a less | equal | greater mask).
         let alpha_test = colors & 1 != 0;
         if alpha_test {
             m.push_str("    let xe_alpha = xe_out_color[0].w;\n");
         }
         if has_output {
             m.push_str("    var out: XePixelOutput;\n");
+            if alpha_test && alpha_test_by_sample_mask() {
+                m.push_str("    out.xe_alpha_mask = 0xFFFFFFFFu;\n");
+            }
             for i in 0..4 {
                 if colors & (1 << i) != 0 {
                     writeln!(
@@ -1089,6 +1151,16 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
             }
             if self.info.writes_depth {
                 m.push_str("    out.depth = xe_out_depth;\n");
+            } else if float24 {
+                m.push_str("    out.depth = input.frag_coord.z;\n");
+            }
+            if float24 {
+                writeln!(
+                    m,
+                    "    if ((xe_system.flags & {}u) != 0u) {{ out.depth = xe_float24_depth(out.depth); }}",
+                    flags::DEPTH_FLOAT24
+                )
+                .unwrap();
             }
         }
         if alpha_test {
@@ -1100,12 +1172,15 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
         let xe_alpha_pass = ((xe_alpha_function & 1u) != 0u && xe_alpha < xe_alpha_reference)
             || ((xe_alpha_function & 2u) != 0u && xe_alpha == xe_alpha_reference)
             || ((xe_alpha_function & 4u) != 0u && xe_alpha > xe_alpha_reference);
-        if (!xe_alpha_pass) {{
-            discard;
-        }}
+        {kill}
     }}
 ",
-                alpha = flags::ALPHA_TEST
+                alpha = flags::ALPHA_TEST,
+                kill = if alpha_test_by_sample_mask() {
+                    "out.xe_alpha_mask = select(0u, 0xFFFFFFFFu, xe_alpha_pass);"
+                } else {
+                    "if (!xe_alpha_pass) {\n            discard;\n        }"
+                },
             )
             .unwrap();
         }

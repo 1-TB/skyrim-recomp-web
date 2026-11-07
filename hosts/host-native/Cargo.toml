@@ -11,6 +11,11 @@ build = "build.rs"
 name = "skyrim-native"
 path = "src/main.rs"
 
+[features]
+default = ["metal"]
+# Render on Metal directly (Apple targets); without it the host links wgpu-native.
+metal = ["gpu-webgpu/metal"]
+
 [dependencies]
 d3d-hle.workspace = true
 gpu-webgpu.workspace = true

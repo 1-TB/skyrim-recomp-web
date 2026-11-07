@@ -88,7 +88,9 @@ impl ShaderCache {
         // still rejects is reported through its uncaptured-error log.
         let mut translation = translation;
         if crate::debug::ALPHA_VIEW.load(std::sync::atomic::Ordering::Relaxed) {
-            translation.wgsl = alpha_view(&translation.wgsl);
+            translation.wgsl = alpha_view(&translation.wgsl, false);
+        } else if crate::debug::ALPHA_VIEW_KILL.load(std::sync::atomic::Ordering::Relaxed) {
+            translation.wgsl = alpha_view(&translation.wgsl, true);
         }
         let module = device.create_shader_module_wgsl(&format!("{stage:?} {hash:016X}"), &translation.wgsl);
         self.module_time += translated.elapsed();
@@ -108,10 +110,16 @@ impl CachedShader {
 
 /// `--render-debug alpha-view`: the alpha test (as xenos-shader writes it) shows what it compared
 /// instead of discarding: red if the alpha is NaN, green the alpha, blue if the test passes.
-fn alpha_view(wgsl: &str) -> String {
-    wgsl.replace(
-        "        if (!xe_alpha_pass) {\n            discard;\n        }\n",
-        "        out.color0 = vec4<f32>(select(0.0, 1.0, xe_alpha != xe_alpha), clamp(xe_alpha, 0.0, 1.0), \
-         select(0.0, 1.0, xe_alpha_pass), 1.0);\n",
-    )
+/// With `kill` (`alpha-view-kill`) failing pixels are still dropped as usual.
+fn alpha_view(wgsl: &str, kill: bool) -> String {
+    let view = "        out.color0 = vec4<f32>(select(0.0, 1.0, xe_alpha != xe_alpha), clamp(xe_alpha, 0.0, 1.0), \
+                select(0.0, 1.0, xe_alpha_pass), 1.0);\n";
+    // The test either discards or clears the sample mask (`set_alpha_test_by_sample_mask`).
+    let discard = "        if (!xe_alpha_pass) {\n            discard;\n        }\n";
+    let mask = "        out.xe_alpha_mask = select(0u, 0xFFFFFFFFu, xe_alpha_pass);\n";
+    if kill {
+        wgsl.replace(discard, &format!("{view}{discard}")).replace(mask, &format!("{view}{mask}"))
+    } else {
+        wgsl.replace(discard, view).replace(mask, view)
+    }
 }

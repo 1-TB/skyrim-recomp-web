@@ -54,7 +54,7 @@ pub extern "C" fn skyrt_ios_main() {
         docs.join("content").display().to_string(),
     ];
     args.extend(extra);
-    let opts = match boot::parse(args.into_iter(), &["--dump-frames", "--dump-every"]) {
+    let mut opts = match boot::parse(args.into_iter(), &["--dump-frames", "--dump-every"]) {
         Ok(o) => o,
         Err(msg) => {
             // The usage text is no help on a phone; show what was wrong with args.txt.
@@ -64,6 +64,7 @@ pub extern "C" fn skyrt_ios_main() {
             boot::Options { log: "info".into(), ..Default::default() }
         }
     };
+    opts.vblank_hz.get_or_insert(boot::NATIVE_VBLANK_HZ);
     if let Err(e) = kernel_hle::logging::init(&opts.log) {
         eprintln!("{e}");
     }
@@ -143,9 +144,6 @@ fn on_kernel(kernel: &'static kernel_hle::Kernel, render: xenos_render::native::
     // A native app has room a browser tab doesn't (an iPhone 18 Pro Max leaves ~2 GiB free at
     // 1.5 GiB used): twice the desktop texture cache, so fewer textures are dropped and reloaded.
     xenos_render::default_texture_budget_mib(1024);
-    // The alpha test's discard drops passing pixels of character shaders on iOS 27 (clothing
-    // went missing); characters are drawn without it.
-    xenos_render::skip_skinned_alpha_test();
     let memory = std::sync::Arc::new(gpu::GuestPhysical(kernel));
     match xenos_render::native::start(memory, render, gpu::render_targets()) {
         Ok(handle) => {

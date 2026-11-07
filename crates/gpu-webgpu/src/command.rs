@@ -1,3 +1,4 @@
+use crate::desc::*;
 use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ptr;
@@ -5,8 +6,8 @@ use std::ptr;
 use crate::handle::{handle, label, string, sv, wbool};
 use crate::pending::{Pending, complete};
 use crate::{
-    BindGroup, Buffer, Color, ComputePipeline, Device, Error, Extent3d, IndexFormat, LoadOp, Origin3d, RenderPipeline,
-    Result, StoreOp, Texture, TextureAspect, TextureView, ffi,
+    BindGroup, Buffer, Color, ComputePipeline, Device, Error, Extent3d, IndexFormat, RenderPipeline,
+    Result, ffi,
 };
 
 /// `Queue::write_buffer` hands the browser a copy in a plain (non-shared) `ArrayBuffer` rather than
@@ -18,31 +19,7 @@ handle!(Queue, WGPUQueue, wgpuQueueAddRef, wgpuQueueRelease);
 handle!(CommandEncoder, WGPUCommandEncoder, wgpuCommandEncoderAddRef, wgpuCommandEncoderRelease);
 handle!(CommandBuffer, WGPUCommandBuffer, wgpuCommandBufferAddRef, wgpuCommandBufferRelease);
 
-/// A buffer side of a texture copy. `bytes_per_row` must be a multiple of 256 for
-/// buffer<->texture copies (not for [`Queue::write_texture`]).
-#[derive(Clone, Copy, Debug)]
-pub struct TexelCopyBufferInfo<'a> {
-    pub buffer: &'a Buffer,
-    pub offset: u64,
-    pub bytes_per_row: u32,
-    /// Needed only for multi-layer/3D copies.
-    pub rows_per_image: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TexelCopyTextureInfo<'a> {
-    pub texture: &'a Texture,
-    pub mip_level: u32,
-    pub origin: Origin3d,
-    pub aspect: TextureAspect,
-}
-
 impl<'a> TexelCopyTextureInfo<'a> {
-    /// Mip 0, origin 0, all aspects.
-    pub fn whole(texture: &'a Texture) -> Self {
-        Self { texture, mip_level: 0, origin: crate::origin(0, 0, 0), aspect: TextureAspect::All }
-    }
-
     fn to_ffi(self) -> ffi::WGPUTexelCopyTextureInfo {
         ffi::WGPUTexelCopyTextureInfo {
             texture: self.texture.raw(),
@@ -66,67 +43,6 @@ impl TexelCopyBufferInfo<'_> {
         ffi::WGPUTexelCopyBufferInfo {
             layout: buffer_layout(self.offset, self.bytes_per_row, self.rows_per_image),
             buffer: self.buffer.raw(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RenderPassColorAttachment<'a> {
-    pub view: &'a TextureView,
-    pub resolve_target: Option<&'a TextureView>,
-    /// Slice of a 3D texture to render to.
-    pub depth_slice: Option<u32>,
-    pub load_op: LoadOp,
-    pub store_op: StoreOp,
-    pub clear_value: Color,
-}
-
-impl<'a> RenderPassColorAttachment<'a> {
-    /// Clear to `color`, then store.
-    pub fn clear(view: &'a TextureView, color: Color) -> Self {
-        Self {
-            view,
-            resolve_target: None,
-            depth_slice: None,
-            load_op: LoadOp::Clear,
-            store_op: StoreOp::Store,
-            clear_value: color,
-        }
-    }
-
-    /// Keep the current contents, then store.
-    pub fn load(view: &'a TextureView) -> Self {
-        Self { load_op: LoadOp::Load, ..Self::clear(view, Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }) }
-    }
-}
-
-/// Ops of an aspect the format lacks (or of a read-only aspect) must stay `Undefined`.
-#[derive(Clone, Copy, Debug)]
-pub struct RenderPassDepthStencilAttachment<'a> {
-    pub view: &'a TextureView,
-    pub depth_load_op: LoadOp,
-    pub depth_store_op: StoreOp,
-    pub depth_clear_value: f32,
-    pub depth_read_only: bool,
-    pub stencil_load_op: LoadOp,
-    pub stencil_store_op: StoreOp,
-    pub stencil_clear_value: u32,
-    pub stencil_read_only: bool,
-}
-
-impl<'a> RenderPassDepthStencilAttachment<'a> {
-    /// Depth-only attachment cleared to `depth` and stored.
-    pub fn depth_clear(view: &'a TextureView, depth: f32) -> Self {
-        Self {
-            view,
-            depth_load_op: LoadOp::Clear,
-            depth_store_op: StoreOp::Store,
-            depth_clear_value: depth,
-            depth_read_only: false,
-            stencil_load_op: LoadOp::Undefined,
-            stencil_store_op: StoreOp::Undefined,
-            stencil_clear_value: 0,
-            stencil_read_only: false,
         }
     }
 }

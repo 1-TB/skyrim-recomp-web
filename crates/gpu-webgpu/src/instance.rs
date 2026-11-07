@@ -1,10 +1,11 @@
+use crate::desc::*;
 use std::ffi::c_void;
 use std::ptr;
 
-use crate::device::{self, Device, DeviceDescriptor};
+use crate::device::{self, Device};
 use crate::handle::{handle, string, wbool};
 use crate::pending::{Pending, complete};
-use crate::{Error, FeatureName, Limits, PowerPreference, Result, Surface, ffi};
+use crate::{Error, FeatureName, Limits, Result, ffi};
 
 handle!(
     /// Entry point: adapters, surfaces and event processing.
@@ -21,25 +22,6 @@ handle!(
     wgpuAdapterAddRef,
     wgpuAdapterRelease
 );
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RequestAdapterOptions<'a> {
-    pub power_preference: PowerPreference,
-    pub force_fallback_adapter: bool,
-    pub compatible_surface: Option<&'a Surface>,
-}
-
-#[derive(Clone, Debug)]
-pub struct AdapterInfo {
-    pub vendor: String,
-    pub architecture: String,
-    pub device: String,
-    pub description: String,
-    pub backend: ffi::WGPUBackendType,
-    pub adapter_type: ffi::WGPUAdapterType,
-    pub vendor_id: u32,
-    pub device_id: u32,
-}
 
 impl Instance {
     pub fn new() -> Result<Self> {
