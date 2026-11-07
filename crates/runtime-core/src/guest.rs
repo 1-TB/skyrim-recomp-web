@@ -43,9 +43,21 @@ impl GuestModule {
     }
 }
 
+/// Reports the guest state at a call to a missing function (installed by the kernel, which
+/// can read guest memory): the call's target and the caller's `PPCContext`.
+static MISSING_FUNCTION_REPORT: std::sync::OnceLock<fn(u32, *const u8)> = std::sync::OnceLock::new();
+
+pub fn set_missing_function_report(report: fn(u32, *const u8)) {
+    let _ = MISSING_FUNCTION_REPORT.set(report);
+}
+
 /// Called by `skyrt_call_func` for an address no recompiled function starts at (a guest
-/// indirect call through a bad pointer, or code the recompiler didn't find).
+/// indirect call through a bad pointer, or code the recompiler didn't find), with the calling
+/// thread's context.
 #[unsafe(no_mangle)]
-pub extern "C" fn skyrt_missing_function(addr: u32) -> ! {
+pub extern "C" fn skyrt_missing_function(addr: u32, ctx: *const u8) -> ! {
+    if let Some(report) = MISSING_FUNCTION_REPORT.get() {
+        report(addr, ctx);
+    }
     panic!("guest called {addr:#010X}, where no recompiled function starts");
 }

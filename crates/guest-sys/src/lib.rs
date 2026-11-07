@@ -23,7 +23,7 @@ static KEEP_KERNEL_CALL: unsafe extern "C-unwind" fn(u32, u32, *mut PPCContext, 
 #[used]
 static KEEP_TIMEBASE: extern "C" fn() -> u64 = runtime_core::timebase::skyrt_guest_timebase;
 #[used]
-static KEEP_MISSING_FUNCTION: extern "C" fn(u32) -> ! = runtime_core::guest::skyrt_missing_function;
+static KEEP_MISSING_FUNCTION: extern "C" fn(u32, *const u8) -> ! = runtime_core::guest::skyrt_missing_function;
 
 /// Descriptor of the recompiled code for runtime-core.
 pub fn module() -> GuestModule {

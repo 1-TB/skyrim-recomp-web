@@ -125,7 +125,31 @@ impl xma_decoder::XmaMemory for PhysicalMemory<'_> {
     }
 }
 
+/// The XMA block's registers (Xenia's xma_register_table.inc: register N at XMA_REGISTERS +
+/// N * 4, little-endian like the GPU's).
+pub const XMA_REGISTERS: u32 = 0x7FEA_0000;
+/// ContextArrayAddress: the physical address of the context array.
+pub const CONTEXT_ARRAY_ADDRESS: u32 = 0x600;
+
 impl Kernel {
+    /// Allocates the context array and publishes its physical address in ContextArrayAddress,
+    /// as the console's kernel does at boot. Titles read the register to turn a context pointer
+    /// into its index ((physical address - array) / 64) for the kick and lock bit registers and
+    /// for tables of their own: Skyrim's audio code stores each context in an array indexed that
+    /// way, and with the register left at 0 the index was the context's whole physical address
+    /// over 64, which wrote far past that array into the title's memory manager (New Game
+    /// crashed while loading, calling through objects it had handed out twice).
+    pub fn xma_init_registers(&self) {
+        let Some(array) = self.xma_array() else { return };
+        let Some(physical) = self.rt.space.physical_address(array) else {
+            log::error!("XMA: the context array {array:#010X} is not in physical memory");
+            return;
+        };
+        let reg = XMA_REGISTERS + CONTEXT_ARRAY_ADDRESS * 4;
+        self.mem().write_u32(reg, physical.swap_bytes());
+        log::info!("XMA: context array at {array:#010X} (physical {physical:#010X})");
+    }
+
     fn xma_array(&self) -> Option<u32> {
         let mut array = self.xma.array.lock().unwrap();
         if *array == 0 {

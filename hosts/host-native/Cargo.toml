@@ -1,6 +1,6 @@
 [package]
 name = "host-native"
-description = "Runs the recompiled title natively (x86_64 Linux) for debugging"
+description = "Runs the recompiled title natively (Linux, macOS) for debugging"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -25,3 +25,6 @@ xenos-render.workspace = true
 winit = "0.30"
 gilrs = "0.11.2"
 cpal = "0.18.2"
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+raw-window-metal = "1.1.0"

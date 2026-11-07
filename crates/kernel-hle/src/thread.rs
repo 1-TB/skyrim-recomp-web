@@ -33,7 +33,7 @@ pub struct KThread {
     pub name: Mutex<Option<String>>,
     /// The thread's PPCContext while it runs, for the progress watchdog (racy reads of its
     /// LR and stack pointer; diagnostics only).
-    context: std::sync::atomic::AtomicPtr<PPCContext>,
+    pub(crate) context: std::sync::atomic::AtomicPtr<PPCContext>,
 }
 
 impl KThread {

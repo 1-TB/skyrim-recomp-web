@@ -48,6 +48,21 @@ pub fn handheld_budgets() {
     default_mirror_limit(64);
 }
 
+/// Makes renderers skip the alpha test of skinned draws (characters, and foliage that sways).
+/// On iOS 27 (A20 Pro) pixel shaders with the alpha test's discard lost pixels that passed it,
+/// so characters drew without their clothing, whatever form the test took; skipping it costs
+/// only cut-out edges such as hair's.
+pub fn skip_skinned_alpha_test() {
+    crate::debug::NO_SKINNED_ALPHA_TEST.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Texture cache budget of renderers started afterwards, unless `--render-debug texture-mib`
+/// chose one: hosts with memory to spare (the iOS app) keep more textures loaded.
+pub fn default_texture_budget_mib(mib: u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let _ = crate::debug::TEXTURE_MIB.compare_exchange(0, mib, Relaxed, Relaxed);
+}
+
 /// Renderers started afterwards render from the title's D3D calls (`--gpu d3d`): see `d3d.rs`.
 pub(crate) static D3D_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 

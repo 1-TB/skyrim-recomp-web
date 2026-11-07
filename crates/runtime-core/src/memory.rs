@@ -242,16 +242,17 @@ impl GuestMemory {
 
     #[cfg(not(target_os = "emscripten"))]
     fn commit_pages(&self, start: u32, end: u64) -> Result<(), MemoryError> {
-        // SAFETY: the range lies inside our own (already accessible) reservation and is
-        // only being committed now, so nothing live is in it. MADV_DONTNEED makes it read
-        // back as zero even if the guest wrote to it while uncommitted or after releasing
-        // it (see `release`).
+        // The range lies inside our own (already accessible) reservation and is only being
+        // committed now, so nothing live is in it. Discarding makes it read back as zero even
+        // if the guest wrote to it while uncommitted or after releasing it (see `release`).
         crate::dirty::mark(start, (end - start as u64) as u32);
         let mut result = Ok(());
         linear_runs(start, end - u64::from(start), |_, lin, n| {
-            let rc = unsafe { libc::madvise(self.linear_ptr(lin) as *mut libc::c_void, n as usize, libc::MADV_DONTNEED) };
-            if rc != 0 && result.is_ok() {
-                result = Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
+            // SAFETY: inside our reservation.
+            if let Err(e) = unsafe { discard(self.linear_ptr(lin), n as usize) }
+                && result.is_ok()
+            {
+                result = Err(MemoryError::Os(e.to_string()));
             }
         });
         result
@@ -295,10 +296,10 @@ impl GuestMemory {
         {
             let start = addr & !(PAGE_SIZE - 1);
             let end = (addr as u64 + len as u64 + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
-            // SAFETY: inside our reservation; MADV_DONTNEED returns the memory to
-            // the host and leaves the mapping (and its protection) in place.
+            // SAFETY: inside our reservation; discarding returns the memory to the host and
+            // leaves the range accessible.
             linear_runs(start, end - u64::from(start), |_, lin, n| unsafe {
-                libc::madvise(self.linear_ptr(lin) as *mut libc::c_void, n as usize, libc::MADV_DONTNEED);
+                let _ = discard(self.linear_ptr(lin), n as usize);
             });
             crate::dirty::mark(start, (end - start as u64) as u32);
         }
@@ -320,10 +321,9 @@ impl GuestMemory {
             let start = addr & !(PAGE_SIZE - 1);
             let end = (addr as u64 + len as u64 + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
             let size = (end - start as u64) as usize;
-            // SAFETY: inside our reservation; MADV_DONTNEED drops the pages, which then
-            // read back as zero.
+            // SAFETY: inside our reservation; the pages then read back as zero.
             linear_runs(start, end - u64::from(start), |_, lin, n| unsafe {
-                libc::madvise(self.linear_ptr(lin) as *mut libc::c_void, n as usize, libc::MADV_DONTNEED);
+                let _ = discard(self.linear_ptr(lin), n as usize);
             });
             crate::dirty::mark(start, size as u32);
         }
@@ -600,6 +600,58 @@ impl Drop for GuestMemory {
             libc::munmap(self.base_ptr() as *mut libc::c_void, linear_map::SIZE as usize);
         }
     }
+}
+
+/// Host page size: 4 KiB on x86-64 Linux, 16 KiB on Apple silicon (macOS and iOS), so a guest
+/// page can be a fraction of one.
+#[cfg(not(target_os = "emscripten"))]
+fn host_page_size() -> usize {
+    static SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    // SAFETY: sysconf only queries a constant.
+    *SIZE.get_or_init(|| usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(0x1000).max(0x1000))
+}
+
+/// Makes `[ptr, ptr + len)` read back as zero and returns whole host pages inside it to the OS;
+/// the range stays readable and writable. Guest pages (4 KiB) needn't cover whole host pages,
+/// so the partial host pages at either end are zeroed in place instead.
+///
+/// Linux's `MADV_DONTNEED` drops anonymous pages, which then read back as zero. On Darwin it is
+/// only a hint and the contents may survive, so whole pages are replaced by a fresh anonymous
+/// mapping over the same range (`MAP_FIXED` swaps it in atomically).
+///
+/// # Safety
+/// The range must lie inside the reservation and hold nothing the host relies on.
+#[cfg(not(target_os = "emscripten"))]
+unsafe fn discard(ptr: *mut u8, len: usize) -> std::io::Result<()> {
+    let page = host_page_size();
+    let addr = ptr.addr();
+    let first = addr.next_multiple_of(page).min(addr + len);
+    let last = ((addr + len) & !(page - 1)).max(first);
+    // SAFETY (both fills): inside the caller's range.
+    unsafe {
+        ptr.write_bytes(0, first - addr);
+        ptr.add(last - addr).write_bytes(0, addr + len - last);
+    }
+    if last == first {
+        return Ok(());
+    }
+    let whole = ptr.with_addr(first).cast::<libc::c_void>();
+    #[cfg(target_vendor = "apple")]
+    // SAFETY: replaces only whole pages of our own reservation.
+    let failed = unsafe {
+        libc::mmap(
+            whole,
+            last - first,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_FIXED | libc::MAP_PRIVATE | libc::MAP_ANON,
+            -1,
+            0,
+        )
+    } == libc::MAP_FAILED;
+    #[cfg(not(target_vendor = "apple"))]
+    // SAFETY: drops only whole pages of our own reservation.
+    let failed = unsafe { libc::madvise(whole, last - first, libc::MADV_DONTNEED) } != 0;
+    if failed { Err(std::io::Error::last_os_error()) } else { Ok(()) }
 }
 
 /// Conversions between a value and its in-memory big-endian representation read
@@ -966,5 +1018,33 @@ mod translation_tests {
         runs.clear();
         linear_runs(0xA000_0800, 0x30_0000, |off, lin, n| runs.push((off, lin, n)));
         assert_eq!(runs, [(0, linear_map::PHYSICAL + 0x800, 0x30_0000)]);
+    }
+}
+
+#[cfg(all(test, not(target_os = "emscripten")))]
+mod discard_tests {
+    use super::*;
+
+    /// Discarding guest-page-sized pieces that don't cover whole host pages (16 KiB on Apple
+    /// silicon) zeroes exactly the piece, and recommitting zeroes data written meanwhile.
+    #[test]
+    fn partial_host_pages_read_back_as_zero() {
+        let mem = GuestMemory::reserve().unwrap();
+        let base = map::VIRTUAL_BASE;
+        mem.commit(base, 0x10_0000).unwrap();
+        mem.fill(base, 0x10_0000, 0xAB);
+        // One guest page in the middle of a host page, then a run straddling host pages.
+        mem.decommit(base + 0x5000, 0x1000).unwrap();
+        mem.decommit(base + 0x1_3000, 0x2_2000).unwrap();
+        for addr in (base..base + 0x10_0000).step_by(0x400) {
+            let zero =
+                (base + 0x5000..base + 0x6000).contains(&addr) || (base + 0x1_3000..base + 0x3_5000).contains(&addr);
+            assert_eq!(mem.read_u8(addr), if zero { 0 } else { 0xAB }, "{addr:#x}");
+        }
+        mem.fill(base + 0x1_3000, 0x2_2000, 0xCD);
+        mem.release(base + 0x1_3000, 0x2_2000).unwrap();
+        mem.commit(base + 0x1_3000, 0x2_2000).unwrap();
+        assert!((base + 0x1_3000..base + 0x3_5000).step_by(0x400).all(|a| mem.read_u8(a) == 0));
+        assert_eq!(mem.read_u8(base + 0x3_5000), 0xAB);
     }
 }

@@ -16,6 +16,7 @@
 //! Tool locations: XENON_RECOMP_DIR (XenonRecomp checkout, default
 //! ~/tools/XenonRecomp) and XENON_RECOMP_BIN (default <dir>/build/XenonRecomp/XenonRecomp).
 
+mod ios;
 mod ppc;
 mod scan;
 mod serve;
@@ -84,6 +85,7 @@ fn main() -> ExitCode {
         }
         Some("e2e") => e2e(args.iter().any(|a| a == "--web")),
         Some("build-web") => build_web(args.iter().any(|a| a == "--release")).map(|_| ()),
+        Some("build-ios") => ios::build_ios(&args[1..]),
         Some("serve") => {
             let dir = flag_value(&args, "--dir").map(PathBuf::from).unwrap_or_else(|| repo_root().join("web-dist"));
             let port = flag_value(&args, "--port").and_then(|p| p.parse().ok()).unwrap_or(8080);
@@ -91,7 +93,7 @@ fn main() -> ExitCode {
             serve::serve(&dir, port, game.as_deref())
         }
         _ => {
-            Err("usage: cargo xtask <setup-xenonrecomp|decrypt|patch|scan|switches|recompile|synth|e2e|build-web|serve> ..."
+            Err("usage: cargo xtask <setup-xenonrecomp|decrypt|patch|scan|switches|recompile|synth|e2e|build-web|build-ios|serve> ..."
                 .into())
         }
     };

@@ -25,7 +25,7 @@ fn main() {
     let lib = dir.join("lib");
     let shared = match env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("windows") => "wgpu_native.dll.lib",
-        Ok("macos") => "libwgpu_native.dylib",
+        Ok("macos" | "ios") => "libwgpu_native.dylib",
         _ => "libwgpu_native.so",
     };
     if !lib.join(shared).is_file() {

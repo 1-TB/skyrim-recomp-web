@@ -1,0 +1,49 @@
+# XcodeGen spec for the iOS app around the host-ios static library. `cargo xtask build-ios`
+# builds the library and the wgpu-native framework into target/ios/, writes target/ios/local.xcconfig
+# (signing team and bundle id) and generates the project from this file into target/ios/.
+name: SkyrimRecomp
+options:
+  deploymentTarget:
+    iOS: "17.0"
+configFiles:
+  Debug: ../../../target/ios/local.xcconfig
+  Release: ../../../target/ios/local.xcconfig
+targets:
+  Skyrim:
+    type: application
+    platform: iOS
+    sources:
+      - path: main.c
+    dependencies:
+      - framework: ../../../target/ios/wgpu_native.framework
+        embed: true
+        codeSign: true
+      - sdk: Metal.framework
+      - sdk: QuartzCore.framework
+      - sdk: UIKit.framework
+      - sdk: Foundation.framework
+      - sdk: CoreGraphics.framework
+      - sdk: CoreText.framework
+      - sdk: GameController.framework
+      - sdk: AVFAudio.framework
+      - sdk: AudioToolbox.framework
+      - sdk: CoreAudio.framework
+      - sdk: IOKit.framework
+      - sdk: Security.framework
+    settings:
+      base:
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../../target/ios
+        OTHER_LDFLAGS: -lhost_ios -lc++
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTED_PLATFORMS: iphoneos
+        ARCHS: arm64
+        ENABLE_BITCODE: NO
+        DEAD_CODE_STRIPPING: YES
+        # Rust's staticlib carries its own debug info; dSYM generation over ~200 MiB of
+        # recompiled code takes minutes for no use on device.
+        DEBUG_INFORMATION_FORMAT: dwarf
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Info.plist
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.1"

@@ -86,11 +86,14 @@ impl ShaderCache {
         }
         // The translator's output is validated with naga in its tests; anything the device
         // still rejects is reported through its uncaptured-error log.
+        let mut translation = translation;
+        if crate::debug::ALPHA_VIEW.load(std::sync::atomic::Ordering::Relaxed) {
+            translation.wgsl = alpha_view(&translation.wgsl);
+        }
         let module = device.create_shader_module_wgsl(&format!("{stage:?} {hash:016X}"), &translation.wgsl);
         self.module_time += translated.elapsed();
         self.next_id += 1;
         // Hundreds of shaders' source would stay in the heap (wasm memory, which never shrinks).
-        let mut translation = translation;
         translation.wgsl = String::new();
         Some(Rc::new(CachedShader { module, translation, shader, options: options.clone(), id: self.next_id }))
     }
@@ -101,4 +104,14 @@ impl CachedShader {
     pub fn wgsl(&self) -> String {
         self.shader.translate(&self.options).wgsl
     }
+}
+
+/// `--render-debug alpha-view`: the alpha test (as xenos-shader writes it) shows what it compared
+/// instead of discarding: red if the alpha is NaN, green the alpha, blue if the test passes.
+fn alpha_view(wgsl: &str) -> String {
+    wgsl.replace(
+        "        if (!xe_alpha_pass) {\n            discard;\n        }\n",
+        "        out.color0 = vec4<f32>(select(0.0, 1.0, xe_alpha != xe_alpha), clamp(xe_alpha, 0.0, 1.0), \
+         select(0.0, 1.0, xe_alpha_pass), 1.0);\n",
+    )
 }

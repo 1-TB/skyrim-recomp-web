@@ -208,6 +208,8 @@ struct RecordedDraw {
     stencil_reference: u32,
     indices: Option<DrawIndices>,
     count: u32,
+    /// Its pipeline also writes the capture buffer (`vs-capture`), bound as group 3.
+    capture: bool,
 }
 
 /// Records when draw stage `$i` started, for the sampled draws (see `Executor::timing_sample`).
@@ -405,6 +407,14 @@ pub struct Executor {
     /// The last `uploads_over_budget` asked the renderer to wait.
     upload_waiting: bool,
     frame: u64,
+    /// `--render-debug vs-capture`: the frame's capture buffer and the draws writing it.
+    #[cfg(not(target_os = "emscripten"))]
+    capture: Option<VsCapture>,
+    /// Whether each vertex shader is skinned (see `is_skinned`).
+    skinned: FxHashMap<u64, bool>,
+    /// `solid-skinned`: the magenta pipelines.
+    #[cfg(not(target_os = "emscripten"))]
+    solid_pipelines: FxHashMap<PipelineKey, RenderPipeline>,
     /// Color targets of traced passes to write out after the next submit (name, size).
     trace_dumps: Vec<(TextureView, u32, u32, String)>,
     textures: TextureCache,
@@ -656,6 +666,11 @@ impl Executor {
             constants_layout,
             shared_layout,
             texture_layouts: FxHashMap::default(),
+            #[cfg(not(target_os = "emscripten"))]
+            capture: None,
+            skinned: FxHashMap::default(),
+            #[cfg(not(target_os = "emscripten"))]
+            solid_pipelines: FxHashMap::default(),
             pipelines: FxHashMap::default(),
             texture_groups: FxHashMap::default(),
             frames_in_flight: Default::default(),
@@ -690,6 +705,16 @@ impl Executor {
                     }
                 } else {
                     config
+                };
+                let config = match crate::debug::TEXTURE_MIB.load(std::sync::atomic::Ordering::Relaxed) {
+                    0 => config,
+                    mib => xenos_texture_cache::CacheConfig {
+                        max_host_bytes: mib << 20,
+                        pool_max_bytes: mib << 19,
+                        max_unused_frames: config.max_unused_frames * 2,
+                        max_unused_time: config.max_unused_time * 2,
+                        ..config
+                    },
                 };
                 let config = match crate::debug::LOAD_CAP_MIB.load(std::sync::atomic::Ordering::Relaxed) {
                     u64::MAX => config,
@@ -861,6 +886,8 @@ impl Executor {
     /// Frame boundary: submits everything and ages caches.
     pub fn end_frame(&mut self) {
         self.flush();
+        #[cfg(not(target_os = "emscripten"))]
+        self.report_capture();
         // Sets with fallbacks are made again (their textures may load now); the others are
         // revalidated when reused (`TextureCache::touch`).
         let frame = self.frame;
@@ -874,6 +901,11 @@ impl Executor {
         // Kept a while unused: pooled textures (with the same views) come back a few frames later.
         self.texture_groups.retain(|_, (_, used, _)| *used + TEXTURE_GROUP_FRAMES >= frame);
         self.frame += 1;
+    }
+
+    /// Whether `vs` is skinned (translated once more the first time it is asked).
+    fn vs_skinned(&mut self, vs: &CachedShader) -> bool {
+        *self.skinned.entry(vs.id).or_insert_with(|| is_skinned(&vs.wgsl()))
     }
 
     /// Encodes and submits everything recorded.
@@ -949,6 +981,8 @@ impl Executor {
         let index_buffer = self.indices.buffer.clone();
         let gathered_buffer = self.gathered_indices.buffer.clone();
         let shared_buffers = self.shared.chunks.clone();
+        #[cfg(not(target_os = "emscripten"))]
+        let capture_group = self.capture.as_ref().map(|c| c.group.clone());
         let encoder = self.encoder();
         let colors: Vec<_> = pass.targets.colors[..color_slots(&pass.targets)]
             .iter()
@@ -997,6 +1031,12 @@ impl Executor {
             if last_pipeline != Some(pipeline) {
                 rp.set_pipeline(&d.pipeline);
                 last_pipeline = Some(pipeline);
+            }
+            #[cfg(not(target_os = "emscripten"))]
+            if d.capture
+                && let Some(group) = &capture_group
+            {
+                rp.set_bind_group(VS_CAPTURE_GROUP, group, &[]);
             }
             if last_constants != Some(d.constant_offsets) {
                 rp.set_bind_group(bindings::FLOAT_CONSTANTS_GROUP, &constants_group, &d.constant_offsets);
@@ -1456,6 +1496,8 @@ impl Executor {
 
         mark!(self, 6);
         // Constants.
+        let skip_alpha_test = crate::debug::NO_ALPHA_TEST.load(std::sync::atomic::Ordering::Relaxed)
+            || (crate::debug::NO_SKINNED_ALPHA_TEST.load(std::sync::atomic::Ordering::Relaxed) && self.vs_skinned(&vs));
         let regs = &self.regs;
         let mut system = SystemConstants::default();
         let vte = PaClVteCntl::read(regs);
@@ -1491,7 +1533,7 @@ impl Executor {
             f |= flags::PS_PARAM_GEN;
             system.ps_param_gen_register = r;
         }
-        if let Some(test) = output.alpha_test {
+        if let Some(test) = output.alpha_test.filter(|_| !skip_alpha_test) {
             f |= flags::ALPHA_TEST;
             system.alpha_test_function = test.func.raw();
             system.alpha_test_reference = test.reference;
@@ -1561,7 +1603,19 @@ impl Executor {
         if ps.is_none() && key.color_slots != 0 {
             return Err(Skip::Warn("color targets bound without a pixel shader".into()));
         }
+        // Debugging variants of the pipeline (`vs-capture`, `solid-skinned`).
+        #[cfg(not(target_os = "emscripten"))]
+        let captured = self.capture_pipeline(&key, &vs, ps.as_deref(), textures.layout_id);
+        #[cfg(not(target_os = "emscripten"))]
+        let variant = match &captured {
+            Some(p) => Some(p.clone()),
+            None => self.solid_pipeline(&key, &vs, ps.as_deref(), &pipeline_layout),
+        };
+        #[cfg(target_os = "emscripten")]
+        let (captured, variant): (Option<RenderPipeline>, Option<RenderPipeline>) = (None, None);
         let pipeline = self.pipeline(key, &vs, ps.as_deref(), &pipeline_layout).ok_or(Skip::NoPipeline)?;
+        let capture = captured.is_some();
+        let pipeline = variant.unwrap_or(pipeline);
 
         mark!(self, 8);
         // Indices.
@@ -1609,6 +1663,7 @@ impl Executor {
             stencil_reference: u32::from(depth_stencil.stencil_reference),
             indices,
             count: host.vertex_count,
+            capture,
         };
         self.pass.as_mut().expect("pass created above").draws.push(draw);
         mark!(self, DRAW_STAGES.len());
@@ -2067,89 +2122,18 @@ impl Executor {
             }
             None => {}
         }
-        let color_targets: Vec<ColorTargetState> = key.colors[..key.color_slots]
-            .iter()
-            .map(|c| match c {
-                Some(c) => ColorTargetState {
-                    format: c.format,
-                    blend: c.blend.map(|[color, alpha]| BlendState {
-                        color: BlendComponent { operation: color.0, src_factor: color.1, dst_factor: color.2 },
-                        alpha: BlendComponent { operation: alpha.0, src_factor: alpha.1, dst_factor: alpha.2 },
-                    }),
-                    write_mask: ColorWriteMask(u64::from(c.write_mask)),
-                },
-                None => {
-                    ColorTargetState { format: TextureFormat::Undefined, blend: None, write_mask: ColorWriteMask::None }
-                }
-            })
-            .collect();
-        let face = |f: (CompareFunction, StencilOperation, StencilOperation, StencilOperation)| StencilFaceState {
-            compare: f.0,
-            fail_op: f.1,
-            depth_fail_op: f.2,
-            pass_op: f.3,
-        };
-        let depth_stencil = key.depth.as_ref().map(|d| DepthStencilState {
-            format: d.format,
-            depth_write_enabled: d.write,
-            depth_compare: d.compare,
-            stencil_front: face(d.stencil[0]),
-            stencil_back: face(d.stencil[1]),
-            stencil_read_mask: d.read_mask,
-            stencil_write_mask: d.write_mask,
-            depth_bias: d.bias,
-            depth_bias_slope_scale: f32::from_bits(d.slope_scale_bits),
-            depth_bias_clamp: 0.0,
-        });
-        let fragment = ps.map(|ps| FragmentState {
-            stage: ProgrammableStage::new(&ps.module, ps.translation.entry_point),
-            targets: &color_targets,
-        });
-        let desc = RenderPipelineDescriptor {
-            label: "xenos",
-            layout: Some(layout),
-            vertex: ProgrammableStage::new(&vs.module, vs.translation.entry_point),
-            vertex_buffers: &[],
-            primitive: PrimitiveState {
-                topology: key.topology,
-                strip_index_format: key.strip_index_format,
-                front_face: key.front_face,
-                cull_mode: key.cull,
-                unclipped_depth: false,
-            },
-            depth_stencil,
-            multisample: MultisampleState {
-                count: key.sample_count,
-                mask: key.sample_mask,
-                alpha_to_coverage_enabled: key.alpha_to_coverage,
-            },
-            fragment,
-        };
         self.stats.pipelines += 1;
-        // Natively: created synchronously and checked with an error scope (wgpu-native has no
-        // async creation, and aborts a submit that uses an invalid pipeline).
+        let vertex = ProgrammableStage::new(&vs.module, vs.translation.entry_point);
+        let started = crate::renderer::Stopwatch::start();
+        let pixel = ps.map(|p| (&p.module, p.translation.entry_point));
         #[cfg(not(target_os = "emscripten"))]
-        let result = {
-            let started = crate::renderer::Stopwatch::start();
-            self.device.push_error_scope(ErrorFilter::Validation);
-            let pipeline = self.device.create_render_pipeline(&desc);
-            let result = match self.device.block_on(self.device.pop_error_scope()) {
-                Ok(None) => Ok(pipeline),
-                Ok(Some(e)) => Err(gpu_webgpu::Error::Invalid(e.to_string())),
-                Err(e) => Err(e),
-            };
-            self.times.pipelines += started.elapsed();
-            result
-        };
+        let result = pipeline_descriptor(&key, vertex, pixel, layout, |desc| create_checked(&self.device, desc));
         // On the web: compiled in the background (a synchronous pipeline would be compiled on
         // first use, stalling the GPU process); validation errors come back as a failed result.
         #[cfg(target_os = "emscripten")]
-        let pending = {
-            let started = crate::renderer::Stopwatch::start();
-            let pending = self.device.create_render_pipeline_async(&desc);
-            self.times.pipelines += started.elapsed();
-            pending
-        };
+        let pending =
+            pipeline_descriptor(&key, vertex, pixel, layout, |desc| self.device.create_render_pipeline_async(desc));
+        self.times.pipelines += started.elapsed();
         #[cfg(target_os = "emscripten")]
         let result = match pending.try_take() {
             Some(r) => r,
@@ -2237,4 +2221,320 @@ fn push_texture(
     }
     layout.push((binding.sampler_binding, SlotKind::Sampler { filtering: filterable }));
     views.push((binding.sampler_binding, BindingKind::Sampler(bound.sampler)));
+}
+
+/// Builds the render pipeline descriptor for `key` and hands it to `create` (the descriptor
+/// borrows locals). The vertex stage is separate so a debugging variant can swap the module.
+fn pipeline_descriptor<R>(
+    key: &PipelineKey,
+    vertex: ProgrammableStage<'_>,
+    ps: Option<(&ShaderModule, &str)>,
+    layout: &PipelineLayout,
+    create: impl FnOnce(&RenderPipelineDescriptor<'_>) -> R,
+) -> R {
+        let color_targets: Vec<ColorTargetState> = key.colors[..key.color_slots]
+            .iter()
+            .map(|c| match c {
+                Some(c) => ColorTargetState {
+                    format: c.format,
+                    blend: c.blend.map(|[color, alpha]| BlendState {
+                        color: BlendComponent { operation: color.0, src_factor: color.1, dst_factor: color.2 },
+                        alpha: BlendComponent { operation: alpha.0, src_factor: alpha.1, dst_factor: alpha.2 },
+                    }),
+                    write_mask: ColorWriteMask(u64::from(c.write_mask)),
+                },
+                None => {
+                    ColorTargetState { format: TextureFormat::Undefined, blend: None, write_mask: ColorWriteMask::None }
+                }
+            })
+            .collect();
+        let face = |f: (CompareFunction, StencilOperation, StencilOperation, StencilOperation)| StencilFaceState {
+            compare: f.0,
+            fail_op: f.1,
+            depth_fail_op: f.2,
+            pass_op: f.3,
+        };
+        let depth_stencil = key.depth.as_ref().map(|d| DepthStencilState {
+            format: d.format,
+            depth_write_enabled: d.write,
+            depth_compare: d.compare,
+            stencil_front: face(d.stencil[0]),
+            stencil_back: face(d.stencil[1]),
+            stencil_read_mask: d.read_mask,
+            stencil_write_mask: d.write_mask,
+            depth_bias: d.bias,
+            depth_bias_slope_scale: f32::from_bits(d.slope_scale_bits),
+            depth_bias_clamp: 0.0,
+        });
+        let fragment = ps.map(|(module, entry)| FragmentState {
+            stage: ProgrammableStage::new(module, entry),
+            targets: &color_targets,
+        });
+        let desc = RenderPipelineDescriptor {
+            label: "xenos",
+            layout: Some(layout),
+            vertex,
+            vertex_buffers: &[],
+            primitive: PrimitiveState {
+                topology: key.topology,
+                strip_index_format: key.strip_index_format,
+                front_face: key.front_face,
+                cull_mode: key.cull,
+                unclipped_depth: false,
+            },
+            depth_stencil,
+            multisample: MultisampleState {
+                count: key.sample_count,
+                mask: key.sample_mask,
+                alpha_to_coverage_enabled: key.alpha_to_coverage,
+            },
+            fragment,
+        };
+    create(&desc)
+}
+
+/// Creates a pipeline synchronously, checked with an error scope (wgpu-native has no async
+/// creation, and aborts a submit that uses an invalid pipeline).
+#[cfg(not(target_os = "emscripten"))]
+fn create_checked(device: &Device, desc: &RenderPipelineDescriptor<'_>) -> gpu_webgpu::Result<RenderPipeline> {
+    device.push_error_scope(ErrorFilter::Validation);
+    let pipeline = device.create_render_pipeline(desc);
+    match device.block_on(device.pop_error_scope()) {
+        Ok(None) => Ok(pipeline),
+        Ok(Some(e)) => Err(gpu_webgpu::Error::Invalid(e.to_string())),
+        Err(e) => Err(e),
+    }
+}
+
+/// wgpu-native's `WGPUNativeFeature_VertexWritableStorage` (`wgpu.h`), for `vs-capture`.
+#[cfg(not(target_os = "emscripten"))]
+pub(crate) const VERTEX_WRITABLE_STORAGE: FeatureName = FeatureName(0x0003_0005);
+/// `vs-capture`: frames between captures, draws kept per frame, positions kept per draw, and the
+/// capture's bind group
+/// (after constants, shared memory and textures).
+#[cfg(not(target_os = "emscripten"))]
+const VS_CAPTURE_EVERY: u64 = 600;
+#[cfg(not(target_os = "emscripten"))]
+const VS_CAPTURE_DRAWS: u32 = 512;
+#[cfg(not(target_os = "emscripten"))]
+const VS_CAPTURE_VERTICES: u32 = 64;
+#[cfg(not(target_os = "emscripten"))]
+const VS_CAPTURE_GROUP: u32 = 3;
+
+/// Skinned vertex shaders (characters; the ones `vs-capture`, `solid-skinned` and
+/// `no-skinned-alpha-test` are about) read constants relative to the address register, which the
+/// translation names `xe_a0`.
+fn is_skinned(wgsl: &str) -> bool {
+    wgsl.matches("xe_a0").count() > 2
+}
+
+/// Whether `vs-capture` captures frame `frame`: the chosen one and every [`VS_CAPTURE_EVERY`]th after.
+#[cfg(not(target_os = "emscripten"))]
+fn capturing(frame: u64) -> bool {
+    let first = crate::debug::VS_CAPTURE_FRAME.load(std::sync::atomic::Ordering::Relaxed);
+    first != 0 && frame >= first && (frame - first).is_multiple_of(VS_CAPTURE_EVERY)
+}
+
+#[cfg(not(target_os = "emscripten"))]
+struct VsCapture {
+    layout: BindGroupLayout,
+    group: BindGroup,
+    buffer: Buffer,
+    /// Per slot: draw number, vertex and pixel shader ids.
+    draws: Vec<(u64, u64, u64)>,
+}
+
+#[cfg(not(target_os = "emscripten"))]
+impl Executor {
+    /// `vs-capture`: in the chosen frame, for skinned draws, a variant of the draw's pipeline whose vertex shader
+    /// also stores the clip-space position of each vertex (modulo the slot size) in the draw's
+    /// slot of the capture buffer. The draw renders as usual.
+    fn capture_pipeline(
+        &mut self,
+        key: &PipelineKey,
+        vs: &CachedShader,
+        ps: Option<&CachedShader>,
+        layout_id: u32,
+    ) -> Option<RenderPipeline> {
+        if !capturing(self.frame) {
+            return None;
+        }
+        if !self.device.has_feature(VERTEX_WRITABLE_STORAGE) {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            ONCE.call_once(|| log::warn!("vs capture: the device can't write storage from vertex shaders"));
+            return None;
+        }
+        if self.capture.as_ref().is_some_and(|c| c.draws.len() as u32 >= VS_CAPTURE_DRAWS) {
+            return None;
+        }
+        const ENTRY: &str = "    return xe_vertex(xe_host_vertex_index);\n}";
+        let wgsl = vs.wgsl();
+        if !wgsl.contains(ENTRY) || !is_skinned(&wgsl) {
+            return None;
+        }
+        let capture = self.capture.get_or_insert_with(|| {
+            let layout = self.device.create_bind_group_layout(
+                "vs capture",
+                &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStage::Vertex,
+                    ty: BindingType::Buffer { ty: BufferBindingType::Storage, has_dynamic_offset: false, min_binding_size: 0 },
+                }],
+            );
+            let buffer = self.device.create_buffer(&BufferDescriptor {
+                label: "vs capture",
+                size: u64::from(VS_CAPTURE_DRAWS * VS_CAPTURE_VERTICES * 16),
+                usage: BufferUsage::Storage | BufferUsage::CopySrc,
+                mapped_at_creation: false,
+            });
+            let group = self.device.create_bind_group(
+                "vs capture",
+                &layout,
+                &[BindGroupEntry { binding: 0, resource: BindingResource::Buffer { buffer: &buffer, offset: 0, size: None } }],
+            );
+            VsCapture { layout, group, buffer, draws: Vec::new() }
+        });
+        let slot = capture.draws.len() as u32;
+        // Declared before the first binding: directives (`enable`, ...) must come first.
+        let declaration =
+            format!("@group({VS_CAPTURE_GROUP}) @binding(0) var<storage, read_write> xe_capture: array<vec4<f32>>;\n");
+        let wgsl = wgsl.replacen("@group(", &format!("{declaration}@group("), 1);
+        let wgsl = format!(
+            "{}",
+            wgsl.replace(
+                ENTRY,
+                &format!(
+                    "    let xe_captured = xe_vertex(xe_host_vertex_index);\n    \
+                     xe_capture[{}u + xe_host_vertex_index % {VS_CAPTURE_VERTICES}u] = xe_captured.position;\n    \
+                     return xe_captured;\n}}",
+                    slot * VS_CAPTURE_VERTICES
+                ),
+            )
+        );
+        let module = self.device.create_shader_module_wgsl("vs capture", &wgsl);
+        let textures = self.texture_layouts.values().find(|(_, _, id)| *id == layout_id).map(|(l, ..)| l.clone())?;
+        let layout = self.device.create_pipeline_layout(
+            "vs capture",
+            &[&self.constants_layout, &self.shared_layout, &textures, &capture.layout],
+        );
+        let vertex = ProgrammableStage::new(&module, vs.translation.entry_point);
+        let pixel = ps.map(|p| (&p.module, p.translation.entry_point));
+        match pipeline_descriptor(key, vertex, pixel, &layout, |desc| create_checked(&self.device, desc)) {
+            Ok(pipeline) => {
+                let draw = self.stats.draws + self.stats.skipped_draws;
+                capture.draws.push((draw, vs.id, ps.map_or(0, |p| p.id)));
+                Some(pipeline)
+            }
+            Err(e) => {
+                log::warn!("vs capture: pipeline for draw with vs {:016x}: {e}", vs.id);
+                None
+            }
+        }
+    }
+
+    /// `solid-skinned`: the draw's pipeline with a pixel shader writing magenta to every color
+    /// target, for skinned draws with a pixel shader and float color targets.
+    fn solid_pipeline(
+        &mut self,
+        key: &PipelineKey,
+        vs: &CachedShader,
+        ps: Option<&CachedShader>,
+        layout: &PipelineLayout,
+    ) -> Option<RenderPipeline> {
+        if !crate::debug::SOLID_SKINNED.load(std::sync::atomic::Ordering::Relaxed) || ps.is_none() {
+            return None;
+        }
+        if let Some(p) = self.solid_pipelines.get(key) {
+            return Some(p.clone());
+        }
+        let skinned = self.vs_skinned(vs);
+        let targets: Vec<(usize, &ColorKey)> =
+            key.colors[..key.color_slots].iter().enumerate().filter_map(|(i, c)| Some((i, c.as_ref()?))).collect();
+        let integer = targets.iter().any(|(_, c)| {
+            let name = format!("{:?}", c.format);
+            name.contains("Uint") || name.contains("Sint")
+        });
+        if !skinned || targets.is_empty() || integer {
+            return None;
+        }
+        let fields: String = targets.iter().map(|(i, _)| format!("    @location({i}) c{i}: vec4<f32>,\n")).collect();
+        let stores: String =
+            targets.iter().map(|(i, _)| format!("    o.c{i} = vec4<f32>(1.0, 0.0, 1.0, 1.0);\n")).collect();
+        let wgsl = format!(
+            "struct XeSolid {{\n{fields}}}\n@fragment\nfn xe_solid() -> XeSolid {{\n    var o: XeSolid;\n{stores}    return o;\n}}\n"
+        );
+        let module = self.device.create_shader_module_wgsl("solid skinned", &wgsl);
+        let vertex = ProgrammableStage::new(&vs.module, vs.translation.entry_point);
+        match pipeline_descriptor(key, vertex, Some((&module, "xe_solid")), layout, |desc| {
+            create_checked(&self.device, desc)
+        }) {
+            Ok(pipeline) => {
+                self.solid_pipelines.insert(key.clone(), pipeline.clone());
+                Some(pipeline)
+            }
+            Err(e) => {
+                log::warn!("solid skinned: pipeline for vs {:016x}: {e}", vs.id);
+                None
+            }
+        }
+    }
+
+    /// After the capture frame: reads the positions back and logs, per draw, how many are finite
+    /// and how far they spread (all equal or all zero means the draw rasterizes nothing).
+    fn report_capture(&mut self) {
+        if !capturing(self.frame) {
+            return;
+        }
+        let frame = self.frame;
+        let Some(capture) = self.capture.take() else { return };
+        let size = u64::from(VS_CAPTURE_DRAWS * VS_CAPTURE_VERTICES * 16);
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: "vs capture readback",
+            size,
+            usage: BufferUsage::MapRead | BufferUsage::CopyDst,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder("vs capture");
+        encoder.copy_buffer_to_buffer(&capture.buffer, 0, &readback, 0, size);
+        self.device.queue().submit([encoder.finish("vs capture")]);
+        if let Err(e) = self.device.block_on(readback.map_async(MapMode::Read, 0, None)) {
+            log::warn!("vs capture: readback: {e}");
+            return;
+        }
+        let mut bytes = vec![0u8; size as usize];
+        if let Err(e) = readback.read_mapped(0, &mut bytes) {
+            log::warn!("vs capture: readback: {e}");
+            return;
+        }
+        readback.unmap();
+        let floats: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+        for (slot, (draw, vs, ps)) in capture.draws.iter().enumerate() {
+            let base = slot * VS_CAPTURE_VERTICES as usize * 4;
+            let positions: Vec<[f32; 4]> = (0..VS_CAPTURE_VERTICES as usize)
+                .map(|v| {
+                    let p = &floats[base + v * 4..base + v * 4 + 4];
+                    [p[0], p[1], p[2], p[3]]
+                })
+                .filter(|p| p.iter().any(|c| *c != 0.0))
+                .collect();
+            let finite = positions.iter().filter(|p| p.iter().all(|c| c.is_finite())).count();
+            let ndc: Vec<[f32; 3]> =
+                positions.iter().filter(|p| p[3] != 0.0).map(|p| [p[0] / p[3], p[1] / p[3], p[2] / p[3]]).collect();
+            let span = |i: usize| {
+                let (lo, hi) = ndc.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[i]), hi.max(p[i])));
+                if ndc.is_empty() { 0.0 } else { hi - lo }
+            };
+            let sample: Vec<String> =
+                positions.iter().take(3).map(|p| format!("({:.3},{:.3},{:.3},{:.3})", p[0], p[1], p[2], p[3])).collect();
+            log::info!(
+                "vs capture frame {frame} draw {draw}: vs {vs:016x} ps {ps:016x}: {} positions written, {finite} finite, \
+                 ndc span x {:.3} y {:.3} z {:.3}; {}",
+                positions.len(),
+                span(0),
+                span(1),
+                span(2),
+                sample.join(" ")
+            );
+        }
+    }
 }

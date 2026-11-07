@@ -143,6 +143,15 @@ fn handles(window: &Window) -> Result<WindowHandles, String> {
             connection: d.connection.ok_or("no XCB connection")?.as_ptr() as usize,
             window: w.window.get(),
         }),
+        // The renderer presents into a CAMetalLayer, which raw-window-metal attaches to the
+        // view (as the view's layer, or a sublayer that follows its bounds and scale). The
+        // window lives as long as the process, so the layer is never released.
+        #[cfg(target_os = "macos")]
+        (RawWindowHandle::AppKit(w), _) => {
+            // SAFETY: winit's view is a valid NSView, and this runs on the main thread.
+            let layer = unsafe { raw_window_metal::Layer::from_ns_view(w.ns_view) };
+            Ok(WindowHandles::Metal { layer: layer.into_raw().as_ptr() as usize })
+        }
         (w, d) => Err(format!("unsupported window system ({w:?}, {d:?})")),
     }
 }
@@ -251,9 +260,11 @@ impl ApplicationHandler for App {
             .with_inner_size(LogicalSize::new(1280.0, 720.0));
         // The Wayland app id window managers match rules against; SKYRIM_RECOMP_APP_ID overrides
         // it (test runs use their own so a rule can keep them off the user's workspace).
-        let app_id = std::env::var("SKYRIM_RECOMP_APP_ID").unwrap_or_else(|_| "skyrim-recomp".into());
-        let attributes =
-            winit::platform::wayland::WindowAttributesExtWayland::with_name(attributes, app_id.clone(), app_id);
+        #[cfg(target_os = "linux")]
+        let attributes = {
+            let app_id = std::env::var("SKYRIM_RECOMP_APP_ID").unwrap_or_else(|_| "skyrim-recomp".into());
+            winit::platform::wayland::WindowAttributesExtWayland::with_name(attributes, app_id.clone(), app_id)
+        };
         let window = match event_loop.create_window(attributes) {
             Ok(w) => Arc::new(w),
             Err(e) => {

@@ -34,10 +34,24 @@ extern "C" fn on_fatal_signal(sig: libc::c_int, info: *mut libc::siginfo_t, _ctx
         eprintln!("{line}");
     }
     if let Some(k) = KERNEL.get() {
+        k.log_current_guest_state();
         k.log_import_summary();
     }
+    // On Apple platforms the system's crash report has the frames this backtrace can't name
+    // (system libraries; on iOS everything outside the app): put the default action back and
+    // return, so the faulting instruction runs again and the process dies of it as it would
+    // have without this handler.
+    #[cfg(target_vendor = "apple")]
+    // SAFETY: plain signal() call; the process is going down.
+    unsafe {
+        libc::signal(sig, libc::SIG_DFL);
+        return;
+    }
     // SAFETY: terminate immediately without running destructors.
-    unsafe { libc::_exit(128 + sig) };
+    #[allow(unreachable_code)]
+    unsafe {
+        libc::_exit(128 + sig)
+    };
 }
 
 static KERNEL: std::sync::OnceLock<&'static kernel_hle::Kernel> = std::sync::OnceLock::new();

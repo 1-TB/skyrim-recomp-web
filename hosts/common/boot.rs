@@ -35,11 +35,12 @@ options:
                            hold a port-1 control from START for DURATION seconds: a button,
                            LS=X,Y or RS=X,Y (sticks, -1..1, up positive) or LT=V / RT=V
                            (triggers, 0..1), e.g. LS=0,1@300+5 walks forward (repeatable)
-  --gpu MODE               xenos (default: render the command stream), d3d (render from the
-                           title's Direct3D calls: render targets are the D3D surfaces, no
-                           EDRAM), d3d-probe (count the Direct3D calls), d3d-verify (also
-                           check the D3D device's register copy and the decoded call
-                           arguments against the command stream at every draw)
+  --gpu MODE               d3d (default for the executable the D3D hooks are built for: render
+                           from the title's Direct3D calls; render targets are the D3D surfaces,
+                           no EDRAM), xenos (render the command stream; other executables),
+                           d3d-probe (count the Direct3D calls), d3d-verify (also check the
+                           D3D device's register copy and the decoded call arguments against
+                           the command stream at every draw)
   --gpu-sync               the command processor waits for the renderer at fences, interrupts
                            and occlusion reports instead of going on (default on phones and
                            tablets in the browser); --no-gpu-sync: never
@@ -59,7 +60,8 @@ options:
                            staging buffers instead of writeBuffer, or not),
                            nopool (never reuse textures), nomemo (bind textures per draw),
                            cpu-resolve (read resolves back to guest memory), cpu-texture (convert
-                           textures on the CPU), no-bc (no BC textures), no-d32s8 (float24 depth
+                           textures on the CPU), no-bc (no BC textures), single-sample (D3D surfaces
+                           single-sampled), no-d32s8 (float24 depth
                            in depth24plus-stencil8), no-a2c (no alpha to coverage), d3d-surfaces
                            (with --gpu d3d, show all color surfaces), gpu-time (GPU time per pass,
                            with timestamp queries), trace-frame=N (log frame N's
@@ -83,6 +85,8 @@ pub struct Options {
     /// Scripted presses: (button mask, seconds after boot).
     pub taps: Vec<(u16, f64)>,
     pub holds: Vec<(Held, f64, f64)>,
+    /// `--gpu` as given; without it the D3D path is used when the hooks were built for the title.
+    pub gpu: Option<String>,
     /// Host-specific flags the shared parser doesn't know.
     pub extra: Vec<(String, String)>,
 }
@@ -136,7 +140,7 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             "--gpu" => {
                 let mode = value()?;
                 kernel_hle::d3d::set_gpu_mode(&mode)?;
-                xenos_render::set_d3d_mode(mode == "d3d");
+                o.gpu = Some(mode);
             }
             "--resolution-scale" => {
                 let scale = value()?.parse().map_err(|e| format!("--resolution-scale: {e}"))?;
@@ -316,6 +320,18 @@ pub fn run(
     if let Some(info) = xex.execution_info() {
         log::info!("title id {:08X}, version {:08X}", info.title_id, info.version);
     }
+    // Rendering from the title's Direct3D calls is the default; the hooks it needs exist only
+    // for the executable d3d-hle describes, so any other one renders the command stream.
+    let title = xex.execution_info().map(|i| (i.title_id, i.version));
+    let gpu = o.gpu.clone().unwrap_or_else(|| if title == Some(d3d_hle::TITLE) { "d3d" } else { "xenos" }.into());
+    if o.gpu.is_none() {
+        kernel_hle::d3d::set_gpu_mode(&gpu)?;
+        if gpu == "xenos" {
+            log::warn!("the D3D renderer needs title {:08X} version {:08X}; rendering the command stream", d3d_hle::TITLE.0, d3d_hle::TITLE.1);
+        }
+    }
+    xenos_render::set_d3d_mode(gpu == "d3d");
+    log::info!("GPU path: {gpu}");
     let rt = Runtime::load(guest_sys::module(), xex).map_err(|e| e.to_string())?;
 
     let vfs = Vfs::with_game(game);

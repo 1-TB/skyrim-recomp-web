@@ -58,11 +58,21 @@ if(EMSCRIPTEN)
     )
 else()
     target_compile_options(skyrim_guest PRIVATE
-        -march=x86-64-v2
         # Rust unwinds through these frames on thread termination.
         -fexceptions
         -funwind-tables
     )
+    # x86-64-v2 gives simde the SSE4 forms the generated code is written in. On Apple the
+    # target is CMAKE_OSX_ARCHITECTURES (CMAKE_SYSTEM_PROCESSOR is the build machine's);
+    # Apple silicon needs no flag, its baseline already has the NEON simde maps onto.
+    if(CMAKE_OSX_ARCHITECTURES)
+        set(SKYRT_TARGET_ARCH "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        set(SKYRT_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    if(SKYRT_TARGET_ARCH MATCHES "x86_64|AMD64")
+        target_compile_options(skyrim_guest PRIVATE -march=x86-64-v2)
+    endif()
 endif()
 
 if(SKYRT_CHECK_FRAMES)

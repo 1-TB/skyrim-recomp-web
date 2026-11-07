@@ -81,7 +81,10 @@ fn main() {
     let lib_dir = build_cmake(&cpp_dir, &out_dir, &overlay, &simde, &shim, &dispatch_cpp);
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=skyrim_guest");
-    if !env::var("TARGET").unwrap().contains("emscripten") {
+    let target = env::var("TARGET").unwrap();
+    if target.contains("apple") {
+        println!("cargo:rustc-link-lib=dylib=c++");
+    } else if !target.contains("emscripten") {
         println!("cargo:rustc-link-lib=dylib=stdc++");
     }
 }
@@ -198,7 +201,7 @@ PPC_FUNC({f}) {{
 fn check_generated(dir: &Path) {
     let ctx = fs::read_to_string(dir.join("ppc_context.h"))
         .unwrap_or_else(|e| fail(format!("{}/ppc_context.h: {e}", dir.display())));
-    if !ctx.contains("#define SKYRT_PPC_CONTEXT_FORK 3") {
+    if !ctx.contains("#define SKYRT_PPC_CONTEXT_FORK 4") {
         fail("ppc_context.h was not generated from the current cpp/ppc_context.h; rerun `cargo xtask recompile`");
     }
     let config = fs::read_to_string(dir.join("ppc_config.h"))
@@ -381,7 +384,7 @@ fn dispatch(recomp_out: &Path) -> String {
     }
     writeln!(
         cpp,
-        r#"extern "C" [[noreturn]] void skyrt_missing_function(uint32_t addr);
+        r#"extern "C" [[noreturn]] void skyrt_missing_function(uint32_t addr, const PPCContext* ctx);
 
 extern "C" void skyrt_call_func(uint32_t addr, PPCContext& __restrict ctx, uint8_t* base) {{
     uint32_t index = (addr - {code_base:#X}u) >> 2;
@@ -397,7 +400,7 @@ extern "C" void skyrt_call_func(uint32_t addr, PPCContext& __restrict ctx, uint8
     for group in 0..groups {
         writeln!(cpp, "            case {group}: skyrt_call_group_{group}(id, ctx, base); return;").unwrap();
     }
-    writeln!(cpp, "            }}\n        }}\n    }}\n    skyrt_missing_function(addr);\n}}").unwrap();
+    writeln!(cpp, "            }}\n        }}\n    }}\n    skyrt_missing_function(addr, &ctx);\n}}").unwrap();
     cpp
 }
 
@@ -548,15 +551,40 @@ fn build_cmake(cpp_dir: &Path, out_dir: &Path, recomp_out: &Path, simde: &Path, 
         let emsdk = env_path("EMSDK", "the Emscripten SDK (source emsdk_env.sh)");
         let toolchain = emsdk.join("upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake");
         configure.arg(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()));
+    } else if let Some(sdk) = ios_sdk(&target) {
+        // Cross-compiled with Xcode's clang against the iOS SDK. The deployment target must
+        // match the one rustc links the app with (both read IPHONEOS_DEPLOYMENT_TARGET).
+        let deployment = env::var("IPHONEOS_DEPLOYMENT_TARGET").unwrap_or_else(|_| "17.0".into());
+        configure
+            .arg("-DCMAKE_SYSTEM_NAME=iOS")
+            .arg(format!("-DCMAKE_OSX_SYSROOT={sdk}"))
+            .arg("-DCMAKE_OSX_ARCHITECTURES=arm64")
+            .arg(format!("-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment}"));
     } else {
         let cxx = env::var("CXX").unwrap_or_else(|_| "clang++".into());
         configure.arg(format!("-DCMAKE_CXX_COMPILER={cxx}"));
+        if target.contains("apple-darwin") {
+            let arch = if target.starts_with("aarch64") { "arm64" } else { "x86_64" };
+            configure.arg(format!("-DCMAKE_OSX_ARCHITECTURES={arch}"));
+        }
     }
+    println!("cargo:rerun-if-env-changed=IPHONEOS_DEPLOYMENT_TARGET");
     run(&mut configure, "cmake configure");
 
     let jobs = env::var("NUM_JOBS").unwrap_or_else(|_| "4".into());
     run(Command::new("cmake").arg("--build").arg(&build_dir).arg("--parallel").arg(jobs), "cmake build");
     build_dir
+}
+
+/// The Xcode SDK for an iOS target triple (device or simulator), or None for other targets.
+fn ios_sdk(target: &str) -> Option<&'static str> {
+    if !target.contains("apple-ios") {
+        None
+    } else if target.ends_with("-sim") || target.starts_with("x86_64") {
+        Some("iphonesimulator")
+    } else {
+        Some("iphoneos")
+    }
 }
 
 fn run(cmd: &mut Command, what: &str) {

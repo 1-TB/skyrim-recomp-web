@@ -173,7 +173,9 @@ impl MemoryReport {
             mib(runtime_core::memory::host_heap_top()),
             mib(core::arch::wasm32::memory_size(0) as u64 * 65536)
         );
-        #[cfg(not(target_os = "emscripten"))]
+        #[cfg(target_vendor = "apple")]
+        let wasm = apple_footprint();
+        #[cfg(not(any(target_os = "emscripten", target_vendor = "apple")))]
         let wasm = String::new();
         let (pool_used, pool_size) = runtime_core::memory::linear_pool_usage();
         // On GPU growth, what grew: a phone can be killed before the next report.
@@ -200,4 +202,44 @@ impl MemoryReport {
         self.last_at = std::time::Instant::now();
         (self.uploads_at_report, self.peak_tick) = (now_uploaded, 0);
     }
+}
+
+/// The process's physical footprint, what iOS compares against its per-app limit (Metal
+/// allocations included: the GPU shares the memory), and on iOS how much is left before the
+/// system ends the app.
+#[cfg(target_vendor = "apple")]
+fn apple_footprint() -> String {
+    /// The start of `task_vm_info` (mach/task_info.h, packed to 4 bytes) up to and including
+    /// `phys_footprint`, which revision 1 added.
+    #[repr(C, packed(4))]
+    #[derive(Default)]
+    struct TaskVmInfo {
+        virtual_size: u64,
+        region_count: i32,
+        page_size: i32,
+        resident_size: u64,
+        resident_size_peak: u64,
+        sizes: [u64; 14],
+        phys_footprint: u64,
+    }
+    const TASK_VM_INFO: i32 = 22;
+    unsafe extern "C" {
+        static mach_task_self_: u32;
+        fn task_info(task: u32, flavor: i32, info: *mut i32, count: *mut u32) -> i32;
+        #[cfg(target_os = "ios")]
+        fn os_proc_available_memory() -> usize;
+    }
+    let mut info = TaskVmInfo::default();
+    let mut count = (size_of::<TaskVmInfo>() / 4) as u32;
+    // SAFETY: task_info writes at most `count` 32-bit words into `info`.
+    let rc = unsafe { task_info(mach_task_self_, TASK_VM_INFO, (&raw mut info).cast(), &mut count) };
+    if rc != 0 {
+        return String::new();
+    }
+    let footprint = info.phys_footprint >> 20;
+    #[cfg(target_os = "ios")]
+    // SAFETY: no arguments; returns 0 outside an app.
+    return format!(", footprint {footprint} MiB, {} MiB left", unsafe { os_proc_available_memory() } >> 20);
+    #[cfg(not(target_os = "ios"))]
+    format!(", footprint {footprint} MiB")
 }

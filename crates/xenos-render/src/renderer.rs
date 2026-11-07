@@ -55,6 +55,10 @@ pub fn wanted_features(available: &[FeatureName]) -> Vec<FeatureName> {
     if crate::debug::GPU_TIME.load(std::sync::atomic::Ordering::Relaxed) {
         wanted.push(FeatureName::TimestampQuery);
     }
+    #[cfg(not(target_os = "emscripten"))]
+    if crate::debug::VS_CAPTURE_FRAME.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        wanted.push(crate::executor::VERTEX_WRITABLE_STORAGE);
+    }
     if crate::debug::NO_D32S8.load(std::sync::atomic::Ordering::Relaxed) {
         wanted.retain(|f| *f != FeatureName::Depth32FloatStencil8);
     }

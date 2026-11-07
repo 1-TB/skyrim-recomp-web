@@ -1065,17 +1065,14 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
             m.push_str("    xe_out_depth = input.frag_coord.z;\n");
         }
         m.push_str("    xe_ucode();\n");
-        if colors & 1 != 0 {
-            write!(
-                m,
-                "    if ((xe_system.flags & {alpha}u) != 0u &&
-        !xe_compare(xe_system.alpha_test_function, xe_out_color[0].w, xe_system.alpha_test_reference)) {{
-        discard;
-    }}
-",
-                alpha = flags::ALPHA_TEST
-            )
-            .unwrap();
+        // The alpha test is decided last, after the outputs are assembled, and with the
+        // comparison written out (compare functions are a less | equal | greater mask) rather
+        // than calling xe_compare: on iOS 27 (A20 Pro), with the test where the shader's color
+        // was still being produced, pixels that passed were discarded (Skyrim's characters drew
+        // without their clothing) while the same shader without the discard showed them passing.
+        let alpha_test = colors & 1 != 0;
+        if alpha_test {
+            m.push_str("    let xe_alpha = xe_out_color[0].w;\n");
         }
         if has_output {
             m.push_str("    var out: XePixelOutput;\n");
@@ -1093,6 +1090,26 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
             if self.info.writes_depth {
                 m.push_str("    out.depth = xe_out_depth;\n");
             }
+        }
+        if alpha_test {
+            write!(
+                m,
+                "    if ((xe_system.flags & {alpha}u) != 0u) {{
+        let xe_alpha_function = xe_system.alpha_test_function;
+        let xe_alpha_reference = xe_system.alpha_test_reference;
+        let xe_alpha_pass = ((xe_alpha_function & 1u) != 0u && xe_alpha < xe_alpha_reference)
+            || ((xe_alpha_function & 2u) != 0u && xe_alpha == xe_alpha_reference)
+            || ((xe_alpha_function & 4u) != 0u && xe_alpha > xe_alpha_reference);
+        if (!xe_alpha_pass) {{
+            discard;
+        }}
+    }}
+",
+                alpha = flags::ALPHA_TEST
+            )
+            .unwrap();
+        }
+        if has_output {
             m.push_str("    return out;\n");
         }
         m.push_str("}\n");

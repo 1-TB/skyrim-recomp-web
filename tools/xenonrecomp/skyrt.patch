@@ -7,6 +7,8 @@ skyrt changes to XenonRecomp (base: hedge-dev/XenonRecomp ddd128bcca99fe8bfbb99b
   vspltish, vctuxs, vpkswss128, vpkuwum, vsubuws, vsubshs, vadduhs, vaddsws,
   vslo/vslo128, bdzf, bdnzt.
 - bdnzf honours its BI operand instead of assuming cr.eq.
+- sync, lwsync and eieio emit PPC_SYNC()/PPC_LWSYNC()/PPC_EIEIO() (defined in
+  cpp/ppc_context.h) instead of nothing.
 - blrl calls through LR (upstream emits a debug trap); vupkd3d128 handles
   float16_2 and float16_4 and vpkd3d128 handles float16_2 (pack mode 1), using
   Xenia's Xenos half-float rules via helpers in cpp/ppc_context.h.
@@ -31,7 +33,7 @@ skyrt changes to XenonRecomp (base: hedge-dev/XenonRecomp ddd128bcca99fe8bfbb99b
 Applied by `cargo xtask setup-xenonrecomp`.
 
 diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
-index fa91527..0c73fb5 100644
+index fa91527..934c500 100644
 --- a/XenonRecomp/recompiler.cpp
 +++ b/XenonRecomp/recompiler.cpp
 @@ -1,4 +1,5 @@
@@ -377,7 +379,17 @@ index fa91527..0c73fb5 100644
          break;
  
      case PPC_INST_DIVD:
-@@ -1043,7 +1282,7 @@ bool Recompiler::Recompile(
+@@ -849,7 +1088,8 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_EIEIO:
+-        // no op
++        // Memory barrier; ppc_context.h decides what it costs on the host.
++        println("\tPPC_EIEIO();");
+         break;
+ 
+     case PPC_INST_EXTSB:
+@@ -1043,7 +1283,7 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_LDARX:
@@ -386,7 +398,7 @@ index fa91527..0c73fb5 100644
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32);", r(insn.operands[2]));
-@@ -1133,13 +1372,14 @@ bool Recompiler::Recompile(
+@@ -1133,13 +1373,14 @@ bool Recompiler::Recompile(
          println("\t{}.s64 = {};", r(insn.operands[0]), int32_t(insn.operands[1] << 16));
          break;
  
@@ -402,7 +414,7 @@ index fa91527..0c73fb5 100644
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32) & ~0xF))), simde_mm_load_si128((simde__m128i*)VectorMaskL)));", r(insn.operands[2]));
-@@ -1151,7 +1391,7 @@ bool Recompiler::Recompile(
+@@ -1151,7 +1392,7 @@ bool Recompiler::Recompile(
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32;", r(insn.operands[2]));
@@ -411,7 +423,7 @@ index fa91527..0c73fb5 100644
          break;
  
      case PPC_INST_LVRX:
-@@ -1160,7 +1400,7 @@ bool Recompiler::Recompile(
+@@ -1160,7 +1401,7 @@ bool Recompiler::Recompile(
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32;", r(insn.operands[2]));
@@ -420,7 +432,7 @@ index fa91527..0c73fb5 100644
          break;
  
      case PPC_INST_LVSL:
-@@ -1187,7 +1427,7 @@ bool Recompiler::Recompile(
+@@ -1187,7 +1428,7 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_LWARX:
@@ -429,7 +441,17 @@ index fa91527..0c73fb5 100644
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32);", r(insn.operands[2]));
-@@ -1503,10 +1743,12 @@ bool Recompiler::Recompile(
+@@ -1209,7 +1450,8 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_LWSYNC:
+-        // no op
++        // Memory barrier; ppc_context.h decides what it costs on the host.
++        println("\tPPC_LWSYNC();");
+         break;
+ 
+     case PPC_INST_LWZ:
+@@ -1503,10 +1745,12 @@ bool Recompiler::Recompile(
      case PPC_INST_STDCX:
          println("\t{}.lt = 0;", cr(0));
          println("\t{}.gt = 0;", cr(0));
@@ -444,7 +466,7 @@ index fa91527..0c73fb5 100644
          println("\t{}.so = {}.so;", cr(0), xer());
          break;
  
-@@ -1635,10 +1877,12 @@ bool Recompiler::Recompile(
+@@ -1635,10 +1879,12 @@ bool Recompiler::Recompile(
  
      case PPC_INST_STVX:
      case PPC_INST_STVX128:
@@ -459,7 +481,7 @@ index fa91527..0c73fb5 100644
          break;
  
      case PPC_INST_STW:
-@@ -1658,10 +1902,12 @@ bool Recompiler::Recompile(
+@@ -1658,10 +1904,12 @@ bool Recompiler::Recompile(
      case PPC_INST_STWCX:
          println("\t{}.lt = 0;", cr(0));
          println("\t{}.gt = 0;", cr(0));
@@ -474,7 +496,17 @@ index fa91527..0c73fb5 100644
          println("\t{}.so = {}.so;", cr(0), xer());
          break;
  
-@@ -1769,6 +2015,7 @@ bool Recompiler::Recompile(
+@@ -1711,7 +1959,8 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_SYNC:
+-        // no op
++        // Memory barrier; ppc_context.h decides what it costs on the host.
++        println("\tPPC_SYNC();");
+         break;
+ 
+     case PPC_INST_TDLGEI:
+@@ -1769,6 +2018,7 @@ bool Recompiler::Recompile(
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
          break;
  
@@ -482,7 +514,7 @@ index fa91527..0c73fb5 100644
      case PPC_INST_VANDC128:
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
          break;
-@@ -2015,7 +2262,9 @@ bool Recompiler::Recompile(
+@@ -2015,7 +2265,9 @@ bool Recompiler::Recompile(
              break;
  
          case 5: // float16_4
@@ -493,7 +525,7 @@ index fa91527..0c73fb5 100644
                  fmt::println("Unexpected float16_4 pack instruction at {:X}", base);
  
              for (size_t i = 0; i < 4; i++)
-@@ -2036,6 +2285,15 @@ bool Recompiler::Recompile(
+@@ -2036,6 +2288,15 @@ bool Recompiler::Recompile(
              }
              break;
  
@@ -509,7 +541,7 @@ index fa91527..0c73fb5 100644
          default:
              println("\t__builtin_debugtrap();");
              break;
-@@ -2088,6 +2346,7 @@ bool Recompiler::Recompile(
+@@ -2088,6 +2349,7 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_VSEL:
@@ -517,7 +549,7 @@ index fa91527..0c73fb5 100644
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_or_si128(simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)), simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8))));", v(insn.operands[0]), v(insn.operands[3]), v(insn.operands[1]), v(insn.operands[3]), v(insn.operands[2]));
          break;
  
-@@ -2212,6 +2471,20 @@ bool Recompiler::Recompile(
+@@ -2212,6 +2474,20 @@ bool Recompiler::Recompile(
              println("\t{} = {};", v(insn.operands[0]), vTemp());
              break;
  
@@ -538,7 +570,7 @@ index fa91527..0c73fb5 100644
          default:
              println("\t__builtin_debugtrap();");
              break;
-@@ -2510,6 +2783,11 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
+@@ -2510,6 +2786,11 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
          println("#ifndef PPC_CONFIG_H_INCLUDED");
          println("#define PPC_CONFIG_H_INCLUDED\n");
  

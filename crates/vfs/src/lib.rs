@@ -722,20 +722,31 @@ fn missing_kind(host_path: &Path) -> VfsError {
 
 /// Maps guest components onto host entries, matching case-insensitively when
 /// the exact name doesn't exist. Components that don't exist are appended as-is.
+///
+/// Apple filesystems are case-insensitive by default, so there an exact-name lookup succeeds
+/// for any casing and says nothing about the host's; the directory is always listed instead,
+/// preferring an exact match.
 fn resolve_case_insensitive(root: &Path, components: &[&str]) -> PathBuf {
     let mut path = root.to_path_buf();
     let mut exists = true;
     for c in components {
         if exists {
             let exact = path.join(c);
-            if fs::symlink_metadata(&exact).is_ok() {
+            if !cfg!(target_vendor = "apple") && fs::symlink_metadata(&exact).is_ok() {
                 path = exact;
                 continue;
             }
             let found = fs::read_dir(&path).ok().and_then(|rd| {
-                rd.filter_map(|e| e.ok())
-                    .find(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(c)))
-                    .map(|e| e.file_name())
+                let mut folded = None;
+                for e in rd.filter_map(|e| e.ok()) {
+                    let name = e.file_name();
+                    match name.to_str() {
+                        Some(n) if n == *c => return Some(name),
+                        Some(n) if folded.is_none() && n.eq_ignore_ascii_case(c) => folded = Some(name),
+                        _ => {}
+                    }
+                }
+                folded
             });
             match found {
                 Some(name) => {

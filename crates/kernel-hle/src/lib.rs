@@ -169,6 +169,7 @@ impl Kernel {
             xboxkrnl::spin_count_field(10000),
         );
         kernel.gpu.init_registers(kernel.mem());
+        kernel.xma_init_registers();
         variables::spawn_time_stamp_updater(kernel.mem(), kernel.vars.ke_time_stamp_bundle);
         Ok(kernel)
     }
@@ -219,6 +220,7 @@ impl Kernel {
         if GLOBAL.set(self).is_err() {
             panic!("a kernel is already installed");
         }
+        runtime_core::guest::set_missing_function_report(report_missing_function);
     }
 
     /// The installed kernel, if boot has got that far.
@@ -276,4 +278,83 @@ impl Kernel {
         self.dispatch(e.module, e.ordinal, ctx);
         ctx.gpr(3)
     }
+}
+
+/// Logs what led to a guest call through a bad pointer: the registers, the object in r3 and
+/// what its first word (a vtable, for a virtual call) points at, and the return addresses on
+/// the guest stack. A call through a corrupted object is otherwise only a bad address.
+fn report_missing_function(addr: u32, ctx: *const u8) {
+    let Some(k) = Kernel::try_global() else { return };
+    log::error!("bad guest call to {addr:#010X}");
+    k.log_guest_state(ctx);
+}
+
+impl Kernel {
+    /// Logs the calling guest thread's state for a crash report (see [`Kernel::log_guest_state`]).
+    pub fn log_current_guest_state(&self) {
+        let Some(t) = thread::current() else { return };
+        let ctx = t.context.load(std::sync::atomic::Ordering::Relaxed);
+        if !ctx.is_null() {
+            self.log_guest_state(ctx.cast());
+        }
+    }
+
+    /// Logs a guest thread's registers, the memory r3, r30 and r31 point at (and, for an object,
+    /// what its first word points at), and the return addresses on its stack. The context is
+    /// read racily: on a fault in recompiled code some registers may not be stored back yet.
+    pub fn log_guest_state(&self, ctx: *const u8) {
+        log_guest_state(self, ctx);
+    }
+}
+
+fn log_guest_state(k: &Kernel, ctx: *const u8) {
+    use runtime_core::context::offsets;
+    // SAFETY: the dispatch passes the calling thread's live PPCContext.
+    let reg = |off: usize| unsafe { ctx.add(off).cast::<u64>().read_unaligned() } as u32;
+    let gpr = |n: usize| match n {
+        0 => reg(offsets::R0),
+        1 => reg(offsets::R1),
+        2 => reg(offsets::R2),
+        3 => reg(offsets::R3),
+        n => reg(offsets::R4 + (n - 4) * 8),
+    };
+    let mem = k.mem();
+    // Guest memory is mapped readable below the folded physical views; past them, skip.
+    let readable = |a: u32| a >= 0x4000_0000 && a < 0xC000_0000;
+    let words = |a: u32, n: u32| -> String {
+        if !readable(a) {
+            return "(not readable)".into();
+        }
+        (0..n).map(|i| format!("{:08X}", mem.read_u32(a + i * 4))).collect::<Vec<_>>().join(" ")
+    };
+    let regs: Vec<String> = (0..32).map(|n| format!("r{n}={:08X}", gpr(n))).collect();
+    log::error!("  lr {:#010X}, ctr {:#010X}", reg(offsets::LR), reg(offsets::CTR));
+    log::error!("  {}", regs.join(" "));
+    // Every register that points into guest memory: the object a bad access came from is
+    // usually one of them.
+    for n in 3..32 {
+        let obj = gpr(n);
+        if !readable(obj) || (n != 3 && (0x7000_0000..0x7E00_0000).contains(&obj)) {
+            continue;
+        }
+        log::error!("  [r{n}] {obj:08X}: {}", words(obj, 32));
+        let first = mem.read_u32(obj);
+        if readable(first) {
+            log::error!("  [[r{n}]] {first:08X}: {}", words(first, 8));
+        }
+    }
+    let mut sp = gpr(1);
+    let mut frames = Vec::new();
+    for _ in 0..24 {
+        if !readable(sp) {
+            break;
+        }
+        let caller = mem.read_u32(sp);
+        if !readable(caller) || caller <= sp {
+            break;
+        }
+        frames.push(format!("{:08X}", mem.read_u32(caller - 8)));
+        sp = caller;
+    }
+    log::error!("  guest return addresses: {}", frames.join(" "));
 }

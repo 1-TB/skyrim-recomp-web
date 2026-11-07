@@ -17,6 +17,7 @@ members = [
     "crates/xma-decoder",
     "hosts/host-native",
     "hosts/host-web",
+    "hosts/host-ios",
     "xtask",
 ]
 # guest-sys and the hosts need recompiled guest code (XENON_RECOMP_OUT), so a bare

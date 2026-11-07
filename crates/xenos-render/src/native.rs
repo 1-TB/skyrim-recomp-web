@@ -31,9 +31,22 @@ pub struct Window {
 
 #[derive(Debug, Clone, Copy)]
 pub enum WindowHandles {
-    Xlib { display: usize, window: u64 },
-    Xcb { connection: usize, window: u32 },
-    Wayland { display: usize, surface: usize },
+    Xlib {
+        display: usize,
+        window: u64,
+    },
+    Xcb {
+        connection: usize,
+        window: u32,
+    },
+    Wayland {
+        display: usize,
+        surface: usize,
+    },
+    /// A `CAMetalLayer` (macOS, iOS) that the host keeps alive and sized to its view.
+    Metal {
+        layer: usize,
+    },
 }
 
 impl Window {
@@ -103,6 +116,15 @@ impl Presentation {
     }
 }
 
+static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Stops (or restarts) the renderer's GPU work: iOS aborts command buffers submitted while an
+/// app is in the background, and a lost device can't be recovered. The renderer notices within
+/// one pump (a few milliseconds).
+pub fn set_paused(paused: bool) {
+    PAUSED.store(paused, Ordering::Relaxed);
+}
+
 /// Starts the renderer thread. If no WebGPU device can be created the error is logged and
 /// the handle never blocks (submitted work is dropped).
 pub fn start(
@@ -128,14 +150,16 @@ struct Offscreen {
     view: TextureView,
     readback: Buffer,
     row: u32,
+    /// RGBA8 or BGRA8: the presenter's pipeline is built for the window's format.
+    format: TextureFormat,
 }
 
 impl Offscreen {
-    fn new(device: &Device, width: u32, height: u32) -> Self {
+    fn new(device: &Device, width: u32, height: u32, format: TextureFormat) -> Self {
         let texture = device.create_texture(&TextureDescriptor {
             label: "present target",
             size: extent(width, height, 1),
-            format: TextureFormat::RGBA8Unorm,
+            format,
             usage: TextureUsage::RenderAttachment | TextureUsage::CopySrc,
             ..Default::default()
         });
@@ -147,7 +171,7 @@ impl Offscreen {
             usage: BufferUsage::MapRead | BufferUsage::CopyDst,
             mapped_at_creation: false,
         });
-        Offscreen { width, height, texture, view, readback, row }
+        Offscreen { width, height, texture, view, readback, row, format }
     }
 }
 
@@ -169,6 +193,7 @@ fn run(
                 WindowHandles::Wayland { display, surface } => {
                     SurfaceTarget::Wayland { display: display as *mut _, surface: surface as *mut _ }
                 }
+                WindowHandles::Metal { layer } => SurfaceTarget::Metal { layer: layer as *mut _ },
             })?
         }),
         None => None,
@@ -214,7 +239,10 @@ fn run(
     let format = presentation.as_ref().map_or(TextureFormat::RGBA8Unorm, |p| p.format);
     let mut renderer = Renderer::new(&device, memory, format, targets);
     let mut offscreen: Option<Offscreen> = None;
-    if options.dump_dir.is_some() && format != TextureFormat::RGBA8Unorm {
+    // Frames are written from an offscreen copy in the window's format, so the presenter's
+    // pipeline fits it; PNGs need 8-bit RGBA or BGRA (Metal layers are BGRA).
+    let dumpable = matches!(format, TextureFormat::RGBA8Unorm | TextureFormat::BGRA8Unorm);
+    if options.dump_dir.is_some() && !dumpable {
         log::warn!("renderer: the window is {format:?}; frames are not dumped");
     }
     if let Some(dir) = &options.dump_dir {
@@ -229,6 +257,11 @@ fn run(
     let mut report_draws = renderer.executor.stats.draws;
 
     loop {
+        if PAUSED.load(Ordering::Relaxed) {
+            // Nothing is submitted while paused; a title waiting on the renderer waits too.
+            std::thread::park_timeout(Duration::from_millis(50));
+            continue;
+        }
         instance.process_events();
         let started = std::time::Instant::now();
         let before = handle.completed();
@@ -239,7 +272,7 @@ fn run(
             }
             presents.push(std::time::Instant::now());
             let Some(dir) = &options.dump_dir else { return };
-            if format != TextureFormat::RGBA8Unorm {
+            if !dumpable {
                 return;
             }
             if !r.presenter.frames.is_multiple_of(every) {
@@ -247,7 +280,7 @@ fn run(
             }
             let target = match offscreen.take() {
                 Some(o) if o.width == w && o.height == h => o,
-                _ => Offscreen::new(&r.device, w, h),
+                _ => Offscreen::new(&r.device, w, h, format),
             };
             let path = dir.join(format!("frame_{:06}.png", r.presenter.frames));
             match dump(&r.device, &r.presenter, &target, &path) {
@@ -310,8 +343,11 @@ fn dump(device: &Device, presenter: &crate::present::Presenter, target: &Offscre
     let mut padded = vec![0u8; (target.row * target.height) as usize];
     target.readback.read_mapped(0, &mut padded)?;
     target.readback.unmap();
-    let rgba: Vec<u8> =
+    let mut rgba: Vec<u8> =
         padded.chunks(target.row as usize).flat_map(|r| &r[..target.width as usize * 4]).copied().collect();
+    if target.format == TextureFormat::BGRA8Unorm {
+        rgba.chunks_exact_mut(4).for_each(|p| p.swap(0, 2));
+    }
     write_png(path, target.width, target.height, &rgba).map_err(|e| Error::Invalid(e.to_string()))
 }
 
@@ -375,7 +411,7 @@ pub(crate) fn dump_view(device: &Device, view: &TextureView, width: u32, height:
         &layout,
         &[BindGroupEntry { binding: 0, resource: BindingResource::TextureView(view) }],
     );
-    let target = Offscreen::new(device, width, height);
+    let target = Offscreen::new(device, width, height, TextureFormat::RGBA8Unorm);
     let mut encoder = device.create_command_encoder("view dump");
     let mut pass = encoder.begin_render_pass(
         "view dump",
