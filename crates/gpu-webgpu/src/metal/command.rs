@@ -43,6 +43,11 @@ impl std::fmt::Debug for CommandBuffer {
 pub struct CommandEncoder {
     pub(crate) raw: MtlCommandBuffer,
     blit: Option<Id<dyn MTLBlitCommandEncoder>>,
+    /// The compute encoder of the last compute pass, left open so that the next compute pass
+    /// continues it: on Apple GPUs every encoder boundary leaves the GPU idle for tens of
+    /// microseconds, and the renderer records many small compute passes in a row. Dispatches
+    /// in one (serial) compute encoder still run in order with their writes visible.
+    compute: Option<Id<dyn MTLComputeCommandEncoder>>,
     device: Device,
 }
 
@@ -56,7 +61,7 @@ impl Device {
     pub fn create_command_encoder(&self, label: &str) -> CommandEncoder {
         let raw = self.shared.new_command_buffer();
         set_label!(raw, label);
-        CommandEncoder { raw, blit: None, device: self.clone() }
+        CommandEncoder { raw, blit: None, compute: None, device: self.clone() }
     }
 }
 
@@ -132,15 +137,24 @@ pub(crate) fn encode_buffer_to_texture(
 
 impl CommandEncoder {
     fn blit(&mut self) -> &ProtocolObject<dyn MTLBlitCommandEncoder> {
+        self.end_compute();
         if self.blit.is_none() {
             self.blit = Some(self.raw.blitCommandEncoder().expect("cannot create a Metal blit encoder"));
         }
         self.blit.as_deref().unwrap()
     }
 
+    /// Ends the open blit or compute encoder, before another kind of encoder starts.
     pub(crate) fn end_blit(&mut self) {
         if let Some(b) = self.blit.take() {
             b.endEncoding();
+        }
+        self.end_compute();
+    }
+
+    fn end_compute(&mut self) {
+        if let Some(c) = self.compute.take() {
+            c.endEncoding();
         }
     }
 
@@ -240,20 +254,37 @@ impl CommandEncoder {
     pub fn begin_compute_pass(&mut self, label: &str) -> ComputePass<'_> {
         crate::counters::add(&crate::counters::count::compute_passes, 1);
         self.end_blit();
-        let raw = autoreleasepool(|_| match super::timing::compute_pass(&self.raw, label) {
-            Some(d) => self.raw.computeCommandEncoderWithDescriptor(&d),
-            None => self.raw.computeCommandEncoder(),
-        })
-        .expect("cannot create a Metal compute encoder");
-        set_label!(raw, label);
+        if let Some(b) = self.blit.take() {
+            b.endEncoding();
+        }
+        // Timed passes need encoders of their own (the samples bracket an encoder).
+        let timed = super::timing::compute_pass(&self.raw, label);
+        if timed.is_some() {
+            self.end_compute();
+        }
+        let raw = match self.compute.take() {
+            Some(open) => {
+                open.insertDebugSignpost(&ns(label));
+                open
+            }
+            None => {
+                let raw = autoreleasepool(|_| match timed {
+                    Some(d) => self.raw.computeCommandEncoderWithDescriptor(&d),
+                    None => self.raw.computeCommandEncoder(),
+                })
+                .expect("cannot create a Metal compute encoder");
+                set_label!(raw, label);
+                raw
+            }
+        };
         ComputePass {
             raw,
+            home: &mut self.compute,
             ended: false,
             pipeline: None,
             groups: Default::default(),
             dirty_groups: 0,
             cache: SlotCache::default(),
-            _encoder: PhantomData,
         }
     }
 
@@ -715,12 +746,13 @@ impl Drop for RenderPass<'_> {
 /// An open compute pass (see [`RenderPass`]).
 pub struct ComputePass<'e> {
     raw: Id<dyn MTLComputeCommandEncoder>,
+    /// Where the encoder goes back to (still open) when the pass ends.
+    home: &'e mut Option<Id<dyn MTLComputeCommandEncoder>>,
     ended: bool,
     pipeline: Option<Rc<super::shader::ComputePipelineInner>>,
     groups: [BoundGroup; MAX_GROUPS],
     dirty_groups: u32,
     cache: SlotCache,
-    _encoder: PhantomData<&'e mut CommandEncoder>,
 }
 
 impl ComputePass<'_> {
@@ -811,7 +843,11 @@ impl ComputePass<'_> {
     fn finish(&mut self) {
         if !self.ended {
             self.ended = true;
-            self.raw.endEncoding();
+            if super::timing::enabled() {
+                self.raw.endEncoding();
+            } else {
+                *self.home = Some(self.raw.clone());
+            }
         }
     }
 }

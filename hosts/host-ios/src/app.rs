@@ -54,6 +54,8 @@ struct State {
     settings_path: std::path::PathBuf,
     /// The settings panel, until Play is tapped.
     panel: Option<Panel>,
+    /// Start with the saved settings, without showing the panel (`--autoplay` in args.txt).
+    autoplay: bool,
     /// The renderer's window, handed to `boot` on Play.
     render_window: Option<RenderWindow>,
     fps: Option<FpsLabel>,
@@ -75,6 +77,7 @@ thread_local! {
         boot: None,
         settings_path: std::path::PathBuf::new(),
         panel: None,
+        autoplay: false,
         render_window: None,
         fps: None,
         size: Arc::new(AtomicU64::new(0)),
@@ -95,13 +98,18 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
 }
 
 /// Runs UIKit on this (the main) thread; never returns. `boot` gets the window for the renderer
-/// and the settings chosen (kept in `settings_path`) once Play is tapped, and must start the
-/// title on another thread.
-pub fn run(settings_path: std::path::PathBuf, boot: impl FnOnce(RenderWindow, Settings) + 'static) -> Result<(), String> {
+/// and the settings chosen (kept in `settings_path`) once Play is tapped (at once with
+/// `autoplay`), and must start the title on another thread.
+pub fn run(
+    settings_path: std::path::PathBuf,
+    autoplay: bool,
+    boot: impl FnOnce(RenderWindow, Settings) + 'static,
+) -> Result<(), String> {
     let mtm = MainThreadMarker::new().ok_or("not on the main thread")?;
     with_state(|s| {
         s.boot = Some(Box::new(boot));
         s.settings_path = settings_path;
+        s.autoplay = autoplay;
     });
     // Registered before UIKit looks them up by name (the scene delegate through Info.plist).
     let _ = (SkyrtSceneDelegate::class(), SkyrtViewController::class(), SkyrtView::class());
@@ -236,24 +244,18 @@ define_class!(
         /// The settings panel's Play button: saves the settings and boots the title.
         #[unsafe(method(settingsPlay:))]
         fn settings_play(&self, _sender: &AnyObject) {
-            let mtm = self.mtm();
-            let boot = with_state(|s| {
+            let settings = with_state(|s| {
                 let panel = s.panel.take()?;
                 let settings = panel.settings();
                 settings.save(&s.settings_path);
                 panel.remove();
                 // Touches on the panel reached the controls under it too.
                 s.touch.reset();
-                if settings.show_fps {
-                    s.fps = Some(FpsLabel::new(mtm, self));
-                }
-                Some((s.boot.take()?, s.render_window.take()?, settings))
+                Some(settings)
             })
             .flatten();
-            layout(self);
-            if let Some((boot, window, settings)) = boot {
-                log::info!("settings: {settings:?}");
-                boot(window, settings);
+            if let Some(settings) = settings {
+                play(self, settings);
             }
         }
 
@@ -317,11 +319,33 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
         s.overlay = Some(overlay);
         s.status = Some(status);
         s.window = Some(window);
-        let settings = Settings::load(&s.settings_path);
-        s.panel = Some(Panel::new(mtm, &view, &settings, &view));
         s.render_window = Some(RenderWindow { handles: WindowHandles::Metal { layer }, size: s.size.clone() });
     });
+    let (settings, autoplay) = with_state(|s| (Settings::load(&s.settings_path), s.autoplay)).unwrap_or_default();
+    if autoplay {
+        layout(&view);
+        play(&view, settings);
+        return;
+    }
+    with_state(|s| s.panel = Some(Panel::new(mtm, &view, &settings, &view)));
     layout(&view);
+}
+
+/// Boots the title with `settings` (from the panel's Play button, or at launch with autoplay).
+fn play(view: &SkyrtView, settings: Settings) {
+    let mtm = view.mtm();
+    let boot = with_state(|s| {
+        if settings.show_fps {
+            s.fps = Some(FpsLabel::new(mtm, view));
+        }
+        Some((s.boot.take()?, s.render_window.take()?))
+    })
+    .flatten();
+    layout(view);
+    if let Some((boot, window)) = boot {
+        log::info!("settings: {settings:?}");
+        boot(window, settings);
+    }
 }
 
 /// Fits the drawable to the view, the controls to its safe area (clear of the Dynamic Island

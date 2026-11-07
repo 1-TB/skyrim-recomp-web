@@ -12,7 +12,8 @@
 //! * `settings.txt`: the choices made in the settings panel shown at launch (settings.rs);
 //! * `args.txt` (optional): extra command-line options, as for `skyrim-native`, one or more per
 //!   line; lines starting with `#` are ignored. They come after the settings' options, so they
-//!   override them. `--dump-frames DIR --dump-every N` writes every
+//!   override them. `--autoplay` starts the title with the saved settings without showing the
+//!   settings panel. `--dump-frames DIR --dump-every N` writes every
 //!   Nth presented frame to `DIR` (in Documents) as PNG.
 
 mod app;
@@ -49,7 +50,10 @@ pub extern "C" fn skyrt_ios_main() {
     // the process starts in / otherwise, which the app can't write.
     let _ = std::env::set_current_dir(&docs);
     tee_stderr(&docs.join("logs"));
-    let extra = read_args(&docs.join("args.txt"));
+    let mut extra = read_args(&docs.join("args.txt"));
+    // `--autoplay`: start with the saved settings, without the settings panel (scripted runs).
+    let autoplay = extra.iter().any(|a| a == "--autoplay");
+    extra.retain(|a| a != "--autoplay");
     // The log level is needed now; the other options are read once Play is tapped.
     let log_level = extra.iter().position(|a| a == "--log").and_then(|i| extra.get(i + 1)).cloned();
     if let Err(e) = kernel_hle::logging::init(log_level.as_deref().unwrap_or("info")) {
@@ -59,7 +63,7 @@ pub extern "C" fn skyrt_ios_main() {
     crash::install();
     runtime_core::thread::set_thread_start_hook(crash::install_alt_stack);
     let settings_path = docs.join("settings.txt");
-    let result = app::run(settings_path, move |window, settings| {
+    let result = app::run(settings_path, autoplay, move |window, settings| {
         let mut args = vec![
             "--game-dir".to_string(),
             docs.join("game").display().to_string(),

@@ -700,6 +700,14 @@ impl Device {
         self.shared.poll();
     }
 
+    /// Blocks until the oldest submission still running completes (or yields if none is),
+    /// instead of polling in a loop while waiting for the GPU.
+    pub fn wait_for_gpu_progress(&self) {
+        if !self.shared.wait_oldest() {
+            std::thread::yield_now();
+        }
+    }
+
     /// Waits for `pending`, blocking on GPU progress.
     pub fn block_on<T>(&self, pending: Pending<T>) -> T {
         loop {

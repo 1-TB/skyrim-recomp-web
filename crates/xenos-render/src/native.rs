@@ -296,6 +296,11 @@ fn run(
         if handle.completed() != before || renderer.backlog_len() > 0 {
             busy += started.elapsed();
         }
+        // Waiting for the GPU (frames in flight, a resolve, uploads): block until it gets
+        // somewhere rather than spinning through pump (which kept a core busy reading clocks).
+        if renderer.executor.busy() {
+            device.wait_for_gpu_progress();
+        }
         let window = report_at.elapsed();
         if window >= Duration::from_secs(5) {
             let frames = presents.len() as u64;

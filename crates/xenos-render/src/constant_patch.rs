@@ -9,7 +9,9 @@
 //! 256-bit mask of the changed vec4s and their values. Before the submission's own commands, one
 //! compute dispatch replays the patches into the blocks: one workgroup per stage and one
 //! invocation per vec4 index, walking the stage's blocks in order and carrying the last value
-//! forward (indices are independent, so nothing synchronizes).
+//! forward (indices are independent, so nothing synchronizes). The records are grouped by stage
+//! when uploaded, so each workgroup walks only its own stage's (the walk is serial, and with
+//! every stage's records in it the dispatch took ~0.6 ms on an M2 GPU).
 //!
 //! The first block of a stage in a submission has no previous block: all of it is sent.
 
@@ -34,8 +36,12 @@ pub const FETCH: u32 = 2;
 pub const SYSTEM: u32 = 3;
 pub const BOOL_LOOP: u32 = 4;
 
+/// Words before the first record: where each stage's records start, then the record count.
+const HEADER_WORDS: usize = STAGES as usize + 1;
+
 const SHADER: &str = r#"
-// records[0] is the record count; record r starts at 1 + 12 r.
+// records[s] (s < 5) is the index of stage s's first record and records[5] the record count;
+// record r starts at 6 + 12 r. Records are grouped by stage, in submission order within one.
 @group(0) @binding(0) var<storage, read> records: array<u32>;
 @group(0) @binding(1) var<storage, read> values: array<vec4<u32>>;
 @group(0) @binding(2) var<storage, read_write> blocks: array<vec4<u32>>;
@@ -43,15 +49,13 @@ const SHADER: &str = r#"
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) t: u32) {
     let stage = group.x;
-    let count = records[0];
+    let first = records[stage];
+    let end = records[stage + 1u];
     let word_index = t / 32u;
     let bit = 1u << (t % 32u);
     var current = vec4<u32>(0u);
-    for (var r = 0u; r < count; r++) {
-        let b = 1u + r * 12u;
-        if (records[b] != stage) {
-            continue;
-        }
+    for (var r = first; r < end; r++) {
+        let b = 6u + r * 12u;
         let mask = records[b + 4u + word_index];
         if ((mask & bit) != 0u) {
             // This vec4's value is the n-th of the record's values, n = changed vec4s before it.
@@ -73,7 +77,7 @@ pub struct ConstantPatcher {
     pub buffer: Buffer,
     alignment: u64,
     cursor: u64,
-    /// Record count followed by the records.
+    /// The records, in submission order.
     records: Vec<u32>,
     values: Vec<u8>,
     records_buffer: Buffer,
@@ -94,7 +98,7 @@ impl ConstantPatcher {
         );
         let records_buffer = buffer(
             "xenos constant patches",
-            ((1 + MAX_RECORDS * RECORD_WORDS) * 4) as u64,
+            ((HEADER_WORDS + MAX_RECORDS * RECORD_WORDS) * 4) as u64,
             BufferUsage::Storage | BufferUsage::CopyDst,
         );
         let values_buffer = buffer(
@@ -135,7 +139,7 @@ impl ConstantPatcher {
             buffer: blocks,
             alignment: alignment.max(16),
             cursor: 0,
-            records: vec![0],
+            records: Vec::new(),
             values: Vec::new(),
             records_buffer,
             values_buffer,
@@ -151,7 +155,7 @@ impl ConstantPatcher {
         let bytes: u64 = windows.iter().map(|w| w.next_multiple_of(self.alignment)).sum();
         let vec4s: usize = windows.iter().map(|&w| (w as usize / 16).min(INDICES)).sum();
         self.cursor.next_multiple_of(self.alignment) + bytes <= BLOCK_BUFFER_BYTES
-            && (self.records.len() - 1) / RECORD_WORDS + windows.len() <= MAX_RECORDS
+            && self.records.len() / RECORD_WORDS + windows.len() <= MAX_RECORDS
             && self.values.len() / 16 + vec4s <= MAX_VALUES
     }
 
@@ -173,7 +177,6 @@ impl ConstantPatcher {
         }
         self.records.extend([stage, (offset / 16) as u32, (data.len() / 16) as u32, first_value as u32]);
         self.records.extend(mask);
-        self.records[0] += 1;
         offset as u32
     }
 
@@ -198,17 +201,27 @@ impl ConstantPatcher {
         self.values.extend_from_slice(values);
         self.records.extend([stage, (offset / 16) as u32, count as u32, first_value as u32]);
         self.records.extend(mask);
-        self.records[0] += 1;
         offset as u32
     }
 
     /// Uploads the patches and returns the command buffer that applies them (to submit before
     /// the draws that read the blocks), with the bytes uploaded; `None` if there are none.
     pub fn encode(&mut self, device: &Device) -> Option<(CommandBuffer, u64)> {
-        if self.records[0] == 0 {
+        if self.records.is_empty() {
             return None;
         }
-        let records: Vec<u8> = self.records.iter().flat_map(|w| w.to_le_bytes()).collect();
+        // Grouped by stage (stable: a stage's records stay in order), after the header.
+        let count = self.records.len() / RECORD_WORDS;
+        let mut words = Vec::with_capacity(HEADER_WORDS + self.records.len());
+        words.resize(HEADER_WORDS, 0);
+        for stage in 0..STAGES {
+            words[stage as usize] = ((words.len() - HEADER_WORDS) / RECORD_WORDS) as u32;
+            for record in self.records.chunks_exact(RECORD_WORDS).filter(|r| r[0] == stage) {
+                words.extend_from_slice(record);
+            }
+        }
+        words[STAGES as usize] = count as u32;
+        let records: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
         device.queue().write_buffer(&self.records_buffer, 0, &records);
         if !self.values.is_empty() {
             device.queue().write_buffer(&self.values_buffer, 0, &self.values);
@@ -227,8 +240,7 @@ impl ConstantPatcher {
     /// The submission went out: blocks and patches start over.
     pub fn rewind(&mut self) {
         self.cursor = 0;
-        self.records.truncate(1);
-        self.records[0] = 0;
+        self.records.clear();
         self.values.clear();
     }
 }

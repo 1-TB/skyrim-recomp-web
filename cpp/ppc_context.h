@@ -23,6 +23,10 @@
 //   * sync, lwsync and eieio (which upstream drops) are PPC_SYNC/PPC_LWSYNC/PPC_EIEIO:
 //     fences on weakly ordered hosts (ARM), nothing elsewhere.
 //   * On ARM, reading FPSCR (mffs) maps FPCR's rounding field in its own order.
+//   * lwarx/stwcx. and ldarx/stdcx. are PPC_LWARX/PPC_STWCX/PPC_LDARX/PPC_STDCX: a
+//     reservation is a value plus a version that every conditional store bumps, so
+//     a conditional store fails if another one hit the location since the load
+//     (upstream compares values only, which lets lock-free lists suffer ABA).
 //
 // Upstream license:
 //
@@ -54,7 +58,8 @@
 // Revision 2: memory accesses go through PPC_EA.
 // Revision 3: stores mark the pages they wrote (PPC_MARK_WRITTEN).
 // Revision 4: memory barriers are emitted (PPC_SYNC, PPC_LWSYNC, PPC_EIEIO).
-#define SKYRT_PPC_CONTEXT_FORK 4
+// Revision 5: reservations are emitted as macros (PPC_LWARX, PPC_STWCX, PPC_LDARX, PPC_STDCX).
+#define SKYRT_PPC_CONTEXT_FORK 5
 
 #ifndef PPC_CONFIG_H_INCLUDED
 #error "ppc_config.h must be included before ppc_context.h"
@@ -142,6 +147,97 @@ static inline __attribute__((always_inline)) void skyrt_mark_written(uint32_t ea
 #define PPC_LWSYNC() ((void)0)
 #define PPC_EIEIO() ((void)0)
 #endif
+
+// Load-reserve / store-conditional. On PowerPC a stwcx. fails if anything stored to the
+// reservation granule since the lwarx; comparing the value alone (a compare-and-swap) lets
+// another thread pop and push the same node in between unnoticed (ABA), and a lock-free list
+// or heap pool then hands one node out twice. Skyrim's job lists ended up with cycles that
+// way, a thread spinning forever in a list walk. Each conditional store therefore also bumps a
+// version in a table indexed by address (odd while the store is in progress), and the store
+// succeeds only if the version is still the one its load saw. Plain stores don't bump it: the
+// guest's lock-free code updates shared words only with conditional stores. Distinct addresses
+// may share a slot; that only costs a retry.
+#define SKYRT_RESV_SLOTS 4096u
+
+struct alignas(64) SkyrtResvSlot
+{
+    uint64_t version;
+};
+
+inline SkyrtResvSlot skyrt_resv[SKYRT_RESV_SLOTS];
+// The thread's reservation: its slot and the version seen (1 = none; versions start even).
+inline thread_local uint32_t skyrt_resv_slot_held;
+inline thread_local uint64_t skyrt_resv_version = 1;
+
+static inline __attribute__((always_inline)) uint32_t skyrt_resv_slot(uint32_t ea)
+{
+    return ((ea >> 2) * 0x9E3779B1u) >> (32 - 12);
+}
+
+static inline __attribute__((always_inline)) void skyrt_reserve(uint32_t ea)
+{
+    uint32_t slot = skyrt_resv_slot(ea);
+    skyrt_resv_slot_held = slot;
+    skyrt_resv_version = __atomic_load_n(&skyrt_resv[slot].version, __ATOMIC_ACQUIRE);
+}
+
+// Takes the slot for a conditional store to `ea` if the thread's reservation is intact.
+static inline __attribute__((always_inline)) bool skyrt_resv_lock(uint32_t ea, uint64_t* version)
+{
+    uint64_t v = skyrt_resv_version;
+    skyrt_resv_version = 1;
+    uint32_t slot = skyrt_resv_slot(ea);
+    if ((v & 1) != 0 || slot != skyrt_resv_slot_held)
+        return false;
+    *version = v;
+    return __atomic_compare_exchange_n(&skyrt_resv[slot].version, &v, v + 1, false, __ATOMIC_ACQ_REL,
+        __ATOMIC_RELAXED);
+}
+
+static inline __attribute__((always_inline)) void skyrt_resv_unlock(uint32_t ea, uint64_t version)
+{
+    __atomic_store_n(&skyrt_resv[skyrt_resv_slot(ea)].version, version + 2, __ATOMIC_RELEASE);
+}
+
+static inline __attribute__((always_inline)) uint32_t skyrt_lwarx(volatile uint32_t* p, uint32_t ea)
+{
+    skyrt_reserve(ea);
+    return __atomic_load_n(p, __ATOMIC_SEQ_CST);
+}
+
+static inline __attribute__((always_inline)) uint64_t skyrt_ldarx(volatile uint64_t* p, uint32_t ea)
+{
+    skyrt_reserve(ea);
+    return __atomic_load_n(p, __ATOMIC_SEQ_CST);
+}
+
+// `expected` and `value` are as stored (big-endian).
+static inline __attribute__((always_inline)) bool skyrt_stwcx(volatile uint32_t* p, uint32_t ea, uint32_t expected,
+    uint32_t value)
+{
+    uint64_t version;
+    if (!skyrt_resv_lock(ea, &version))
+        return false;
+    bool stored = __atomic_compare_exchange_n(p, &expected, value, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    skyrt_resv_unlock(ea, version);
+    return stored;
+}
+
+static inline __attribute__((always_inline)) bool skyrt_stdcx(volatile uint64_t* p, uint32_t ea, uint64_t expected,
+    uint64_t value)
+{
+    uint64_t version;
+    if (!skyrt_resv_lock(ea, &version))
+        return false;
+    bool stored = __atomic_compare_exchange_n(p, &expected, value, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    skyrt_resv_unlock(ea, version);
+    return stored;
+}
+
+#define PPC_LWARX(x) skyrt_lwarx((volatile uint32_t*)PPC_EA(x), (uint32_t)(x))
+#define PPC_LDARX(x) skyrt_ldarx((volatile uint64_t*)PPC_EA(x), (uint32_t)(x))
+#define PPC_STWCX(x, expected, value) skyrt_stwcx((volatile uint32_t*)PPC_EA(x), (uint32_t)(x), (expected), (value))
+#define PPC_STDCX(x, expected, value) skyrt_stdcx((volatile uint64_t*)PPC_EA(x), (uint32_t)(x), (expected), (value))
 
 // Xenos half floats for vpkd3d128/vupkd3d128 (the skyrt XenonRecomp patch
 // emits calls to these). Ported from Xenia's float_to_xenos_half /

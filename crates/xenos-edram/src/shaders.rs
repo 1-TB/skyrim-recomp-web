@@ -931,6 +931,12 @@ fn tiled_3d(x: i32, y: i32, z: i32, pitch: u32, height: u32, bpb_log2: u32) -> i
     return tiled_combine(oib, bank, pipe, u32(y & 1));
 }
 
+// Four 1-bit (k_DXT3A_AS_1_1_1_1) pixels of row `y` from `x` on, packed 4 bits apart.
+fn block_row(x: u32, y: u32, width: u32) -> u32 {
+    let i = y * width + x;
+    return (src[i] & 0xFu) | ((src[i + 1u] & 0xFu) << 4u) | ((src[i + 2u] & 0xFu) << 8u) | ((src[i + 3u] & 0xFu) << 12u);
+}
+
 fn bswap(w: u32) -> u32 {
     return (w << 24u) | ((w & 0xFF00u) << 8u) | ((w >> 8u) & 0xFF00u) | (w >> 24u);
 }
@@ -963,30 +969,28 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let bpe = prm(7u);
     let endian = prm(8u);
     let block_1111 = prm(12u) != 0u;
-    var w = array<u32, 4>(0u, 0u, 0u, 0u);
+    // Words held in a vector and indexed by constants only: local arrays indexed by a variable
+    // live in per-thread scratch memory on some GPUs (Apple's), which made this pass slow.
+    var w = vec4<u32>(0u);
     var ex: u32;
     var ey: u32;
     if (block_1111) {
         if (gid.x >= width / 4u || gid.y >= height / 4u) { return; }
-        var rows = array<u32, 4>(0u, 0u, 0u, 0u);
-        for (var r = 0u; r < 4u; r++) {
-            for (var i = 0u; i < 4u; i++) {
-                let px = gid.x * 4u + i;
-                let py = gid.y * 4u + r;
-                rows[r] |= (src[py * width + px] & 0xFu) << (4u * i);
-            }
-        }
-        w[0] = rows[0] | (rows[1] << 16u);
-        w[1] = rows[2] | (rows[3] << 16u);
+        let row0 = block_row(gid.x * 4u, gid.y * 4u, width);
+        let row1 = block_row(gid.x * 4u, gid.y * 4u + 1u, width);
+        let row2 = block_row(gid.x * 4u, gid.y * 4u + 2u, width);
+        let row3 = block_row(gid.x * 4u, gid.y * 4u + 3u, width);
+        w.x = row0 | (row1 << 16u);
+        w.y = row2 | (row3 << 16u);
         ex = gid.x + prm(5u) / 4u;
         ey = gid.y + prm(6u) / 4u;
     } else {
         if (gid.x >= width || gid.y >= height) { return; }
         let wpp = prm(11u);
         let i = (gid.y * width + gid.x) * wpp;
-        for (var k = 0u; k < wpp; k++) {
-            w[k] = src[i + k];
-        }
+        w.x = src[i];
+        if (wpp > 1u) { w.y = src[i + 1u]; }
+        if (wpp > 2u) { w.z = src[i + 2u]; w.w = src[i + 3u]; }
         ex = gid.x + prm(5u);
         ey = gid.y + prm(6u);
     }
@@ -1002,28 +1006,29 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (offset < 0 || u32(offset) + bpe > prm(15u)) { return; }
     let a = u32(address);
     switch bpe {
-        case 1u: { put_bits(a, w[0], 0xFFu); }
+        case 1u: { put_bits(a, w.x, 0xFFu); }
         case 2u: {
-            var v = w[0] & 0xFFFFu;
+            var v = w.x & 0xFFFFu;
             if (endian == 1u) { v = ((v & 0xFFu) << 8u) | (v >> 8u); }
             put_bits(a, v, 0xFFFFu);
         }
-        case 4u: { store_word(a >> 2u, swap32(w[0], endian)); }
+        case 4u: { store_word(a >> 2u, swap32(w.x, endian)); }
         case 8u: {
-            var o0 = swap32(w[0], endian);
-            var o1 = swap32(w[1], endian);
-            if (endian == 4u) { o0 = bswap(w[1]); o1 = bswap(w[0]); }
-            if (endian == 5u) { o0 = w[0]; o1 = w[1]; }
+            var o0 = swap32(w.x, endian);
+            var o1 = swap32(w.y, endian);
+            if (endian == 4u) { o0 = bswap(w.y); o1 = bswap(w.x); }
+            if (endian == 5u) { o0 = w.x; o1 = w.y; }
             store_word(a >> 2u, o0);
             store_word((a >> 2u) + 1u, o1);
         }
         default: {
-            var o = array<u32, 4>(swap32(w[0], endian), swap32(w[1], endian), swap32(w[2], endian), swap32(w[3], endian));
-            if (endian == 4u) { o = array<u32, 4>(bswap(w[1]), bswap(w[0]), bswap(w[3]), bswap(w[2])); }
-            if (endian == 5u) { o = array<u32, 4>(bswap(w[3]), bswap(w[2]), bswap(w[1]), bswap(w[0])); }
-            for (var k = 0u; k < 4u; k++) {
-                store_word((a >> 2u) + k, o[k]);
-            }
+            var o = vec4<u32>(swap32(w.x, endian), swap32(w.y, endian), swap32(w.z, endian), swap32(w.w, endian));
+            if (endian == 4u) { o = vec4<u32>(bswap(w.y), bswap(w.x), bswap(w.w), bswap(w.z)); }
+            if (endian == 5u) { o = vec4<u32>(bswap(w.w), bswap(w.z), bswap(w.y), bswap(w.x)); }
+            store_word(a >> 2u, o.x);
+            store_word((a >> 2u) + 1u, o.y);
+            store_word((a >> 2u) + 2u, o.z);
+            store_word((a >> 2u) + 3u, o.w);
         }
     }
 }

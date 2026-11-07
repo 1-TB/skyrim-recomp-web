@@ -201,7 +201,7 @@ PPC_FUNC({f}) {{
 fn check_generated(dir: &Path) {
     let ctx = fs::read_to_string(dir.join("ppc_context.h"))
         .unwrap_or_else(|e| fail(format!("{}/ppc_context.h: {e}", dir.display())));
-    if !ctx.contains("#define SKYRT_PPC_CONTEXT_FORK 4") {
+    if !ctx.contains("#define SKYRT_PPC_CONTEXT_FORK 5") {
         fail("ppc_context.h was not generated from the current cpp/ppc_context.h; rerun `cargo xtask recompile`");
     }
     let config = fs::read_to_string(dir.join("ppc_config.h"))

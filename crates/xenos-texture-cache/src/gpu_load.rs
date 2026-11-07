@@ -615,6 +615,29 @@ fn field(i: u32) -> vec2<u32> {
     return vec2<u32>(packed & 0xFFu, (packed >> 8u) & 0xFFu);
 }
 
+// Component `c` of a packed fixed-point texel as an RGBA8 byte (255 past the format's).
+fn rgba8_byte(c: u32, word: u32) -> u32 {
+    if (c >= prm(24u)) { return 255u; }
+    let f = field(c);
+    let max = (1u << f.y) - 1u;
+    let raw = (word >> f.x) & max;
+    return (raw * 255u + max / 2u) / max;
+}
+
+// Component `c` (of the 16-bit components in `word`'s pair) as a half; 0 past the format's.
+fn half_of(c: u32, word: u32, conversion: u32) -> u32 {
+    if (c >= prm(24u)) { return 0u; }
+    let raw = (word >> (16u * (c & 1u))) & 0xFFFFu;
+    var f: f32;
+    if (conversion == 2u) {
+        f = f32(raw) / 65535.0;
+    } else {
+        let s = i32(raw << 16u) >> 16u;
+        f = max(f32(s) * (32.0 / 32767.0), -32.0);
+    }
+    return f16(f);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let bx = gid.x;
@@ -640,76 +663,60 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     offset += i32(layer * prm(11u));
     let endian = prm(15u);
-    var w = array<u32, 4>(0u, 0u, 0u, 0u);
+    // Words in vectors indexed by constants only: local arrays indexed by a variable live in
+    // per-thread scratch memory on some GPUs (Apple's), which made this pass several times slower.
+    var w = vec4<u32>(0u);
     if (offset >= 0 && u32(offset) + bpb <= prm(20u)) {
         let a = prm(0u) + u32(offset) - prm(21u);
         if (bpb >= 4u) {
-            for (var k = 0u; k < bpb / 4u; k++) {
-                w[k] = swap32(src[(a >> 2u) + k], endian);
-            }
+            let b = a >> 2u;
+            w.x = swap32(src[b], endian);
+            if (bpb >= 8u) { w.y = swap32(src[b + 1u], endian); }
+            if (bpb >= 12u) { w.z = swap32(src[b + 2u], endian); }
+            if (bpb >= 16u) { w.w = swap32(src[b + 3u], endian); }
         } else {
             let word = swap32(src[a >> 2u], endian);
-            w[0] = (word >> ((a & 3u) * 8u)) & select(0xFFu, 0xFFFFu, bpb == 2u);
+            w.x = (word >> ((a & 3u) * 8u)) & select(0xFFu, 0xFFFFu, bpb == 2u);
         }
     }
     let unit = prm(19u);
     let out = prm(25u) * 4u + slice * prm(18u) + by * prm(17u) + bx * unit;
     let conversion = prm(16u);
-    var o = array<u32, 4>(w[0], w[1], w[2], w[3]);
+    var o = w;
     switch conversion {
         case 1u: {
             // Packed fixed point to RGBA8 (missing components 255).
-            var rgba = 0u;
-            for (var c = 0u; c < 4u; c++) {
-                var byte = 255u;
-                if (c < prm(24u)) {
-                    let f = field(c);
-                    let max = (1u << f.y) - 1u;
-                    let raw = (w[0] >> f.x) & max;
-                    byte = (raw * 255u + max / 2u) / max;
-                }
-                rgba |= byte << (8u * c);
-            }
-            o[0] = rgba;
+            o.x = rgba8_byte(0u, w.x) | (rgba8_byte(1u, w.x) << 8u) | (rgba8_byte(2u, w.x) << 16u)
+                | (rgba8_byte(3u, w.x) << 24u);
         }
         case 2u, 3u: {
             // 16-bit unorm (2) or EDRAM -32..32 fixed point (3) components to halves.
-            var halves = array<u32, 4>(0u, 0u, 0u, 0u);
-            for (var c = 0u; c < prm(24u); c++) {
-                let raw = (w[c >> 1u] >> (16u * (c & 1u))) & 0xFFFFu;
-                var f: f32;
-                if (conversion == 2u) {
-                    f = f32(raw) / 65535.0;
-                } else {
-                    let s = i32(raw << 16u) >> 16u;
-                    f = max(f32(s) * (32.0 / 32767.0), -32.0);
-                }
-                halves[c] = f16(f);
-            }
-            o[0] = halves[0] | (halves[1] << 16u);
-            o[1] = halves[2] | (halves[3] << 16u);
+            o.x = half_of(0u, w.x, conversion) | (half_of(1u, w.x, conversion) << 16u);
+            o.y = half_of(2u, w.y, conversion) | (half_of(3u, w.y, conversion) << 16u);
         }
         case 4u: {
-            let v = w[0];
-            o[0] = f16(f7e3(v)) | (f16(f7e3(v >> 10u)) << 16u);
-            o[1] = f16(f7e3(v >> 20u)) | (f16(f32(v >> 30u) / 3.0) << 16u);
+            let v = w.x;
+            o.x = f16(f7e3(v)) | (f16(f7e3(v >> 10u)) << 16u);
+            o.y = f16(f7e3(v >> 20u)) | (f16(f32(v >> 30u) / 3.0) << 16u);
         }
         case 5u: {
             // 24-bit unorm depth in the high bits.
-            let n = w[0] >> 8u;
-            o[0] = bitcast<u32>(f32(n + (n >> 23u)) * (1.0 / 16777216.0));
+            let n = w.x >> 8u;
+            o.x = bitcast<u32>(f32(n + (n >> 23u)) * (1.0 / 16777216.0));
         }
         case 6u: {
-            o[0] = bitcast<u32>(f20e4(w[0] >> 8u));
+            o.x = bitcast<u32>(f20e4(w.x >> 8u));
         }
         default: {}
     }
     if (unit >= 4u) {
-        for (var k = 0u; k < unit / 4u; k++) {
-            store_word((out >> 2u) + k, o[k]);
-        }
+        let i = out >> 2u;
+        store_word(i, o.x);
+        if (unit >= 8u) { store_word(i + 1u, o.y); }
+        if (unit >= 12u) { store_word(i + 2u, o.z); }
+        if (unit >= 16u) { store_word(i + 3u, o.w); }
     } else {
-        put_bits(out, o[0], select(0xFFu, 0xFFFFu, unit == 2u));
+        put_bits(out, o.x, select(0xFFu, 0xFFFFu, unit == 2u));
     }
 }
 "#;

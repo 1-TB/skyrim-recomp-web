@@ -29,11 +29,14 @@ skyrt changes to XenonRecomp (base: hedge-dev/XenonRecomp ddd128bcca99fe8bfbb99b
   address into `ea` and follow the store with PPC_MARK_WRITTEN(ea, size), which
   ppc_context.h uses to track pages written for the renderer (the PPC_STORE
   macros mark too). ppc_config.h defines PPC_SKYRT_DIRTY for this.
+- lwarx/ldarx/stwcx./stdcx. are emitted as PPC_LWARX/PPC_LDARX/PPC_STWCX/
+  PPC_STDCX, which cpp/ppc_context.h implements with reservation versions (a
+  plain compare-and-swap lets lock-free lists suffer ABA).
 
 Applied by `cargo xtask setup-xenonrecomp`.
 
 diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
-index fa91527..934c500 100644
+index fa91527..2a1de2d 100644
 --- a/XenonRecomp/recompiler.cpp
 +++ b/XenonRecomp/recompiler.cpp
 @@ -1,4 +1,5 @@
@@ -394,7 +397,7 @@ index fa91527..934c500 100644
  
      case PPC_INST_LDARX:
 -        print("\t{}.u64 = *(uint64_t*)(base + ", reserved());
-+        print("\t{}.u64 = *(uint64_t*)PPC_EA(", reserved());
++        print("\t{}.u64 = PPC_LDARX(", reserved());
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32);", r(insn.operands[2]));
@@ -437,7 +440,7 @@ index fa91527..934c500 100644
  
      case PPC_INST_LWARX:
 -        print("\t{}.u32 = *(uint32_t*)(base + ", reserved());
-+        print("\t{}.u32 = *(uint32_t*)PPC_EA(", reserved());
++        print("\t{}.u32 = PPC_LWARX(", reserved());
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32);", r(insn.operands[2]));
@@ -461,7 +464,7 @@ index fa91527..934c500 100644
              print("{}.u32 + ", r(insn.operands[1]));
 -        println("{}.u32), {}.s64, __builtin_bswap64({}.s64));", r(insn.operands[2]), reserved(), r(insn.operands[0]));
 +        println("{}.u32;", r(insn.operands[2]));
-+        println("\t{}.eq = __sync_bool_compare_and_swap(reinterpret_cast<uint64_t*>(PPC_EA({})), {}.s64, __builtin_bswap64({}.s64));", cr(0), ea(), reserved(), r(insn.operands[0]));
++        println("\t{}.eq = PPC_STDCX({}, {}.u64, __builtin_bswap64({}.u64));", cr(0), ea(), reserved(), r(insn.operands[0]));
 +        println("\tPPC_MARK_WRITTEN({}, 8);", ea());
          println("\t{}.so = {}.so;", cr(0), xer());
          break;
@@ -491,7 +494,7 @@ index fa91527..934c500 100644
              print("{}.u32 + ", r(insn.operands[1]));
 -        println("{}.u32), {}.s32, __builtin_bswap32({}.s32));", r(insn.operands[2]), reserved(), r(insn.operands[0]));
 +        println("{}.u32;", r(insn.operands[2]));
-+        println("\t{}.eq = __sync_bool_compare_and_swap(reinterpret_cast<uint32_t*>(PPC_EA({})), {}.s32, __builtin_bswap32({}.s32));", cr(0), ea(), reserved(), r(insn.operands[0]));
++        println("\t{}.eq = PPC_STWCX({}, {}.u32, __builtin_bswap32({}.u32));", cr(0), ea(), reserved(), r(insn.operands[0]));
 +        println("\tPPC_MARK_WRITTEN({}, 4);", ea());
          println("\t{}.so = {}.so;", cr(0), xer());
          break;

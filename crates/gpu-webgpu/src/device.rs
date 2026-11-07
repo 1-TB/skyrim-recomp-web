@@ -256,6 +256,15 @@ impl Device {
         }
     }
 
+    /// Blocks until submitted work makes progress (here: until it is all done), instead of
+    /// polling in a loop while waiting for the GPU. Native only.
+    #[cfg(not(target_os = "emscripten"))]
+    pub fn wait_for_gpu_progress(&self) {
+        unsafe {
+            crate::ext::native::wgpuDevicePoll(self.raw, ffi::WGPU_TRUE, ptr::null());
+        }
+    }
+
     /// Waits for `pending` by blocking on queue progress. Native only (see
     /// [`crate::Instance::block_on`]).
     #[cfg(not(target_os = "emscripten"))]

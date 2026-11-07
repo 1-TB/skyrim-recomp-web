@@ -408,7 +408,10 @@ fn compile_stage(shared: &Shared, req: &StageRequest<'_>) -> std::result::Result
             binding_array: naga::proc::BoundsCheckPolicy::Unchecked,
         },
         zero_initialize_workgroup_memory: true,
-        force_loop_bounding: true,
+        // Every shader here is ours (the renderer's, or Xenos microcode translated with
+        // bounded loops: counts of at most 255 and an iteration limit on the dispatch loop).
+        // Bounding each loop with a counter kept the compiler from unrolling constant loops.
+        force_loop_bounding: false,
         task_dispatch_limits: None,
         mesh_shader_primitive_indices_clamp: false,
         emit_int_div_checks: true,

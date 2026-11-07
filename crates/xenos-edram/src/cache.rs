@@ -1873,7 +1873,15 @@ impl EdramCache {
             (store_pipeline.clone(), bind_group, params, gx.div_ceil(8), gy.div_ceil(8))
         });
         {
-            let mut pass = encoder.begin_compute_pass("edram resolve");
+            // The size and kind show in GPU traces (and `gpu-time`), where resolves dominate.
+            let label = format!(
+                "edram resolve {}x{}{}{}",
+                info.rect.width,
+                info.rect.height,
+                if dumps.is_empty() { "" } else { " +dump" },
+                if store.is_some() { " +store" } else { "" }
+            );
+            let mut pass = encoder.begin_compute_pass(&label);
             for (pipeline, bind_group, params, (gx, gy)) in &dumps {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bind_group, &params.dynamic_offset());
