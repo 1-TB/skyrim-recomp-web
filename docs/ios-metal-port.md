@@ -10,7 +10,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 | --- | --- | --- |
 | Boot, menus, New Game, loading saves | Works | Works |
 | Renderer | Native Metal (default); wgpu kept for A/B | Native Metal (default) |
-| Riverwood save frame rate | ~53 fps at 1× (Whiterun ~50), GPU-bound | 60 fps (cap) at 1×; uncapped ~56 in town, 95–110 in lighter scenes; renderer CPU-bound |
+| Riverwood save frame rate | ~60 fps at 1× (Whiterun ~55), GPU-bound | 60 fps (cap) at 1×; uncapped measurements predate the latest speedups |
 | Character clothing, grass (alpha-tested) | Correct | Correct (float24 depth) |
 | Streaky thatch/roof textures | Fixed (float24 depth) | Correct |
 | Frame cap | 120 fps (`--vblank-hz 240` default) | 120 fps + `CADisableMinimumFrameDurationOnPhone` |
@@ -20,6 +20,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 7 | Specialized compute pipelines | Resolve, resolve store and texture load pipelines specialized with override constants on their per-format parameters (the generic shaders spilled registers): resolves 4.95 → 2.8 ms/frame; unchanged register writes skipped (renderer CPU ~4.4 ms/frame on the Mac). Mac 54 → 60 fps |
 | Nov 7 | Phone findings, more overlap | Texture loads write RGBA8/RGBA16F/R32F/RGBA32F textures directly (no copy); 1 MiB × 32 constant sets; user-interactive QoS for guest/renderer threads; iOS no longer waits at fences (`--gpu-sync` restores; it pinned the phone at 60 fps); perf line reports presenting separately. Mac 47 → 53 fps; phone holds 60 at 1× and is renderer-CPU-bound above that (~17 ms/frame of renderer work in town vs ~8.6 ms on the Mac) |
 | Nov 7 | Submissions overlap, CPU-written constants | Fetch constants decoded on the CPU per draw; texture loads read the mirror in place (no gather blit); per-submission buffers rotate (constant blocks, index rings) so a submission no longer waits for the previous one; on Metal constant blocks are written straight into shared memory (no patch dispatch); float constant diff walks set bits; `--no-msaa` + iOS Anti-aliasing setting. Mac 42 → 47.4 fps |
 | Nov 7 | Freeze fix, GPU profiling, compute passes | lwarx/stwcx. reservations carry a version (ABA in the guest's lock-free lists left a cycle in a job list: thread 0xE spun forever; 0/8 hangs after); constant patcher walks only its stage's records; store and texture-load shaders without variable-indexed local arrays; consecutive compute passes share one Metal encoder; naga loop bounding off; the native renderer blocks on GPU progress instead of spinning (renderer busy 63% → 32%); `--autoplay` in args.txt for scripted iOS runs |
@@ -59,12 +60,11 @@ were missing on the phone; thatch roofs streaked on the Mac.
 
 ## GPU budget (Mac, Riverwood, 1×, Metal System Trace)
 
-Per 21 ms frame (47 fps): pixel shaders 8.7 ms (scene pass ~4.5 ms; ALU-bound on integer
-emulation work, F32 ~16% of ALU), EDRAM resolves ~4.4 ms (~25/frame; size-independent cost,
-likely dependency waits in the render-to-texture chains), vertex 4.3 ms, texture loads 1.6 ms,
-blits 1.3 ms (texture-load copies, index gathers), GPU idle ~12% (encoder transitions). Float24
-depth costs ~4 ms (no hidden-surface removal with shader depth writes) and is needed for
-correctness. Renderer CPU ~8 ms/frame (37% of a core at 45 fps).
+Per 16.5 ms frame (60 fps): pixel shaders 6.7 ms, vertex 4.0 ms (fetch + binning ~2 ms of it),
+resolves 2.8 ms, texture loads 1.0 ms, blits ~0.7 ms; GPU busy ~80% (2.3 ms of short gaps at
+encoder transitions, ~0.6 ms waiting for the next command buffer). Float24 depth now costs
+~1 ms. Tried without gain: vertex buffer locations per draw (no slot table lookup), wider
+resolve workgroups, deferred texture-load copies, uniform float constants.
 
 Phone (iPhone 18 Pro Max, 1×): GPU has headroom; the renderer thread is the limit in dense
 scenes (~94% busy at ~56 fps). Renderer CPU per frame on the Mac (Time Profiler): Executor::draw
