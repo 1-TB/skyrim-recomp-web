@@ -10,7 +10,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 | --- | --- | --- |
 | Boot, menus, New Game, loading saves | Works | Works |
 | Renderer | Native Metal (default); wgpu kept for A/B | Native Metal (default) |
-| Riverwood save frame rate | ~42 fps at 1×, GPU-bound (see GPU budget) | ~34 fps at 2× (GPU ~30 ms) |
+| Riverwood save frame rate | ~47 fps at 1× (~49 with `--no-msaa`), GPU-bound (see GPU budget) | 40–50 fps at 1× (Nov 7 morning build, before the later speedups) |
 | Character clothing, grass (alpha-tested) | Correct | Correct (float24 depth) |
 | Streaky thatch/roof textures | Fixed (float24 depth) | Correct |
 | Frame cap | 120 fps (`--vblank-hz 240` default) | 120 fps + `CADisableMinimumFrameDurationOnPhone` |
@@ -20,6 +20,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 7 | Submissions overlap, CPU-written constants | Fetch constants decoded on the CPU per draw; texture loads read the mirror in place (no gather blit); per-submission buffers rotate (constant blocks, index rings) so a submission no longer waits for the previous one; on Metal constant blocks are written straight into shared memory (no patch dispatch); float constant diff walks set bits; `--no-msaa` + iOS Anti-aliasing setting. Mac 42 → 47.4 fps |
 | Nov 7 | Freeze fix, GPU profiling, compute passes | lwarx/stwcx. reservations carry a version (ABA in the guest's lock-free lists left a cycle in a job list: thread 0xE spun forever; 0/8 hangs after); constant patcher walks only its stage's records; store and texture-load shaders without variable-indexed local arrays; consecutive compute passes share one Metal encoder; naga loop bounding off; the native renderer blocks on GPU progress instead of spinning (renderer busy 63% → 32%); `--autoplay` in args.txt for scripted iOS runs |
 | Nov 7 | Pixel shader speed, settings, MetalFX | Mac town 24 → 39.6 fps: branch-free `xe_tex_post` (format conversion and swizzle only when needed), PS parameter register written through a `switch` (a variable index put all registers in scratch memory); `--anisotropy N`, `--metalfx` (MetalFX spatial upscaling in the presenter); iOS settings panel at launch (`settings.txt`), FPS counter, full-resolution drawable (view scale factor was 1); GPU pass timing on Metal (`gpu-time`, per-target pass labels), `solid` debug mode; wgpu-native dropped on Apple |
 | Nov 7 | Float24 depth (root cause of missing textures) | Pixel shaders round depth to Xbox D24FS8 float24 precision (`xe_float24_depth`, `DEPTH_FLOAT24` system flag, `[[depth(less)]]` conservative depth); iOS alpha workarounds removed; 240 Hz vblank default; debug modes `ps-probe`, `hash-pages`, `verify-loads`, `float32-depth`, `--gpu-sync-draws` |
@@ -57,12 +58,23 @@ were missing on the phone; thatch roofs streaked on the Mac.
 
 ## GPU budget (Mac, Riverwood, 1×, Metal System Trace)
 
-Per 24 ms frame: pixel shaders 9.5 ms (scene pass ~4 ms, ALU-bound on integer emulation work; F32 is
-~16% of ALU), EDRAM resolves 4.6 ms (~29/frame; full-screen 0.23 ms each), vertex 3.4 ms, blits
-1.9 ms (texture-load copies, index gathers), texture loads 1.8 ms, constant patches 0.8 ms, idle
-gaps between ~200 encoders ~4 ms. Float24 depth costs ~4 ms (no hidden-surface removal with shader
-depth writes). Profile with `xcrun xctrace record --template 'Metal System Trace' --attach PID`
-(add `--instrument 'Metal GPU Counters'` for limiters) and `--render-debug gpu-time` for labels.
+Per 21 ms frame (47 fps): pixel shaders 8.7 ms (scene pass ~4.5 ms; ALU-bound on integer
+emulation work, F32 ~16% of ALU), EDRAM resolves ~4.4 ms (~25/frame; size-independent cost,
+likely dependency waits in the render-to-texture chains), vertex 4.3 ms, texture loads 1.6 ms,
+blits 1.3 ms (texture-load copies, index gathers), GPU idle ~12% (encoder transitions). Float24
+depth costs ~4 ms (no hidden-surface removal with shader depth writes) and is needed for
+correctness. Renderer CPU ~8 ms/frame (37% of a core at 45 fps).
+
+Remaining ideas, largest first: render-to-texture shortcut (a resolve whose destination is
+sampled with the same format becomes a texture copy instead of resolve → guest memory → texture
+load: ~4–5 ms); cheaper SM3 multiply semantics in pixel shaders; explicit synchronization for
+the guest-memory mirror (untracked buffers measured +1.4 fps). 120 fps at 1× needs the GPU frame
+under 8.3 ms, i.e. pixel and vertex shaders about twice as fast as now; higher resolution scales
+multiply the pixel work.
+
+Profile with `xcrun xctrace record --template 'Metal System Trace' --attach PID` (add
+`--instrument 'Metal GPU Counters'` for limiters; `--render-debug gpu-time` labels passes by
+target) and `--template 'Time Profiler'` for the CPU.
 
 ## Repo organisation
 
