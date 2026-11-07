@@ -20,6 +20,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 7 | Fewer submissions, cheaper vertex fetch | Vertex fetches look up their vertex's mirror slot once (vertex time 254 → 194 ms/s); a full constant set no longer submits (the batch moves to another set; submits 13 → 3 per frame, which left ~1.8 ms/frame of GPU idle at command buffer boundaries); render passes capped at 128 draws (1000-draw passes were ~25% slower); iOS presents with a 1/120 s minimum duration (ProMotion reaches 120 Hz), thermal state logged; encoders ended on drop (shutdown crash) |
 | Nov 7 | Specialized compute pipelines | Resolve, resolve store and texture load pipelines specialized with override constants on their per-format parameters (the generic shaders spilled registers): resolves 4.95 → 2.8 ms/frame; unchanged register writes skipped (renderer CPU ~4.4 ms/frame on the Mac). Mac 54 → 60 fps |
 | Nov 7 | Phone findings, more overlap | Texture loads write RGBA8/RGBA16F/R32F/RGBA32F textures directly (no copy); 1 MiB × 32 constant sets; user-interactive QoS for guest/renderer threads; iOS no longer waits at fences (`--gpu-sync` restores; it pinned the phone at 60 fps); perf line reports presenting separately. Mac 47 → 53 fps; phone holds 60 at 1× and is renderer-CPU-bound above that (~17 ms/frame of renderer work in town vs ~8.6 ms on the Mac) |
 | Nov 7 | Submissions overlap, CPU-written constants | Fetch constants decoded on the CPU per draw; texture loads read the mirror in place (no gather blit); per-submission buffers rotate (constant blocks, index rings) so a submission no longer waits for the previous one; on Metal constant blocks are written straight into shared memory (no patch dispatch); float constant diff walks set bits; `--no-msaa` + iOS Anti-aliasing setting. Mac 42 → 47.4 fps |
@@ -71,6 +72,12 @@ scenes (~94% busy at ~56 fps). Renderer CPU per frame on the Mac (Time Profiler)
 ~6 ms (constants ~1.7, texture binding ~0.7, sync ~0.6, Metal encoding ~1.3), register writes
 ~1 ms. A Time Profiler run on the device (`xcrun xctrace record --device <udid> --attach
 Skyrim --template 'Time Profiler'`) is the next step there.
+
+Measured since (Mac, 62 fps): the GPU is ~78% busy, ~12.4 ms of work and ~3.4 ms of short gaps
+at ~107 encoder switches per frame. No gain from: plain multiplies instead of SM3 0×inf
+semantics, no depth writes and no discards (+3%), 3 frames in flight, `--no-msaa` +10%. Without
+draws the title runs at the 120 fps cap, so the guest isn't the limit. The command processor's
+4 waits per frame are on a word the title's GPU interrupt callback clears (not on our fences).
 
 Remaining ideas, largest first: render-to-texture shortcut (a resolve whose destination is
 sampled with the same format becomes a texture copy instead of resolve → guest memory → texture

@@ -51,6 +51,10 @@ const PIXEL_TEXTURE_BINDING_BASE: u32 = 96;
 /// Per-submission indices (converted on the CPU, or copied out of shared memory); a draw with
 /// more is skipped.
 const INDEX_RING_SIZE: u64 = 4 << 20;
+/// Draws per render pass before the next draw starts another (same targets, contents loaded):
+/// longer passes were slower on Apple GPUs (a 1000-draw scene pass cost ~25% more than the same
+/// draws in passes of 128, presumably the tiler's buffers overflowing), shorter ones no faster.
+const MAX_PASS_DRAWS: usize = 128;
 const FLOAT_CONSTANTS_SIZE: u64 = bindings::FLOAT_CONSTANTS_SIZE;
 const BOOL_LOOP_SIZE: u64 = 160;
 const FETCH_SIZE: u64 = bindings::FETCH_CONSTANTS_SIZE;
@@ -205,8 +209,10 @@ fn color_slots(targets: &DrawTargets) -> usize {
 struct RecordedDraw {
     pipeline: RenderPipeline,
     textures: BindGroup,
-    /// Dynamic offsets of group 0, in binding order.
+    /// Dynamic offsets of group 0, in binding order, into the blocks of constant set
+    /// `constant_set`.
     constant_offsets: [u32; 5],
+    constant_set: usize,
     viewport: [f32; 6],
     scissor: [u32; 4],
     blend_constant: Color,
@@ -980,6 +986,11 @@ impl Executor {
         self.gathered_indices.rewind();
         self.shared.end_batch();
         // The ring rewound: nothing pushed before can be reused.
+        self.reset_constant_cache();
+    }
+
+    /// Forgets the constant blocks pushed so far (they can't be bound again).
+    fn reset_constant_cache(&mut self) {
         let scratch = std::mem::take(&mut self.constant_cache.scratch);
         let values = std::mem::take(&mut self.constant_cache.values);
         self.constant_cache = ConstantCache { scratch, values, ..Default::default() };
@@ -1006,7 +1017,7 @@ impl Executor {
             let group = constants_group(&self.device, &self.constants_layout, self.floats.blocks(self.constants_groups.len()));
             self.constants_groups.push(group);
         }
-        let constants_group = self.constants_groups[self.floats.current()].clone();
+        let constants_groups = self.constants_groups.clone();
         if self.shared_generation != self.shared.generation {
             self.shared_group = shared_memory_group(&self.device, &self.shared_layout, &self.shared);
             self.shared_generation = self.shared.generation;
@@ -1089,9 +1100,9 @@ impl Executor {
             {
                 rp.set_bind_group(VS_CAPTURE_GROUP, group, &[]);
             }
-            if last_constants != Some(d.constant_offsets) {
-                rp.set_bind_group(bindings::FLOAT_CONSTANTS_GROUP, &constants_group, &d.constant_offsets);
-                last_constants = Some(d.constant_offsets);
+            if last_constants != Some((d.constant_set, d.constant_offsets)) {
+                rp.set_bind_group(bindings::FLOAT_CONSTANTS_GROUP, &constants_groups[d.constant_set], &d.constant_offsets);
+                last_constants = Some((d.constant_set, d.constant_offsets));
             }
             let textures = d.textures.raw() as usize;
             if last_textures != Some(textures) {
@@ -1567,11 +1578,18 @@ impl Executor {
             return Err(Skip::Warn(format!("draw with {} bytes of indices skipped", index_len.max(gathered_len))));
         }
         // Each float constant binding spans a full stage's constants past its offset.
-        if self.indices.remaining() < index_len
-            || self.gathered_indices.remaining() < gathered_len
-            || !self.floats.has_room(&[FLOAT_CONSTANTS_SIZE, FLOAT_CONSTANTS_SIZE, FETCH_SIZE, SYSTEM_SIZE, BOOL_LOOP_SIZE])
-        {
+        let windows = [FLOAT_CONSTANTS_SIZE, FLOAT_CONSTANTS_SIZE, FETCH_SIZE, SYSTEM_SIZE, BOOL_LOOP_SIZE];
+        if self.indices.remaining() < index_len || self.gathered_indices.remaining() < gathered_len {
             self.flush();
+        } else if !self.floats.has_room(&windows) {
+            // With direct writes the batch goes on in another set (no submission, which left the
+            // GPU idle until the next one arrived, ~11 times a frame); blocks of the full set
+            // can't be reused from the new one.
+            if self.floats.next_set(&self.device) {
+                self.reset_constant_cache();
+            } else {
+                self.flush();
+            }
         }
 
         mark!(self, 3);
@@ -1608,7 +1626,9 @@ impl Executor {
 
         mark!(self, 5);
         // Render targets (encode the previous pass first if they change).
-        let reuse = self.pass.as_ref().is_some_and(|p| p.setup == setup && p.targets.height >= min_height * scale);
+        let reuse = self.pass.as_ref().is_some_and(|p| {
+            p.setup == setup && p.targets.height >= min_height * scale && p.draws.len() < MAX_PASS_DRAWS
+        });
         if !reuse {
             self.encode_pass();
             // A traced pass's targets are written out before later passes can change them.
@@ -1799,6 +1819,7 @@ impl Executor {
             pipeline,
             textures: textures_group,
             constant_offsets,
+            constant_set: self.floats.current(),
             viewport: [
                 viewport.xy_offset[0] as f32,
                 viewport.xy_offset[1] as f32,

@@ -96,8 +96,11 @@ struct Set {
 
 pub struct ConstantPatcher {
     sets: Vec<Set>,
-    /// The set this submission uses.
+    /// The set the draws recorded now use.
     current: usize,
+    /// With direct writes, the sets this submission filled before `current` (a full set is
+    /// swapped for a free one instead of submitting: each submission cost the GPU a gap).
+    filled: Vec<usize>,
     /// Blocks are written straight into the set's buffer by the CPU (memory shared with the
     /// GPU, as on Apple GPUs) instead of patched on the GPU: no dispatch at the start of every
     /// submission for its draws to wait for.
@@ -178,6 +181,7 @@ impl ConstantPatcher {
         ConstantPatcher {
             sets,
             current: 0,
+            filled: Vec::new(),
             direct,
             alignment: alignment.max(16),
             cursor: 0,
@@ -321,39 +325,66 @@ impl ConstantPatcher {
         Some((encoder.finish("xenos constant patches"), (records.len() + self.values.len()) as u64))
     }
 
+    /// With direct writes, continues this submission in another set once the current one is
+    /// full (see [`ConstantPatcher::has_room`]); `false` if every set is this submission's
+    /// (then submit). Blocks pushed before stay where they are, in the set they were pushed to.
+    pub fn next_set(&mut self, device: &Device) -> bool {
+        if !self.direct {
+            return false;
+        }
+        self.filled.push(self.current);
+        match self.free_set(device) {
+            Some(i) => {
+                self.current = i;
+                self.cursor = 0;
+                true
+            }
+            None => {
+                self.filled.pop();
+                false
+            }
+        }
+    }
+
+    /// A set that no submission in flight nor the one being recorded uses, made free by
+    /// waiting for the oldest submission if [`MAX_SETS`] are in use; `None` if this
+    /// submission uses them all.
+    fn free_set(&mut self, device: &Device) -> Option<usize> {
+        let n = self.sets.len();
+        let candidates: Vec<usize> =
+            (1..=n).map(|k| (self.current + k) % n).filter(|i| *i != self.current && !self.filled.contains(i)).collect();
+        if let Some(&i) = candidates.iter().find(|&&i| self.sets[i].done.as_ref().is_none_or(Pending::is_ready)) {
+            self.sets[i].done = None;
+            return Some(i);
+        }
+        if n < MAX_SETS {
+            self.sets.push(new_set(device, &self.layout, true));
+            return Some(n);
+        }
+        // As many submissions in flight as sets: wait for the oldest's set.
+        let next = *candidates.first()?;
+        let done = self.sets[next].done.take();
+        // Direct writes are native only (the browser patches on the GPU).
+        #[cfg(not(target_os = "emscripten"))]
+        if let Some(done) = done {
+            let started = std::time::Instant::now();
+            let _ = device.block_on(done);
+            self.waited += started.elapsed();
+        }
+        #[cfg(target_os = "emscripten")]
+        drop(done);
+        Some(next)
+    }
+
     /// The submission went out: blocks and patches start over, in the next set. With direct
     /// writes that is a set no submission still running uses (the CPU writes it while the GPU
     /// runs), a new one if all are busy.
     pub fn rewind(&mut self, device: &Device) {
         if self.direct {
-            self.sets[self.current].done = Some(device.queue().on_submitted_work_done());
-            let n = self.sets.len();
-            let free = (1..=n)
-                .map(|k| (self.current + k) % n)
-                .find(|&i| self.sets[i].done.as_ref().is_none_or(Pending::is_ready));
-            self.current = match free {
-                Some(i) => i,
-                None if self.sets.len() < MAX_SETS => {
-                    self.sets.push(new_set(device, &self.layout, true));
-                    self.sets.len() - 1
-                }
-                None => {
-                    // As many submissions in flight as sets: wait for the oldest's set.
-                    let next = (self.current + 1) % n;
-                    let done = self.sets[next].done.take();
-                    // Direct writes are native only (the browser patches on the GPU).
-                    #[cfg(not(target_os = "emscripten"))]
-                    if let Some(done) = done {
-                        let started = std::time::Instant::now();
-                        let _ = device.block_on(done);
-                        self.waited += started.elapsed();
-                    }
-                    #[cfg(target_os = "emscripten")]
-                    drop(done);
-                    next
-                }
-            };
-            self.sets[self.current].done = None;
+            for set in std::mem::take(&mut self.filled).into_iter().chain([self.current]) {
+                self.sets[set].done = Some(device.queue().on_submitted_work_done());
+            }
+            self.current = self.free_set(device).expect("sets other than the current one");
         } else {
             self.current = (self.current + 1) % SETS;
         }
