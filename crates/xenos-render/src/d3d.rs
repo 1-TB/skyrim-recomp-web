@@ -12,7 +12,6 @@
 //! `--render-debug d3d-surfaces` shows every color surface the frame used side by side instead
 //! of the front buffer.
 
-use std::collections::HashMap;
 
 use d3d_hle::args::{ClearArgs, clear};
 use d3d_hle::command::{Command, Surface};
@@ -89,18 +88,18 @@ impl HostSurface {
 type SurfaceKey = (u32, bool);
 
 pub(crate) struct D3dRenderer {
-    surfaces: HashMap<SurfaceKey, HostSurface>,
+    surfaces: rustc_hash::FxHashMap<SurfaceKey, HostSurface>,
     /// Rows surfaces were grown to: a surface rendered with predicated tiling is one tile tall
     /// on the console, and stands for the whole screen here (see [`D3dRenderer::grow`]).
-    rows: HashMap<SurfaceKey, u32>,
+    rows: rustc_hash::FxHashMap<SurfaceKey, u32>,
     /// The surfaces' textures.
-    textures: HashMap<TextureKey, SharedTexture>,
+    textures: rustc_hash::FxHashMap<TextureKey, SharedTexture>,
     /// The surface last drawn to or cleared at each EDRAM base tile. Surfaces at the same base
     /// share their EDRAM on the console, and titles rely on it (Skyrim restores its depth
     /// buffer by drawing the depth texture into a color target at the depth buffer's base):
     /// binding one after another was written gets the other's contents (see
     /// [`D3dTargets::targets`]).
-    edram_owners: HashMap<u32, SurfaceKey>,
+    edram_owners: rustc_hash::FxHashMap<u32, SurfaceKey>,
     /// Surfaces sharing EDRAM, as found when binding them (logged with the surface counts).
     aliasing: AliasingStats,
     aliasing_seen: std::collections::HashSet<(bool, Layout, Layout)>,
@@ -227,10 +226,10 @@ impl Mosaic {
 impl D3dRenderer {
     pub fn new(device: &Device) -> Self {
         D3dRenderer {
-            surfaces: HashMap::new(),
-            rows: HashMap::new(),
-            textures: HashMap::new(),
-            edram_owners: HashMap::new(),
+            surfaces: Default::default(),
+            rows: Default::default(),
+            textures: Default::default(),
+            edram_owners: Default::default(),
             aliasing: AliasingStats::default(),
             aliasing_seen: Default::default(),
             retired: Vec::new(),
