@@ -384,7 +384,8 @@ pub struct Executor {
     /// Guest index buffers copied out of shared memory where they aren't in consecutive slots
     /// (written by commands only).
     gathered_indices: Ring,
-    constants_group: BindGroup,
+    /// The constants bind group of each of the patcher's buffer sets.
+    constants_groups: Vec<BindGroup>,
     /// Constant blocks, built on the GPU from per-draw patches.
     floats: ConstantPatcher,
     shared_group: BindGroup,
@@ -628,21 +629,26 @@ impl Executor {
             ],
         );
         let floats = ConstantPatcher::new(device, alignment);
-        let constants_group = device.create_bind_group(
-            "xenos constants",
-            &constants_layout,
-            &[
-                (bindings::FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, &floats.buffer),
-                (bindings::BOOL_LOOP_CONSTANTS_BINDING, BOOL_LOOP_SIZE, &floats.buffer),
-                (bindings::FETCH_CONSTANTS_BINDING, FETCH_SIZE, &floats.buffer),
-                (bindings::SYSTEM_CONSTANTS_BINDING, SYSTEM_SIZE, &floats.buffer),
-                (bindings::PIXEL_FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, &floats.buffer),
-            ]
-            .map(|(binding, size, buffer)| BindGroupEntry {
-                binding,
-                resource: BindingResource::Buffer { buffer, offset: 0, size: Some(size) },
-            }),
-        );
+        let constants_groups = (0..constant_patch::SETS)
+            .map(|set| {
+                let buffer = floats.blocks(set);
+                device.create_bind_group(
+                    "xenos constants",
+                    &constants_layout,
+                    &[
+                        (bindings::FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, buffer),
+                        (bindings::BOOL_LOOP_CONSTANTS_BINDING, BOOL_LOOP_SIZE, buffer),
+                        (bindings::FETCH_CONSTANTS_BINDING, FETCH_SIZE, buffer),
+                        (bindings::SYSTEM_CONSTANTS_BINDING, SYSTEM_SIZE, buffer),
+                        (bindings::PIXEL_FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, buffer),
+                    ]
+                    .map(|(binding, size, buffer)| BindGroupEntry {
+                        binding,
+                        resource: BindingResource::Buffer { buffer, offset: 0, size: Some(size) },
+                    }),
+                )
+            })
+            .collect();
         let shared_layout = device.create_bind_group_layout(
             "xenos shared memory",
             &(0..=bindings::SHARED_MEMORY_CHUNKS)
@@ -671,7 +677,7 @@ impl Executor {
             shared,
             indices,
             gathered_indices,
-            constants_group,
+            constants_groups,
             floats,
             shared_generation: 0,
             shared_group,
@@ -995,7 +1001,7 @@ impl Executor {
         if pass.draws.is_empty() && !clears.any() {
             return;
         }
-        let constants_group = self.constants_group.clone();
+        let constants_group = self.constants_groups[self.floats.current()].clone();
         if self.shared_generation != self.shared.generation {
             self.shared_group = shared_memory_group(&self.device, &self.shared_layout, &self.shared);
             self.shared_generation = self.shared.generation;

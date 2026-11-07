@@ -72,18 +72,29 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 }
 "#;
 
-pub struct ConstantPatcher {
+/// Buffer sets used in turn, one per submission: a submission's patch dispatch then writes
+/// blocks that the previous submission's draws aren't reading, so it needn't wait for them
+/// (with one set, every submission waited for the GPU to finish the previous one).
+pub const SETS: usize = 3;
+
+struct Set {
     /// The blocks, bound to the draws' float constant bindings.
-    pub buffer: Buffer,
+    blocks: Buffer,
+    records: Buffer,
+    values: Buffer,
+    group: BindGroup,
+}
+
+pub struct ConstantPatcher {
+    sets: Vec<Set>,
+    /// The set this submission uses.
+    current: usize,
     alignment: u64,
     cursor: u64,
     /// The records, in submission order.
     records: Vec<u32>,
     values: Vec<u8>,
-    records_buffer: Buffer,
-    values_buffer: Buffer,
     pipeline: ComputePipeline,
-    group: BindGroup,
 }
 
 impl ConstantPatcher {
@@ -91,21 +102,6 @@ impl ConstantPatcher {
         let buffer = |label, size, usage| {
             device.create_buffer(&BufferDescriptor { label, size, usage, mapped_at_creation: false })
         };
-        let blocks = buffer(
-            "xenos constant blocks",
-            BLOCK_BUFFER_BYTES,
-            BufferUsage::Storage | BufferUsage::Uniform | BufferUsage::CopySrc,
-        );
-        let records_buffer = buffer(
-            "xenos constant patches",
-            ((HEADER_WORDS + MAX_RECORDS * RECORD_WORDS) * 4) as u64,
-            BufferUsage::Storage | BufferUsage::CopyDst,
-        );
-        let values_buffer = buffer(
-            "xenos constant values",
-            (MAX_VALUES * 16) as u64,
-            BufferUsage::Storage | BufferUsage::CopyDst,
-        );
         let entry = |binding, ty| BindGroupLayoutEntry {
             binding,
             visibility: ShaderStage::Compute,
@@ -125,27 +121,52 @@ impl ConstantPatcher {
             layout: Some(&device.create_pipeline_layout("xenos constant patches", &[&layout])),
             stage: ProgrammableStage::new(&module, "main"),
         });
-        let whole = |buffer| BindingResource::Buffer { buffer, offset: 0, size: None };
-        let group = device.create_bind_group(
-            "xenos constant patches",
-            &layout,
-            &[
-                BindGroupEntry { binding: 0, resource: whole(&records_buffer) },
-                BindGroupEntry { binding: 1, resource: whole(&values_buffer) },
-                BindGroupEntry { binding: 2, resource: whole(&blocks) },
-            ],
-        );
+        let sets = (0..SETS)
+            .map(|_| {
+                let blocks = buffer(
+                    "xenos constant blocks",
+                    BLOCK_BUFFER_BYTES,
+                    BufferUsage::Storage | BufferUsage::Uniform | BufferUsage::CopySrc,
+                );
+                let records = buffer(
+                    "xenos constant patches",
+                    ((HEADER_WORDS + MAX_RECORDS * RECORD_WORDS) * 4) as u64,
+                    BufferUsage::Storage | BufferUsage::CopyDst,
+                );
+                let values =
+                    buffer("xenos constant values", (MAX_VALUES * 16) as u64, BufferUsage::Storage | BufferUsage::CopyDst);
+                let whole = |buffer| BindingResource::Buffer { buffer, offset: 0, size: None };
+                let group = device.create_bind_group(
+                    "xenos constant patches",
+                    &layout,
+                    &[
+                        BindGroupEntry { binding: 0, resource: whole(&records) },
+                        BindGroupEntry { binding: 1, resource: whole(&values) },
+                        BindGroupEntry { binding: 2, resource: whole(&blocks) },
+                    ],
+                );
+                Set { blocks, records, values, group }
+            })
+            .collect();
         ConstantPatcher {
-            buffer: blocks,
+            sets,
+            current: 0,
             alignment: alignment.max(16),
             cursor: 0,
             records: Vec::new(),
             values: Vec::new(),
-            records_buffer,
-            values_buffer,
             pipeline,
-            group,
         }
+    }
+
+    /// The block buffer of set `set` (each needs its own bind group for the draws).
+    pub fn blocks(&self, set: usize) -> &Buffer {
+        &self.sets[set].blocks
+    }
+
+    /// The set the draws recorded now read their blocks from.
+    pub fn current(&self) -> usize {
+        self.current
     }
 
     /// Whether blocks bound with `windows` bytes each, with all their vec4s changed, still fit
@@ -222,23 +243,25 @@ impl ConstantPatcher {
         }
         words[STAGES as usize] = count as u32;
         let records: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-        device.queue().write_buffer(&self.records_buffer, 0, &records);
+        let set = &self.sets[self.current];
+        device.queue().write_buffer(&set.records, 0, &records);
         if !self.values.is_empty() {
-            device.queue().write_buffer(&self.values_buffer, 0, &self.values);
+            device.queue().write_buffer(&set.values, 0, &self.values);
         }
         let mut encoder = device.create_command_encoder("xenos constant patches");
         {
             let mut pass = encoder.begin_compute_pass("xenos constant patches");
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.group, &[]);
+            pass.set_bind_group(0, &set.group, &[]);
             pass.dispatch_workgroups(STAGES, 1, 1);
             pass.end();
         }
         Some((encoder.finish("xenos constant patches"), (records.len() + self.values.len()) as u64))
     }
 
-    /// The submission went out: blocks and patches start over.
+    /// The submission went out: blocks and patches start over, in the next set.
     pub fn rewind(&mut self) {
+        self.current = (self.current + 1) % SETS;
         self.cursor = 0;
         self.records.clear();
         self.values.clear();
@@ -291,7 +314,7 @@ mod tests {
             mapped_at_creation: false,
         });
         let mut encoder = device.create_command_encoder("readback");
-        encoder.copy_buffer_to_buffer(&patcher.buffer, 0, &readback, 0, BLOCK_BUFFER_BYTES);
+        encoder.copy_buffer_to_buffer(patcher.blocks(patcher.current()), 0, &readback, 0, BLOCK_BUFFER_BYTES);
         device.queue().submit([commands, encoder.finish("readback")]);
         device.block_on(readback.map_async(MapMode::Read, 0, None)).expect("map");
         for (offset, data) in expected {

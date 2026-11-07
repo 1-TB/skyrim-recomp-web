@@ -1,6 +1,8 @@
 //! Per-draw data (indices) suballocated from large buffers. Every draw gets its own
 //! region, so writes for later draws never clobber data an earlier draw in the same submission
-//! still reads; the ring rewinds after each submission.
+//! still reads; the ring rewinds after each submission, into the next of a few buffers used in
+//! turn (writing the buffer the previous submission's draws read would make the GPU finish
+//! those first).
 //!
 //! Pushed data is staged on the host and sent with one `Queue::write_buffer` per submission
 //! ([`Ring::upload`]): browsers pay a fixed cost per WebGPU call, and a frame pushes hundreds
@@ -8,8 +10,14 @@
 
 use gpu_webgpu::{Buffer, BufferDescriptor, BufferUsage, Device};
 
+/// Buffers a ring uses in turn, one per submission.
+const BUFFERS: usize = 3;
+
 pub struct Ring {
+    /// The buffer of the submission being recorded.
     pub buffer: Buffer,
+    buffers: Vec<Buffer>,
+    current: usize,
     size: u64,
     alignment: u64,
     cursor: u64,
@@ -19,13 +27,25 @@ pub struct Ring {
 
 impl Ring {
     pub fn new(device: &Device, label: &str, size: u64, usage: BufferUsage, alignment: u64) -> Self {
-        let buffer = device.create_buffer(&BufferDescriptor {
-            label,
+        let buffers: Vec<Buffer> = (0..BUFFERS)
+            .map(|_| {
+                device.create_buffer(&BufferDescriptor {
+                    label,
+                    size,
+                    usage: usage | BufferUsage::CopyDst,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect();
+        Ring {
+            buffer: buffers[0].clone(),
+            buffers,
+            current: 0,
             size,
-            usage: usage | BufferUsage::CopyDst,
-            mapped_at_creation: false,
-        });
-        Ring { buffer, size, alignment: alignment.max(4), cursor: 0, staged: Vec::new() }
+            alignment: alignment.max(4),
+            cursor: 0,
+            staged: Vec::new(),
+        }
     }
 
     /// Stages `data` in the ring; returns its offset, or `None` if the ring is full (submit
@@ -72,6 +92,8 @@ impl Ring {
     }
 
     pub fn rewind(&mut self) {
+        self.current = (self.current + 1) % self.buffers.len();
+        self.buffer = self.buffers[self.current].clone();
         self.cursor = 0;
         self.staged.clear();
     }
