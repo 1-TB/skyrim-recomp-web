@@ -88,7 +88,13 @@ the guest-memory mirror (untracked buffers measured +1.4 fps). Bounds (Mac, 1×)
 (no pixel work) runs at 100 fps and a solid-color pixel shader at 115 fps with the renderer
 thread 100% busy, so vertex work, resolves and texture loads alone take ~10 ms and the renderer
 CPU ~8.7 ms per frame. ~12 texture loads per frame reload resolve output (1.65 ms with their
-blits); per frame ~75 Metal encoders, ~20–30 µs of GPU idle at each dependent switch. 120 fps at 1× needs the GPU frame
+blits); per frame ~75 Metal encoders, ~20–30 µs of GPU idle at each dependent switch. Skipping
+the texture reloads after resolves altogether (wrong output, an upper bound for a
+render-to-texture shortcut) gains only 4% (64.4 → 67.2 fps). The predicated-tiling bands don't
+replay draws: the scene is drawn once and its three bands resolved together. With
+`--render-debug nodraw` or `solid` and `--vblank-hz 1000` the Mac tops out at ~118 fps with
+"renderer busy" ~100%: that figure includes waiting (title, command processor syncs), so it
+doesn't by itself show the renderer CPU is the limit (phone figures below included). 120 fps at 1× needs the GPU frame
 under 8.3 ms, i.e. pixel and vertex shaders about twice as fast as now; higher resolution scales
 multiply the pixel work.
 
