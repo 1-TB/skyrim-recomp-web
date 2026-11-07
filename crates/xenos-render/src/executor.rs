@@ -584,6 +584,25 @@ fn has_stencil(format: TextureFormat) -> bool {
     matches!(format, TextureFormat::Depth24PlusStencil8 | TextureFormat::Depth32FloatStencil8 | TextureFormat::Stencil8)
 }
 
+/// The bind group of the constant blocks in `buffer` (one of the patcher's sets).
+fn constants_group(device: &Device, layout: &BindGroupLayout, buffer: &Buffer) -> BindGroup {
+    device.create_bind_group(
+        "xenos constants",
+        layout,
+        &[
+            (bindings::FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, buffer),
+            (bindings::BOOL_LOOP_CONSTANTS_BINDING, BOOL_LOOP_SIZE, buffer),
+            (bindings::FETCH_CONSTANTS_BINDING, FETCH_SIZE, buffer),
+            (bindings::SYSTEM_CONSTANTS_BINDING, SYSTEM_SIZE, buffer),
+            (bindings::PIXEL_FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, buffer),
+        ]
+        .map(|(binding, size, buffer)| BindGroupEntry {
+            binding,
+            resource: BindingResource::Buffer { buffer, offset: 0, size: Some(size) },
+        }),
+    )
+}
+
 fn as_bytes<T: Copy>(v: &[T]) -> &[u8] {
     // SAFETY: only used with plain integer data.
     unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) }
@@ -629,26 +648,8 @@ impl Executor {
             ],
         );
         let floats = ConstantPatcher::new(device, alignment);
-        let constants_groups = (0..constant_patch::SETS)
-            .map(|set| {
-                let buffer = floats.blocks(set);
-                device.create_bind_group(
-                    "xenos constants",
-                    &constants_layout,
-                    &[
-                        (bindings::FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, buffer),
-                        (bindings::BOOL_LOOP_CONSTANTS_BINDING, BOOL_LOOP_SIZE, buffer),
-                        (bindings::FETCH_CONSTANTS_BINDING, FETCH_SIZE, buffer),
-                        (bindings::SYSTEM_CONSTANTS_BINDING, SYSTEM_SIZE, buffer),
-                        (bindings::PIXEL_FLOAT_CONSTANTS_BINDING, FLOAT_CONSTANTS_SIZE, buffer),
-                    ]
-                    .map(|(binding, size, buffer)| BindGroupEntry {
-                        binding,
-                        resource: BindingResource::Buffer { buffer, offset: 0, size: Some(size) },
-                    }),
-                )
-            })
-            .collect();
+        let constants_groups =
+            (0..floats.sets()).map(|set| constants_group(device, &constants_layout, floats.blocks(set))).collect();
         let shared_layout = device.create_bind_group_layout(
             "xenos shared memory",
             &(0..=bindings::SHARED_MEMORY_CHUNKS)
@@ -967,7 +968,7 @@ impl Executor {
             }
         }
         self.textures.end_batch();
-        self.floats.rewind();
+        self.floats.rewind(&self.device);
         #[cfg(not(target_os = "emscripten"))]
         for (view, width, height, name) in std::mem::take(&mut self.trace_dumps) {
             let path = std::path::Path::new("target/shader-dump").join(format!("{name}.png"));
@@ -1000,6 +1001,10 @@ impl Executor {
         let clears = pass.targets.clears;
         if pass.draws.is_empty() && !clears.any() {
             return;
+        }
+        while self.constants_groups.len() < self.floats.sets() {
+            let group = constants_group(&self.device, &self.constants_layout, self.floats.blocks(self.constants_groups.len()));
+            self.constants_groups.push(group);
         }
         let constants_group = self.constants_groups[self.floats.current()].clone();
         if self.shared_generation != self.shared.generation {
@@ -1887,8 +1892,6 @@ impl Executor {
                 float[stage] = block.offset;
                 continue;
             }
-            let offset = self.floats.push_masked(stage as u32, count, mask, &values, FLOAT_CONSTANTS_SIZE);
-            block.offset = offset;
             block.data.resize(count * 16, 0);
             let mut v = values.chunks(16);
             for i in 0..count {
@@ -1896,6 +1899,12 @@ impl Executor {
                     block.data[i * 16..i * 16 + 16].copy_from_slice(v.next().expect("one value per bit"));
                 }
             }
+            let offset = if self.floats.direct() {
+                self.floats.push_full(&block.data, FLOAT_CONSTANTS_SIZE)
+            } else {
+                self.floats.push_masked(stage as u32, count, mask, &values, FLOAT_CONSTANTS_SIZE)
+            };
+            block.offset = offset;
             // The new block is `count` long: what follows is sent when read.
             self.regs.clear_float_written(stage, 256);
             float[stage] = offset;

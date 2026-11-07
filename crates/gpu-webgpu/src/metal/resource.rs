@@ -219,6 +219,21 @@ impl Buffer {
         Ok(())
     }
 
+    /// Copies `src` straight into the buffer's memory at `offset`, without mapping and without
+    /// ordering against the GPU: Metal buffers here live in memory shared with the CPU. The
+    /// caller makes sure no submitted work still uses the range, and writes before submitting
+    /// work that reads it. `false` if the range is out of bounds or the buffer is destroyed.
+    pub fn write_unsynchronized(&self, offset: u64, src: &[u8]) -> bool {
+        let Some(raw) = self.mtl() else { return false };
+        if offset.checked_add(src.len() as u64).is_none_or(|end| end > raw.length() as u64) {
+            return false;
+        }
+        // SAFETY: in bounds (checked above) of a CPU-visible buffer; ordering against the GPU is
+        // the caller's (see above).
+        unsafe { ptr::copy_nonoverlapping(src.as_ptr(), raw.contents().as_ptr().cast::<u8>().add(offset as usize), src.len()) };
+        true
+    }
+
     /// Unmaps (cancelling a pending map, which then reports an error).
     pub fn unmap(&self) {
         self.inner.generation.set(self.inner.generation.get() + 1);

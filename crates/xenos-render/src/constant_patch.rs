@@ -74,7 +74,8 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 
 /// Buffer sets used in turn, one per submission: a submission's patch dispatch then writes
 /// blocks that the previous submission's draws aren't reading, so it needn't wait for them
-/// (with one set, every submission waited for the GPU to finish the previous one).
+/// (with one set, every submission waited for the GPU to finish the previous one). With direct
+/// writes there are as many as submissions in flight need (see [`ConstantPatcher::rewind`]).
 pub const SETS: usize = 3;
 
 struct Set {
@@ -83,25 +84,60 @@ struct Set {
     records: Buffer,
     values: Buffer,
     group: BindGroup,
+    /// Completion of the last submission that used the set (direct writes wait for it).
+    done: Option<Pending<gpu_webgpu::Result<()>>>,
 }
 
 pub struct ConstantPatcher {
     sets: Vec<Set>,
     /// The set this submission uses.
     current: usize,
+    /// Blocks are written straight into the set's buffer by the CPU (memory shared with the
+    /// GPU, as on Apple GPUs) instead of patched on the GPU: no dispatch at the start of every
+    /// submission for its draws to wait for.
+    direct: bool,
     alignment: u64,
     cursor: u64,
     /// The records, in submission order.
     records: Vec<u32>,
     values: Vec<u8>,
+    layout: BindGroupLayout,
     pipeline: ComputePipeline,
+}
+
+fn new_set(device: &Device, layout: &BindGroupLayout) -> Set {
+    let buffer =
+        |label, size, usage| device.create_buffer(&BufferDescriptor { label, size, usage, mapped_at_creation: false });
+    // Created mapped so that it's zeroed right away by the CPU: a buffer created unmapped may be
+    // cleared by the GPU at the next submission, over blocks written directly before it.
+    let blocks = device.create_buffer(&BufferDescriptor {
+        label: "xenos constant blocks",
+        size: BLOCK_BUFFER_BYTES,
+        usage: BufferUsage::Storage | BufferUsage::Uniform | BufferUsage::CopySrc,
+        mapped_at_creation: true,
+    });
+    blocks.unmap();
+    let records = buffer(
+        "xenos constant patches",
+        ((HEADER_WORDS + MAX_RECORDS * RECORD_WORDS) * 4) as u64,
+        BufferUsage::Storage | BufferUsage::CopyDst,
+    );
+    let values = buffer("xenos constant values", (MAX_VALUES * 16) as u64, BufferUsage::Storage | BufferUsage::CopyDst);
+    let whole = |buffer| BindingResource::Buffer { buffer, offset: 0, size: None };
+    let group = device.create_bind_group(
+        "xenos constant patches",
+        layout,
+        &[
+            BindGroupEntry { binding: 0, resource: whole(&records) },
+            BindGroupEntry { binding: 1, resource: whole(&values) },
+            BindGroupEntry { binding: 2, resource: whole(&blocks) },
+        ],
+    );
+    Set { blocks, records, values, group, done: None }
 }
 
 impl ConstantPatcher {
     pub fn new(device: &Device, alignment: u64) -> Self {
-        let buffer = |label, size, usage| {
-            device.create_buffer(&BufferDescriptor { label, size, usage, mapped_at_creation: false })
-        };
         let entry = |binding, ty| BindGroupLayoutEntry {
             binding,
             visibility: ShaderStage::Compute,
@@ -121,42 +157,31 @@ impl ConstantPatcher {
             layout: Some(&device.create_pipeline_layout("xenos constant patches", &[&layout])),
             stage: ProgrammableStage::new(&module, "main"),
         });
-        let sets = (0..SETS)
-            .map(|_| {
-                let blocks = buffer(
-                    "xenos constant blocks",
-                    BLOCK_BUFFER_BYTES,
-                    BufferUsage::Storage | BufferUsage::Uniform | BufferUsage::CopySrc,
-                );
-                let records = buffer(
-                    "xenos constant patches",
-                    ((HEADER_WORDS + MAX_RECORDS * RECORD_WORDS) * 4) as u64,
-                    BufferUsage::Storage | BufferUsage::CopyDst,
-                );
-                let values =
-                    buffer("xenos constant values", (MAX_VALUES * 16) as u64, BufferUsage::Storage | BufferUsage::CopyDst);
-                let whole = |buffer| BindingResource::Buffer { buffer, offset: 0, size: None };
-                let group = device.create_bind_group(
-                    "xenos constant patches",
-                    &layout,
-                    &[
-                        BindGroupEntry { binding: 0, resource: whole(&records) },
-                        BindGroupEntry { binding: 1, resource: whole(&values) },
-                        BindGroupEntry { binding: 2, resource: whole(&blocks) },
-                    ],
-                );
-                Set { blocks, records, values, group }
-            })
-            .collect();
+        let sets: Vec<Set> = (0..SETS).map(|_| new_set(device, &layout)).collect();
+        // An empty write succeeds where direct writes are possible.
+        let direct = sets[0].blocks.write_unsynchronized(0, &[]);
         ConstantPatcher {
             sets,
             current: 0,
+            direct,
             alignment: alignment.max(16),
             cursor: 0,
             records: Vec::new(),
             values: Vec::new(),
+            layout,
             pipeline,
         }
+    }
+
+    /// Whether blocks are written directly (then [`ConstantPatcher::push_full`] replaces
+    /// [`ConstantPatcher::push_masked`]).
+    pub fn direct(&self) -> bool {
+        self.direct
+    }
+
+    /// Sets so far (each needs its own bind group for the draws).
+    pub fn sets(&self) -> usize {
+        self.sets.len()
     }
 
     /// The block buffer of set `set` (each needs its own bind group for the draws).
@@ -176,8 +201,9 @@ impl ConstantPatcher {
         let bytes: u64 = windows.iter().map(|w| w.next_multiple_of(self.alignment)).sum();
         let vec4s: usize = windows.iter().map(|&w| (w as usize / 16).min(INDICES)).sum();
         self.cursor.next_multiple_of(self.alignment) + bytes <= BLOCK_BUFFER_BYTES
-            && self.records.len() / RECORD_WORDS + windows.len() <= MAX_RECORDS
-            && self.values.len() / 16 + vec4s <= MAX_VALUES
+            && (self.direct
+                || (self.records.len() / RECORD_WORDS + windows.len() <= MAX_RECORDS
+                    && self.values.len() / 16 + vec4s <= MAX_VALUES))
     }
 
     /// Adds `data` (vec4s of stage `stage`) as a block bound with `window` bytes, given the
@@ -185,6 +211,9 @@ impl ConstantPatcher {
     /// [`ConstantPatcher::has_room`] first.
     pub fn push(&mut self, stage: u32, previous: Option<&[u8]>, data: &[u8], window: u64) -> u32 {
         debug_assert!(data.len().is_multiple_of(16) && data.len() <= INDICES * 16);
+        if self.direct {
+            return self.push_full(data, window);
+        }
         let offset = self.cursor.next_multiple_of(self.alignment);
         assert!(offset + window <= BLOCK_BUFFER_BYTES, "float constant blocks full");
         self.cursor = offset + (data.len() as u64).max(16);
@@ -198,6 +227,18 @@ impl ConstantPatcher {
         }
         self.records.extend([stage, (offset / 16) as u32, (data.len() / 16) as u32, first_value as u32]);
         self.records.extend(mask);
+        offset as u32
+    }
+
+    /// With direct writes: writes the whole block `data`, bound with `window` bytes, into the
+    /// current set. Returns its offset.
+    pub fn push_full(&mut self, data: &[u8], window: u64) -> u32 {
+        debug_assert!(self.direct);
+        let offset = self.cursor.next_multiple_of(self.alignment);
+        assert!(offset + window <= BLOCK_BUFFER_BYTES, "float constant blocks full");
+        self.cursor = offset + (data.len() as u64).max(16);
+        let written = self.sets[self.current].blocks.write_unsynchronized(offset, data);
+        debug_assert!(written, "constant block out of bounds");
         offset as u32
     }
 
@@ -259,9 +300,24 @@ impl ConstantPatcher {
         Some((encoder.finish("xenos constant patches"), (records.len() + self.values.len()) as u64))
     }
 
-    /// The submission went out: blocks and patches start over, in the next set.
-    pub fn rewind(&mut self) {
-        self.current = (self.current + 1) % SETS;
+    /// The submission went out: blocks and patches start over, in the next set. With direct
+    /// writes that is a set no submission still running uses (the CPU writes it while the GPU
+    /// runs), a new one if all are busy.
+    pub fn rewind(&mut self, device: &Device) {
+        if self.direct {
+            self.sets[self.current].done = Some(device.queue().on_submitted_work_done());
+            let n = self.sets.len();
+            let free = (1..=n)
+                .map(|k| (self.current + k) % n)
+                .find(|&i| self.sets[i].done.as_ref().is_none_or(Pending::is_ready));
+            self.current = free.unwrap_or_else(|| {
+                self.sets.push(new_set(device, &self.layout));
+                self.sets.len() - 1
+            });
+            self.sets[self.current].done = None;
+        } else {
+            self.current = (self.current + 1) % SETS;
+        }
         self.cursor = 0;
         self.records.clear();
         self.values.clear();
@@ -304,9 +360,13 @@ mod tests {
             expected.push((offset, data.clone()));
             previous[stage] = Some(data);
         }
-        let (commands, bytes) = patcher.encode(&device).expect("patches");
-        let total: usize = expected.iter().map(|(_, d)| d.len()).sum();
-        assert!(bytes < total as u64 / 2, "patches ({bytes} bytes) should be far smaller than the blocks ({total})");
+        // With direct writes the blocks are written already and there's nothing to patch.
+        let commands = patcher.encode(&device).map(|(commands, bytes)| {
+            let total: usize = expected.iter().map(|(_, d)| d.len()).sum();
+            assert!(bytes < total as u64 / 2, "patches ({bytes} bytes) should be far smaller than the blocks ({total})");
+            commands
+        });
+        assert_eq!(commands.is_none(), patcher.direct());
         let readback = device.create_buffer(&BufferDescriptor {
             label: "readback",
             size: BLOCK_BUFFER_BYTES,
@@ -315,7 +375,7 @@ mod tests {
         });
         let mut encoder = device.create_command_encoder("readback");
         encoder.copy_buffer_to_buffer(patcher.blocks(patcher.current()), 0, &readback, 0, BLOCK_BUFFER_BYTES);
-        device.queue().submit([commands, encoder.finish("readback")]);
+        device.queue().submit(commands.into_iter().chain([encoder.finish("readback")]));
         device.block_on(readback.map_async(MapMode::Read, 0, None)).expect("map");
         for (offset, data) in expected {
             let mut got = vec![0u8; data.len()];

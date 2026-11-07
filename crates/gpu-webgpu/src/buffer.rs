@@ -263,6 +263,11 @@ impl Buffer {
     }
 
     /// Unmaps (cancelling a pending map, whose callback then reports an abort).
+    /// Direct writes need memory shared with the CPU (the Metal backend): never here.
+    pub fn write_unsynchronized(&self, _offset: u64, _src: &[u8]) -> bool {
+        false
+    }
+
     pub fn unmap(&self) {
         self.state.generation.set(self.state.generation.get() + 1);
         self.state.map.set(Map::Unmapped);
