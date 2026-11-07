@@ -77,6 +77,12 @@ pub fn set_resolution_scale(scale: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Renderers started afterwards draw the title's multisampled surfaces single-sampled (`--gpu
+/// d3d`): no anti-aliasing, for speed (the main scene's 4x MSAA costs ~10% on an M2).
+pub fn set_single_sample(on: bool) {
+    debug::SINGLE_SAMPLE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Trilinear texture sampling of renderers started afterwards uses at least `n`x anisotropic
 /// filtering (1 to 16; 1 keeps the title's own settings).
 pub fn set_min_anisotropy(n: u16) {

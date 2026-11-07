@@ -29,11 +29,13 @@ pub struct Settings {
     pub show_fps: bool,
     /// Scale frames up to the screen with MetalFX rather than bicubic filtering.
     pub metalfx: bool,
+    /// The title's 4x multisample anti-aliasing (off: faster).
+    pub msaa: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true }
+        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true }
     }
 }
 
@@ -67,6 +69,7 @@ impl Settings {
                 }
                 "show_fps" => s.show_fps = value == "true",
                 "metalfx" => s.metalfx = value == "true",
+                "msaa" => s.msaa = value != "false",
                 _ => {}
             }
         }
@@ -75,8 +78,8 @@ impl Settings {
 
     pub fn save(&self, path: &Path) {
         let text = format!(
-            "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\n",
-            self.resolution_scale, self.anisotropy, self.fps_cap, self.show_fps, self.metalfx
+            "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\nmsaa={}\n",
+            self.resolution_scale, self.anisotropy, self.fps_cap, self.show_fps, self.metalfx, self.msaa
         );
         if let Err(e) = std::fs::write(path, text) {
             log::warn!("saving {}: {e}", path.display());
@@ -98,6 +101,9 @@ impl Settings {
         if self.metalfx {
             args.push("--metalfx".to_string());
         }
+        if !self.msaa {
+            args.push("--no-msaa".to_string());
+        }
         args
     }
 }
@@ -114,6 +120,7 @@ pub struct Panel {
     anisotropy: Retained<UISegmentedControl>,
     fps_cap: Retained<UISegmentedControl>,
     upscaling: Retained<UISegmentedControl>,
+    msaa: Retained<UISegmentedControl>,
     show_fps: Retained<UISwitch>,
 }
 
@@ -152,6 +159,7 @@ impl Panel {
         );
         let fps_cap = segments(mtm, &["30", "60", "120"], index(&FPS_CAPS, settings.fps_cap));
         let upscaling = segments(mtm, &["Bicubic", "MetalFX"], usize::from(settings.metalfx));
+        let msaa = segments(mtm, &["Off (faster)", "4× MSAA"], usize::from(settings.msaa));
         let show_fps = UISwitch::new(mtm);
         show_fps.setOn(settings.show_fps);
         let control = |c: Retained<UISegmentedControl>| Retained::into_super(Retained::into_super(c));
@@ -160,6 +168,7 @@ impl Panel {
             (label(mtm, "Texture filtering", 17.0, 0.9), control(anisotropy.clone()), false),
             (label(mtm, "Frame rate limit", 17.0, 0.9), control(fps_cap.clone()), false),
             (label(mtm, "Upscaling", 17.0, 0.9), control(upscaling.clone()), false),
+            (label(mtm, "Anti-aliasing", 17.0, 0.9), control(msaa.clone()), false),
             (label(mtm, "Show FPS", 17.0, 0.9), Retained::into_super(Retained::into_super(show_fps.clone())), true),
         ];
         let title = label(mtm, "Settings", 28.0, 1.0);
@@ -193,7 +202,7 @@ impl Panel {
         root.addSubview(&play);
         title.setTextAlignment(NSTextAlignment::Left);
         parent.addSubview(&root);
-        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, show_fps }
+        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, msaa, show_fps }
     }
 
     /// Covers the whole view, with the content laid out in `area` (the safe area).
@@ -201,8 +210,9 @@ impl Panel {
         self.root.setFrame(bounds);
         let width = area.size.width.min(720.0);
         let x = area.origin.x + (area.size.width - width) / 2.0;
-        let row = 44.0;
         let rows = self.rows.len() as f64;
+        // Rows shrink to fit a phone held sideways (about 400 points high).
+        let row = ((area.size.height - 40.0 - 40.0 - 56.0 - 4.0 * (rows + 3.0)) / rows).clamp(32.0, 44.0);
         let gap = ((area.size.height - 40.0 - row * rows - 40.0 - 56.0) / (rows + 3.0)).clamp(2.0, 18.0);
         let mut y = area.origin.y + gap;
         self.title.setFrame(rect(x, y, width, 40.0));
@@ -210,7 +220,7 @@ impl Panel {
         let label_w = width * 0.32;
         for (label, control, switch) in &self.rows {
             label.setFrame(rect(x, y, label_w, row));
-            let (control_w, control_h) = if *switch { (51.0, 31.0) } else { (width - label_w, 34.0) };
+            let (control_w, control_h) = if *switch { (51.0, 31.0) } else { (width - label_w, (row - 4.0).min(34.0)) };
             control.setFrame(rect(x + label_w, y + (row - control_h) / 2.0, control_w, control_h));
             y += row + gap;
         }
@@ -228,6 +238,7 @@ impl Panel {
             fps_cap: FPS_CAPS[pick(&self.fps_cap).min(FPS_CAPS.len() - 1)],
             show_fps: self.show_fps.isOn(),
             metalfx: self.upscaling.selectedSegmentIndex() == 1,
+            msaa: self.msaa.selectedSegmentIndex() == 1,
         }
     }
 

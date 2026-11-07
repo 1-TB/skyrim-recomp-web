@@ -50,6 +50,8 @@ options:
                            (default 1)
   --anisotropy N           at least Nx anisotropic filtering (1-16) where the title samples
                            trilinearly (default 1: the title's own)
+  --no-msaa                draw the title's multisampled surfaces single-sampled (no
+                           anti-aliasing; faster)
   --metalfx                scale frames up to the window with MetalFX (Apple GPUs) instead of
                            bicubic filtering
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
@@ -158,6 +160,7 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
                 xenos_render::set_resolution_scale(scale)?;
             }
             "--metalfx" => xenos_render::set_metalfx(true),
+            "--no-msaa" => xenos_render::set_single_sample(true),
             "--anisotropy" => {
                 let n: u16 = value()?.parse().map_err(|e| format!("--anisotropy: {e}"))?;
                 if !(1..=16).contains(&n) {
