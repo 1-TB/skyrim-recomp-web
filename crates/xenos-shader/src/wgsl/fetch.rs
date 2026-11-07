@@ -33,6 +33,11 @@ impl Generator<'_> {
                 let index = if a.is_index_rounded { format!("{index} + 0.5") } else { index };
                 self.line(&format!("xe_vfetch_address = xe_vfetch_address + i32(floor({index})) * {};", a.stride));
             }
+            self.line(&format!(
+                "xe_vfetch_block = u32(xe_vfetch_address) >> {}u;",
+                (crate::bindings::SHARED_MEMORY_BLOCK_BYTES / 4).ilog2()
+            ));
+            self.line("xe_vfetch_slot = xe_shared_slot(xe_vfetch_block);");
         }
         let used = vf.result.used_result_components();
         let format_components = vfmt::component_count(a.data_format);
@@ -54,7 +59,7 @@ impl Generator<'_> {
             if needed & (1 << w) != 0 {
                 let offset = a.offset + w;
                 self.line(&format!(
-                    "let xe_w{w} = xe_vfetch_word(xe_vfetch_address + ({offset}), xe_vfetch_end, xe_endian);"
+                    "let xe_w{w} = xe_vfetch_word(xe_vfetch_address + ({offset}), xe_vfetch_end, xe_endian, xe_vfetch_block, xe_vfetch_slot);"
                 ));
             }
         }

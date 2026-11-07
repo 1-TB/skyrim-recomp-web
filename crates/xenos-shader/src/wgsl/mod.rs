@@ -822,6 +822,8 @@ var<private> xe_call_stack: array<u32, 4>;
 var<private> xe_call_depth: u32;
 var<private> xe_vfetch_address: i32;
 var<private> xe_vfetch_end: i32;
+var<private> xe_vfetch_block: u32 = 0xFFFFFFFFu;
+var<private> xe_vfetch_slot: u32;
 var<private> xe_tfetch_lod: f32;
 var<private> xe_tfetch_gradients_h: vec3<f32>;
 var<private> xe_tfetch_gradients_v: vec3<f32>;

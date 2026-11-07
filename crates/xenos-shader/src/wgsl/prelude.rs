@@ -225,14 +225,6 @@ fn xe_swap32(v: u32, endian: u32) -> u32 {
     return r;
 }
 
-// Loads a dword of a vertex buffer; words at or past the end of the buffer read as zero.
-fn xe_vfetch_word(address: i32, end: i32, endian: u32) -> u32 {
-    if (u32(address) >= u32(end)) {
-        return 0u;
-    }
-    return xe_swap32(xe_shared_load(u32(address)), endian);
-}
-
 // Xenos float16: no infinities or NaN, exponent 31 extends the range.
 fn xe_half_to_f32(h: u32) -> f32 {
     let s = select(1.0, -1.0, (h & 0x8000u) != 0u);
@@ -260,6 +252,15 @@ fn xe_pwl_gamma_to_linear(gamma: f32) -> f32 {
     var l = g * (255.0 * 1024.0) * scale + offset;
     l = l + trunc(l * scale);
     return l * (1.0 / 1023.0);
+}
+
+// Loads a dword of a vertex buffer; words at or past the end of the buffer read as zero. `block`
+// and `slot` locate the fetch's vertex in the mirror (`xe_shared_load_near`).
+fn xe_vfetch_word(address: i32, end: i32, endian: u32, block: u32, slot: u32) -> u32 {
+    if (u32(address) >= u32(end)) {
+        return 0u;
+    }
+    return xe_swap32(xe_shared_load_near(u32(address), block, slot), endian);
 }
 
 // Texture fetch constant fields (fc = texture fetch constant index 0..31).

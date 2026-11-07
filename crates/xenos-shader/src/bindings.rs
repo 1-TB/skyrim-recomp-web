@@ -291,11 +291,27 @@ struct XeFetchConstants {{
 @group({FETCH_CONSTANTS_GROUP}) @binding({FETCH_CONSTANTS_BINDING}) var<uniform> xe_fetch: XeFetchConstants;
 @group({SYSTEM_CONSTANTS_GROUP}) @binding({SYSTEM_CONSTANTS_BINDING}) var<uniform> xe_system: XeSystemConstants;
 {shared}
+// Mirror slot plus one of guest block `block` (zero where it isn't mirrored).
+fn xe_shared_slot(block: u32) -> u32 {{
+    if (block >= {blocks}u) {{ return 0u; }}
+    return xe_shared_table[block];
+}}
+
 // Dword `i` of guest physical memory (zero where it isn't mirrored).
 fn xe_shared_load(i: u32) -> u32 {{
-    let block = i >> {shift}u;
-    if (block >= {blocks}u) {{ return 0u; }}
-    let slot = xe_shared_table[block];
+    return xe_shared_load_slot(xe_shared_slot(i >> {shift}u), i);
+}}
+
+// Dword `i` of guest physical memory given the block and slot of a nearby dword: a vertex's
+// words nearly always share its block, so they skip the table lookup.
+fn xe_shared_load_near(i: u32, block: u32, slot: u32) -> u32 {{
+    var s = slot;
+    if ((i >> {shift}u) != block) {{ s = xe_shared_slot(i >> {shift}u); }}
+    return xe_shared_load_slot(s, i);
+}}
+
+// Dword `i` of guest physical memory, `slot` being `xe_shared_slot` of its block.
+fn xe_shared_load_slot(slot: u32, i: u32) -> u32 {{
     if (slot == 0u) {{ return 0u; }}
     let o = (((slot - 1u) << {shift}u) & {chunk_mask:#X}u) | (i & {mask:#X}u);
     switch ((slot - 1u) >> {chunk_shift}u) {{
