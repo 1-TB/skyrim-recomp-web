@@ -10,6 +10,7 @@ publish.workspace = true
 d3d-hle.workspace = true
 xma-decoder.workspace = true
 log.workspace = true
+rustc-hash.workspace = true
 runtime-core.workspace = true
 vfs.workspace = true
 xex.workspace = true

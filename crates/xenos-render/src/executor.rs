@@ -1914,9 +1914,13 @@ impl Executor {
                 continue;
             }
             block.data.resize(count * 16, 0);
+            // Walking the set bits (`values` is in index order): a draw changes few of `count`.
             let mut v = values.chunks(16);
-            for i in 0..count {
-                if mask[i / 32] >> (i % 32) & 1 != 0 {
+            for (w, &word) in mask.iter().enumerate() {
+                let mut bits = word;
+                while bits != 0 {
+                    let i = w * 32 + bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
                     block.data[i * 16..i * 16 + 16].copy_from_slice(v.next().expect("one value per bit"));
                 }
             }

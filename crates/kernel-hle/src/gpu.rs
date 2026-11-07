@@ -498,6 +498,8 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         zpd_samples: 0,
         backend: k.gpu.backend.get().cloned(),
         pending: Vec::new(),
+        sent: vec![0; SENT_REGISTERS],
+        shaders: Default::default(),
         deferred: std::collections::VecDeque::new(),
         deferred_count: 0,
         syncs: [0; 128],
@@ -593,6 +595,12 @@ impl Reader {
     }
 }
 
+/// Registers the renderer keeps (xenos-render's register file; it ignores writes past it).
+const SENT_REGISTERS: usize = 0x5003;
+
+/// Distinct microcode remembered before the memo of sent shaders is cleared.
+const KNOWN_SHADERS: usize = 4096;
+
 struct CommandProcessor<'a> {
     k: &'static Kernel,
     mem: &'a GuestMemory,
@@ -603,6 +611,13 @@ struct CommandProcessor<'a> {
     backend: Option<Arc<dyn GpuBackend>>,
     /// Register writes not yet sent to the backend.
     pending: Vec<(u32, u32)>,
+    /// The values sent to the backend so far (registers below [`SENT_REGISTERS`]; the backend
+    /// starts with all zero): writes of the value already sent are dropped here, as the
+    /// renderer would ignore them. Titles rewrite most constants before every draw with the
+    /// values they have, and comparing here takes that work off the renderer thread.
+    sent: Vec<u32>,
+    /// Microcode sent to the backend, by a quick hash of its words (see `shared_code`).
+    shaders: rustc_hash::FxHashMap<u64, Vec<Arc<[u32]>>>,
     /// Effects waiting for the renderer to execute the command with the given sequence number,
     /// oldest first, and how many were deferred since the last report.
     deferred: std::collections::VecDeque<(u64, Deferred)>,
@@ -857,9 +872,29 @@ impl CommandProcessor<'_> {
 
     fn load_shader(&mut self, pixel: bool, code: Vec<u32>) {
         self.flush_registers();
-        if let Some(b) = &self.backend {
-            b.shader(pixel, code.into());
+        if let Some(b) = self.backend.clone() {
+            b.shader(pixel, self.shared_code(code));
         }
+    }
+
+    /// `code` as the `Arc` sent for the same microcode before: titles load a shader before most
+    /// draws, and the renderer knows a shader it has seen by its `Arc` (without reading it).
+    fn shared_code(&mut self, code: Vec<u32>) -> Arc<[u32]> {
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            code.hash(&mut h);
+            h.finish()
+        };
+        if let Some(known) = self.shaders.get(&hash).and_then(|v| v.iter().find(|c| c[..] == code[..])) {
+            return known.clone();
+        }
+        if self.shaders.len() >= KNOWN_SHADERS {
+            self.shaders.clear();
+        }
+        let code: Arc<[u32]> = code.into();
+        self.shaders.entry(hash).or_default().push(code.clone());
+        code
     }
 
     fn execute(&mut self, r: &mut Reader) {
@@ -1322,7 +1357,14 @@ impl CommandProcessor<'_> {
             return;
         }
         if self.backend.is_some() {
-            self.pending.push((index, value));
+            match self.sent.get_mut(index as usize) {
+                Some(sent) if *sent == value => {}
+                Some(sent) => {
+                    *sent = value;
+                    self.pending.push((index, value));
+                }
+                None => self.pending.push((index, value)),
+            }
         }
         if self.d3d_marker.is_some() {
             self.d3d_writes.push((index, value));

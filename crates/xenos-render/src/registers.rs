@@ -152,20 +152,39 @@ impl RegisterSource for RegisterFile {
     }
 }
 
+/// Distinct microcode remembered per stage before the memo is cleared.
+const KNOWN_SHADERS: usize = 4096;
+
 /// The microcode most recently loaded for each stage (IM_LOAD / IM_LOAD_IMMEDIATE).
 #[derive(Default, Clone)]
 pub struct ActiveShaders {
     /// Microcode and its hash (computed once per load, not per draw).
     pub vertex: Option<(Arc<[u32]>, u64)>,
     pub pixel: Option<(Arc<[u32]>, u64)>,
+    /// Per stage, microcode loaded before and its [`crate::shaders::code_hash`], by address:
+    /// the command processor sends the same `Arc` for the same microcode, and titles load a
+    /// shader before most draws. Holding the `Arc`s keeps their addresses from being reused.
+    known: [rustc_hash::FxHashMap<usize, (Arc<[u32]>, u64)>; 2],
 }
 
 impl ActiveShaders {
     pub fn set(&mut self, stage: ShaderStage, code: Arc<[u32]>) {
-        let hash = crate::shaders::code_hash(&code);
+        let known = &mut self.known[stage as usize];
+        let key = Arc::as_ptr(&code).cast::<u32>() as usize;
+        let entry = match known.get(&key) {
+            Some(e) => e.clone(),
+            None => {
+                if known.len() >= KNOWN_SHADERS {
+                    known.clear();
+                }
+                let hash = crate::shaders::code_hash(&code);
+                known.insert(key, (code.clone(), hash));
+                (code, hash)
+            }
+        };
         match stage {
-            ShaderStage::Vertex => self.vertex = Some((code, hash)),
-            ShaderStage::Pixel => self.pixel = Some((code, hash)),
+            ShaderStage::Vertex => self.vertex = Some(entry),
+            ShaderStage::Pixel => self.pixel = Some(entry),
         }
     }
 }

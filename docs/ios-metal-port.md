@@ -20,6 +20,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 7 | Renderer CPU trims | The command processor drops register writes of the value already sent and sends one `Arc` per distinct microcode (the renderer knows shaders by pointer instead of hashing them per load); changed float constants are applied walking the mask bits. Renderer-bound benchmark (`--render-debug solid --vblank-hz 1000`): 114.6 → 117.8 fps |
 | Nov 7 | One mirror buffer on Apple GPUs | The guest memory mirror is one 128 MiB buffer on Apple targets (four 32 MiB ones elsewhere), so shader loads skip the switch over buffers: Mac 62.5 → 64.4 fps |
 | Nov 7 | Fewer submissions, cheaper vertex fetch | Vertex fetches look up their vertex's mirror slot once (vertex time 254 → 194 ms/s); a full constant set no longer submits (the batch moves to another set; submits 13 → 3 per frame, which left ~1.8 ms/frame of GPU idle at command buffer boundaries); render passes capped at 128 draws (1000-draw passes were ~25% slower); iOS presents with a 1/120 s minimum duration (ProMotion reaches 120 Hz), thermal state logged; encoders ended on drop (shutdown crash) |
 | Nov 7 | Specialized compute pipelines | Resolve, resolve store and texture load pipelines specialized with override constants on their per-format parameters (the generic shaders spilled registers): resolves 4.95 → 2.8 ms/frame; unchanged register writes skipped (renderer CPU ~4.4 ms/frame on the Mac). Mac 54 → 60 fps |
@@ -87,8 +88,7 @@ the guest-memory mirror (untracked buffers measured +1.4 fps). Bounds (Mac, 1×)
 (no pixel work) runs at 100 fps and a solid-color pixel shader at 115 fps with the renderer
 thread 100% busy, so vertex work, resolves and texture loads alone take ~10 ms and the renderer
 CPU ~8.7 ms per frame. ~12 texture loads per frame reload resolve output (1.65 ms with their
-blits); per frame ~75 Metal encoders, ~20–30 µs of GPU idle at each dependent switch. Float
-constants as uniforms (`constant` address space) instead of storage: no change. 120 fps at 1× needs the GPU frame
+blits); per frame ~75 Metal encoders, ~20–30 µs of GPU idle at each dependent switch. 120 fps at 1× needs the GPU frame
 under 8.3 ms, i.e. pixel and vertex shaders about twice as fast as now; higher resolution scales
 multiply the pixel work.
 

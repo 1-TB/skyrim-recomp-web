@@ -816,6 +816,7 @@ dependencies = [
  "lzxd",
  "miniz_oxide 0.9.1",
  "runtime-core",
+ "rustc-hash",
  "vfs",
  "xex",
  "xma-decoder",
