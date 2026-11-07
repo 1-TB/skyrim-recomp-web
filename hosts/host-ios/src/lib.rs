@@ -149,12 +149,13 @@ fn on_kernel(kernel: &'static kernel_hle::Kernel, render: xenos_render::native::
     app::attach(kernel);
     audio_out::install(kernel);
     gpu::start_memory_report();
-    // The command processor waits for the renderer at fences, as in the browser on phones. The
-    // GPU memory budgets stay the desktop ones: the browser's phone budgets (a 56 MiB texture
-    // cache, new textures loaded at 16 MiB/s) are sized for a tab the system closes early, and
-    // in a native app they left busy scenes drawn without textures. `--render-debug handheld`
-    // in args.txt restores them.
-    kernel_hle::gpu::set_sync_default(true);
+    // Unlike the browser on phones, the command processor doesn't wait for the renderer at
+    // fences (as on the Mac): waiting held an iPhone 18 Pro Max at 60 fps, and without it the
+    // same scenes reach 95-110 (`--gpu-sync` in args.txt brings the wait back). The GPU memory
+    // budgets stay the desktop ones: the browser's phone budgets (a 56 MiB texture cache, new
+    // textures loaded at 16 MiB/s) are sized for a tab the system closes early, and in a native
+    // app they left busy scenes drawn without textures. `--render-debug handheld` in args.txt
+    // restores them.
     // A native app has room a browser tab doesn't (an iPhone 18 Pro Max leaves ~2 GiB free at
     // 1.5 GiB used): twice the desktop texture cache, so fewer textures are dropped and reloaded.
     xenos_render::default_texture_budget_mib(1024);
