@@ -4,7 +4,7 @@
 //! |-------|---------|----------|
 //! | 0 | 0 | vertex shaders: `var<storage, read> xe_float_constants: array<vec4<f32>, 256>` — c0..c255 |
 //! | 0 | 1 | `var<uniform> xe_bool_loop: XeBoolLoopConstants` — [`BoolLoopConstants`] (registers 0x4900..0x4927) |
-//! | 0 | 2 | `var<uniform> xe_fetch: XeFetchConstants` — 192 raw fetch constant dwords (registers 0x4800..0x48BF) |
+//! | 0 | 2 | `var<uniform> xe_fetch: XeFetchConstants` — 192 raw fetch constant dwords (registers 0x4800..0x48BF), then [`texture_fetch_info`] |
 //! | 0 | 3 | `var<uniform> xe_system: XeSystemConstants` — [`SystemConstants`] |
 //! | 0 | 4 | pixel shaders: `var<storage, read> xe_float_constants: array<vec4<f32>, 256>` — c0..c255 |
 //! | 1 | 0..3 | `var<storage, read> xe_shared_memory_N: array<u32>` — the mirrored blocks of guest physical memory: slots of [`SHARED_MEMORY_BLOCK_BYTES`], [`SHARED_MEMORY_CHUNK_BYTES`] of them per buffer ([`SHARED_MEMORY_CHUNKS`] buffers) |
@@ -44,8 +44,59 @@ pub const FLOAT_CONSTANT_COUNT: u32 = 256;
 pub const FLOAT_CONSTANTS_SIZE: u64 = FLOAT_CONSTANT_COUNT as u64 * 16;
 /// Raw fetch constant dwords (32 texture fetch constants of 6 dwords, or 96 vertex ones of 2).
 pub const FETCH_CONSTANT_DWORDS: usize = 192;
+/// Dwords of [`texture_fetch_info`] after the raw fetch constants: two vec4s per texture fetch
+/// constant.
+pub const TEXTURE_FETCH_INFO_DWORDS: usize = 32 * 8;
 /// Size of the fetch constant buffer in bytes.
-pub const FETCH_CONSTANTS_SIZE: u64 = FETCH_CONSTANT_DWORDS as u64 * 4;
+pub const FETCH_CONSTANTS_SIZE: u64 = (FETCH_CONSTANT_DWORDS + TEXTURE_FETCH_INFO_DWORDS) as u64 * 4;
+
+/// Flags in [`texture_fetch_info`]'s fourth dword: component count - 1 (bits 0-1), signed or
+/// integer components that need converting (bit 2), a swizzle other than xyzw (bit 3).
+pub mod fetch_info {
+    pub const COUNT_MASK: u32 = 3;
+    pub const CONVERT: u32 = 1 << 2;
+    pub const SWIZZLE: u32 = 1 << 3;
+}
+
+/// What the translated shaders need of each texture fetch constant, decoded once per draw on
+/// the CPU instead of per pixel (GPUs without a scalar unit, Apple's, repeat uniform work in
+/// every thread): per constant, `[lod bias, gradient exponent x, gradient exponent y, flags]`
+/// (floats as bits; flags in [`fetch_info`]) and `[width, height, exponent scale, 0]` of a 1D/2D
+/// fetch. `fetch` holds the 192 raw dwords; vertex fetch constants decode to nonsense nobody reads.
+pub fn texture_fetch_info(fetch: &[u32]) -> [u32; TEXTURE_FETCH_INFO_DWORDS] {
+    let mut out = [0u32; TEXTURE_FETCH_INFO_DWORDS];
+    for (fc, w) in fetch.chunks_exact(6).take(32).enumerate() {
+        let bits = |v: u32, offset: u32, width: u32| ((v as i32) << (32 - offset - width)) >> (32 - width);
+        let lod_bias = bits(w[4], 12, 10) as f32 / 32.0;
+        let grad_x = bits(w[4], 22, 5) as f32;
+        let grad_y = bits(w[4], 27, 5) as f32;
+        let count = crate::wgsl::prelude::FORMATS[(w[1] & 63) as usize].0.clamp(1, 4);
+        let mut flags = count - 1;
+        if w[0] & 0x3FC != 0 || w[3] & 1 != 0 {
+            flags |= fetch_info::CONVERT;
+        }
+        if (w[3] >> 1) & 0xFFF != 0x688 {
+            flags |= fetch_info::SWIZZLE;
+        }
+        let (width, height) = if (w[5] >> 9) & 3 == 0 {
+            ((w[2] & 0xFF_FFFF) + 1, 1)
+        } else {
+            ((w[2] & 0x1FFF) + 1, ((w[2] >> 13) & 0x1FFF) + 1)
+        };
+        let exp_scale = 2f32.powi(bits(w[3], 13, 6));
+        out[fc * 8..fc * 8 + 8].copy_from_slice(&[
+            lod_bias.to_bits(),
+            grad_x.to_bits(),
+            grad_y.to_bits(),
+            flags,
+            (width as f32).to_bits(),
+            (height as f32).to_bits(),
+            exp_scale.to_bits(),
+            0,
+        ]);
+    }
+    out
+}
 
 /// Bool and loop constants, a verbatim copy of registers 0x4900..0x4907 (`SHADER_CONSTANT_BOOL_*`,
 /// bool `b` is bit `b & 31` of `bools[b >> 5]`) and 0x4908..0x4927 (`SHADER_CONSTANT_LOOP_*`: count
@@ -232,6 +283,7 @@ struct XeBoolLoopConstants {{
 
 struct XeFetchConstants {{
     words: array<vec4<u32>, 48>,
+    info: array<vec4<u32>, 64>,
 }}
 
 @group({FLOAT_CONSTANTS_GROUP}) @binding({float_binding}) var<storage, read> xe_float_constants: array<vec4<f32>, {FLOAT_CONSTANT_COUNT}>;

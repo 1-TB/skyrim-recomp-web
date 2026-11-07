@@ -1896,14 +1896,21 @@ impl Executor {
         };
         let fetch = match &cache.fetch {
             Some(b) if dirty_bits & dirty::FETCH == 0 => b.offset,
-            _ => ConstantBlock::push(
-                &mut cache.fetch,
-                &mut self.floats,
-                constant_patch::FETCH,
-                as_bytes(self.regs.fetch_constants()),
-                FETCH_SIZE,
-                &mut self.stats,
-            ),
+            _ => {
+                // The raw constants, then what the shaders need of them decoded.
+                let words = self.regs.fetch_constants();
+                let mut block = [0u32; bindings::FETCH_CONSTANT_DWORDS + bindings::TEXTURE_FETCH_INFO_DWORDS];
+                block[..bindings::FETCH_CONSTANT_DWORDS].copy_from_slice(words);
+                block[bindings::FETCH_CONSTANT_DWORDS..].copy_from_slice(&bindings::texture_fetch_info(words));
+                ConstantBlock::push(
+                    &mut cache.fetch,
+                    &mut self.floats,
+                    constant_patch::FETCH,
+                    as_bytes(&block),
+                    FETCH_SIZE,
+                    &mut self.stats,
+                )
+            }
         };
         let system = ConstantBlock::push(
             &mut cache.system,

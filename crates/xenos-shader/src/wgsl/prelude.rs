@@ -1,11 +1,8 @@
 //! WGSL helper functions included in every translated shader (unused ones cost nothing).
 
-/// Packed per-format texture information, indexed by `xenos::TextureFormat`: bits 0:2 component
-/// count, then four 6-bit fixed-point component widths (0 = float, compressed or unknown). A
-/// `const` array (a `switch`, or a `var<private>` array, measured slower on Metal).
-pub(crate) fn texture_format_table() -> String {
-    // (component count, widths) per format 0..63.
-    const FORMATS: [(u32, [u32; 4]); 64] = [
+/// (component count, fixed-point component widths: 0 = float, compressed or unknown) per
+/// `xenos::TextureFormat` 0..63.
+pub(crate) const FORMATS: [(u32, [u32; 4]); 64] = [
         (1, [1, 0, 0, 0]),     // k_1_REVERSE
         (1, [1, 0, 0, 0]),     // k_1
         (1, [8, 0, 0, 0]),     // k_8
@@ -70,7 +67,12 @@ pub(crate) fn texture_format_table() -> String {
         (4, [0, 0, 0, 0]),     // k_DXT3A_AS_1_1_1_1
         (4, [8, 8, 8, 8]),     // k_8_8_8_8_GAMMA_EDRAM
         (4, [0, 0, 0, 0]),     // k_2_10_10_10_FLOAT_EDRAM
-    ];
+];
+
+/// Packed per-format texture information, indexed by `xenos::TextureFormat`: bits 0:2 component
+/// count, then four 6-bit fixed-point component widths (0 = float, compressed or unknown). A
+/// `const` array (a `switch`, or a `var<private>` array, measured slower on Metal).
+pub(crate) fn texture_format_table() -> String {
     let entries: Vec<String> = FORMATS
         .iter()
         .map(|(count, w)| format!("{}u", count | (w[0] << 3) | (w[1] << 9) | (w[2] << 15) | (w[3] << 21)))
@@ -269,13 +271,10 @@ fn xe_tex_is_3d(fc: u32) -> bool {
     return xe_tex_data_dimension(fc) == 2u;
 }
 
-// Width and height for 1D and 2D fetches (a 1D fetch constant has height 1).
+// Width and height for 1D and 2D fetches (a 1D fetch constant has height 1), decoded on the CPU
+// (`texture_fetch_info`).
 fn xe_tex_size_2d(fc: u32) -> vec2<f32> {
-    let w2 = xe_fetch_word(fc * 6u + 2u);
-    if (xe_tex_data_dimension(fc) == 0u) {
-        return vec2<f32>(f32((w2 & 0xFFFFFFu) + 1u), 1.0);
-    }
-    return vec2<f32>(f32((w2 & 0x1FFFu) + 1u), f32(((w2 >> 13u) & 0x1FFFu) + 1u));
+    return bitcast<vec2<f32>>(xe_fetch.info[fc * 2u + 1u].xy);
 }
 
 // Width, height and depth (3D) or stack depth (stacked 2D).
@@ -288,12 +287,11 @@ fn xe_tex_size_3d(fc: u32) -> vec3<f32> {
 }
 
 fn xe_tex_lod_bias(fc: u32) -> f32 {
-    return f32(extractBits(bitcast<i32>(xe_fetch_word(fc * 6u + 4u)), 12u, 10u)) * (1.0 / 32.0);
+    return bitcast<f32>(xe_fetch.info[fc * 2u].x);
 }
 
 fn xe_tex_grad_exp_adjust(fc: u32) -> vec2<f32> {
-    let w4 = bitcast<i32>(xe_fetch_word(fc * 6u + 4u));
-    return vec2<f32>(f32(extractBits(w4, 22u, 5u)), f32(extractBits(w4, 27u, 5u)));
+    return bitcast<vec2<f32>>(xe_fetch.info[fc * 2u].yz);
 }
 
 // Whether the fetch constant filters between the layers of a stacked texture.
@@ -378,21 +376,22 @@ fn xe_color_range(c: vec4<f32>, range: u32) -> vec4<f32> {
 // replication of the last component of the format, signedness, number format, the fetch constant
 // swizzle and the exponent bias.
 fn xe_tex_post(sampled: vec4<f32>, fc: u32) -> vec4<f32> {
-    let w0 = xe_fetch_word(fc * 6u);
-    let w1 = xe_fetch_word(fc * 6u + 1u);
-    let w3 = xe_fetch_word(fc * 6u + 3u);
-    let info = xe_texture_formats[w1 & 63u];
-    let count = max(info & 7u, 1u);
-    let integer = (w3 & 1u) != 0u;
+    // Decoded per draw on the CPU (`texture_fetch_info`); the fetch constant words are only read
+    // in the rare cases that need them.
+    let flags = xe_fetch.info[fc * 2u].w;
+    let count = (flags & 3u) + 1u;
     // Replication of the format's last component, without indexing by a variable (which
     // compiles to per-pixel scratch memory on some GPUs).
     let ry = select(sampled.x, sampled.y, count > 1u);
     let rz = select(ry, sampled.z, count > 2u);
     let rw = select(rz, sampled.w, count > 3u);
     var data = vec4<f32>(sampled.x, ry, rz, rw);
-    // Nearly every fetch is of unsigned, non-integer data, which needs no conversion; the
-    // branch is uniform (fetch constants are per draw).
-    if ((w0 & 0x3FCu) != 0u || integer) {
+    if ((flags & 4u) != 0u) {
+        let w0 = xe_fetch_word(fc * 6u);
+        let w1 = xe_fetch_word(fc * 6u + 1u);
+        let w3 = xe_fetch_word(fc * 6u + 3u);
+        let integer = (w3 & 1u) != 0u;
+        let info = xe_texture_formats[w1 & 63u];
         let widths = vec4<u32>(info >> 3u, info >> 9u, info >> 15u, info >> 21u) & vec4<u32>(63u);
         let wc = xe_tex_replicate(widths, count);
         let signs = vec4<u32>(w0 >> 2u, w0 >> 4u, w0 >> 6u, w0 >> 8u) & vec4<u32>(3u);
@@ -403,10 +402,9 @@ fn xe_tex_post(sampled: vec4<f32>, fc: u32) -> vec4<f32> {
             xe_tex_component(data.z, sc.z, wc.z, integer),
             xe_tex_component(data.w, sc.w, wc.w, integer));
     }
-    let swizzle = (w3 >> 1u) & 0xFFFu;
     var result = data;
-    // 0x688: x, y, z, w.
-    if (swizzle != 0x688u) {
+    if ((flags & 8u) != 0u) {
+        let swizzle = (xe_fetch_word(fc * 6u + 3u) >> 1u) & 0xFFFu;
         let sel = vec4<u32>(swizzle, swizzle >> 3u, swizzle >> 6u, swizzle >> 9u) & vec4<u32>(7u);
         result = vec4<f32>(
             xe_tex_swizzle_select(data, sel.x),
@@ -414,7 +412,7 @@ fn xe_tex_post(sampled: vec4<f32>, fc: u32) -> vec4<f32> {
             xe_tex_swizzle_select(data, sel.z),
             xe_tex_swizzle_select(data, sel.w));
     }
-    return result * ldexp(1.0, extractBits(bitcast<i32>(w3), 13u, 6u));
+    return result * bitcast<f32>(xe_fetch.info[fc * 2u + 1u].z);
 }
 
 // Component `s` of a fetch swizzle (0-3: x-w, 5: 1, else 0) by selects, not indexing.
