@@ -218,6 +218,8 @@ const PARAMS_STRIDE: u64 = 256;
 pub(crate) struct GpuLoader {
     /// Plain-store and atomic variants.
     pipelines: [Option<(BindGroupLayout, ComputePipeline)>; 2],
+    /// Variants writing straight into a texture, per format (see [`direct_format`]).
+    direct_pipelines: Vec<(TextureFormat, BindGroupLayout, ComputePipeline)>,
     /// Per-level parameters, in slots.
     params: Option<Buffer>,
     /// Next free parameter slot.
@@ -293,6 +295,50 @@ impl GpuLoader {
             });
             (bgl, pipeline)
         })
+    }
+
+    fn direct_pipeline(&mut self, device: &Device, format: TextureFormat) -> (BindGroupLayout, ComputePipeline) {
+        if let Some((_, bgl, pipeline)) = self.direct_pipelines.iter().find(|(f, ..)| *f == format) {
+            return (bgl.clone(), pipeline.clone());
+        }
+        let bgl = device.create_bind_group_layout(
+            "texture gpu load direct",
+            &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStage::Compute,
+                    ty: BindingType::Buffer { ty: BufferBindingType::Uniform, has_dynamic_offset: true, min_binding_size: 0 },
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStage::Compute,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::ReadOnlyStorage,
+                        has_dynamic_offset: false,
+                        min_binding_size: 0,
+                    },
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStage::Compute,
+                    ty: BindingType::StorageTexture {
+                        access: StorageTextureAccess::WriteOnly,
+                        format,
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                },
+            ],
+        );
+        let layout = device.create_pipeline_layout("texture gpu load direct", &[&bgl]);
+        let module =
+            device.create_shader_module_wgsl("texture gpu load direct", &direct_shader_variant(SHADER, format));
+        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: "texture gpu load direct",
+            layout: Some(&layout),
+            stage: ProgrammableStage::new(&module, "main"),
+        });
+        self.direct_pipelines.push((format, bgl.clone(), pipeline.clone()));
+        (bgl, pipeline)
     }
 
     /// Fills `texture` from the GPU copy of guest memory and submits the work: each level's raw
@@ -401,6 +447,10 @@ impl GpuLoader {
         plan: &Plan,
         texture: &Texture,
     ) {
+        if texture.usage().contains(TextureUsage::StorageBinding) && direct_format(texture.format()).is_some() {
+            self.dispatch_direct(device, encoder, sources, plan, texture);
+            return;
+        }
         let mut replaced = ensure(
             &mut self.out,
             &mut self.retired,
@@ -500,6 +550,75 @@ impl GpuLoader {
         }
     }
 
+    /// [`GpuLoader::dispatch`] for a texture the conversion writes into directly (no output
+    /// buffer, no copy).
+    fn dispatch_direct(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        sources: &[(Buffer, u32)],
+        plan: &Plan,
+        texture: &Texture,
+    ) {
+        let slots = (self.param_cursor + plan.levels.len()).max(PARAM_SLOTS);
+        if self.params.as_ref().is_some_and(|b| b.size() < slots as u64 * PARAMS_STRIDE) {
+            // Pending parameters belong in the buffer the loads recorded so far bind.
+            self.flush_params(device);
+        }
+        if ensure(
+            &mut self.params,
+            &mut self.retired,
+            device,
+            "texture gpu load params",
+            BufferUsage::Uniform | BufferUsage::CopyDst,
+            slots as u64 * PARAMS_STRIDE,
+        ) {
+            self.param_cursor = 0;
+            self.pending_from = 0;
+            self.groups.clear();
+        }
+        let params = self.params.clone().expect("ensured");
+        let (bgl, pipeline) = self.direct_pipeline(device, texture.format());
+        let first_slot = self.param_cursor;
+        for (level, (_, base)) in plan.levels.iter().zip(sources) {
+            let mut words = level.params;
+            words[21] = *base;
+            words[25] = 0;
+            self.pending.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+            self.pending.resize(self.pending.len().next_multiple_of(PARAMS_STRIDE as usize), 0);
+        }
+        self.param_cursor += plan.levels.len();
+        let mut pass = encoder.begin_compute_pass("texture gpu load");
+        pass.set_pipeline(&pipeline);
+        for (n, (level, (buffer, _))) in plan.levels.iter().zip(sources).enumerate() {
+            let view = texture.create_view(Some(&TextureViewDescriptor {
+                label: "texture gpu load",
+                dimension: TextureViewDimension::D2,
+                base_mip_level: level.level,
+                mip_level_count: Some(1),
+                array_layer_count: Some(1),
+                aspect: TextureAspect::All,
+                ..Default::default()
+            }));
+            let group = device.create_bind_group(
+                "texture gpu load direct",
+                &bgl,
+                &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::Buffer { buffer: &params, offset: 0, size: Some(32 * 4) },
+                    },
+                    BindGroupEntry { binding: 1, resource: BindingResource::Buffer { buffer, offset: 0, size: None } },
+                    BindGroupEntry { binding: 2, resource: BindingResource::TextureView(&view) },
+                ],
+            );
+            let (x, y, z) = level.blocks;
+            pass.set_bind_group(0, &group, &[((first_slot + n) as u64 * PARAMS_STRIDE) as u32]);
+            pass.dispatch_workgroups(x.div_ceil(8), y.div_ceil(8), z);
+        }
+        pass.end();
+    }
+
     /// Everything recorded with the loader so far was submitted: its parameter slots can be
     /// reused and the buffers it replaced freed.
     pub(crate) fn end_batch(&mut self) {
@@ -522,11 +641,7 @@ const SHADER: &str = r#"
 struct Params { v: array<vec4<u32>, 8> }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> src: array<u32>;
-@group(0) @binding(2) var<storage, read_write> dst: DST_TYPE;
-
-fn store_word(i: u32, v: u32) {
-    STORE_WORD
-}
+DST_DECL
 
 fn prm(i: u32) -> u32 { return params.v[i >> 2u][i & 3u]; }
 
@@ -616,11 +731,7 @@ fn f20e4(bits: u32) -> f32 {
     return bitcast<f32>(((exponent + 112u) << 23u) | (mantissa << 3u));
 }
 
-fn put_bits(byte_addr: u32, value: u32, mask: u32) {
-    let i = byte_addr >> 2u;
-    let shift = (byte_addr & 3u) * 8u;
-    PUT_BITS
-}
+WRITE_TEXEL
 
 fn field(i: u32) -> vec2<u32> {
     let packed = prm(22u + (i >> 1u)) >> (16u * (i & 1u));
@@ -721,20 +832,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         default: {}
     }
-    if (unit >= 4u) {
-        let i = out >> 2u;
-        store_word(i, o.x);
-        if (unit >= 8u) { store_word(i + 1u, o.y); }
-        if (unit >= 12u) { store_word(i + 2u, o.z); }
-        if (unit >= 16u) { store_word(i + 3u, o.w); }
-    } else {
-        put_bits(out, o.x, select(0xFFu, 0xFFFFu, unit == 2u));
-    }
+    write_texel(out, vec2<u32>(bx, by), unit, o);
 }
 "#;
 
-/// The shader with plain stores (`atomic == false`: every write is a whole aligned dword) or
-/// with atomics (8/16-bit elements share dwords with neighbours written by other invocations).
+/// The shader writing into the output buffer with plain stores (`atomic == false`: every write is
+/// a whole aligned dword) or with atomics (8/16-bit elements share dwords with neighbours
+/// written by other invocations).
 fn shader_variant(source: &str, atomic: bool) -> String {
     let (ty, store, put) = if atomic {
         (
@@ -745,5 +849,67 @@ fn shader_variant(source: &str, atomic: bool) -> String {
     } else {
         ("array<u32>", "dst[i] = v;", "dst[i] = (dst[i] & ~(mask << shift)) | ((value & mask) << shift);")
     };
-    source.replace("DST_TYPE", ty).replace("STORE_WORD", store).replace("PUT_BITS", put)
+    let write = format!(
+        "fn store_word(i: u32, v: u32) {{
+    {store}
+}}
+
+fn put_bits(byte_addr: u32, value: u32, mask: u32) {{
+    let i = byte_addr >> 2u;
+    let shift = (byte_addr & 3u) * 8u;
+    {put}
+}}
+
+// The texel's host bytes (`o`, `unit` of them) at byte `out` of the output buffer.
+fn write_texel(out: u32, texel: vec2<u32>, unit: u32, o: vec4<u32>) {{
+    if (unit >= 4u) {{
+        let i = out >> 2u;
+        store_word(i, o.x);
+        if (unit >= 8u) {{ store_word(i + 1u, o.y); }}
+        if (unit >= 12u) {{ store_word(i + 2u, o.z); }}
+        if (unit >= 16u) {{ store_word(i + 3u, o.w); }}
+    }} else {{
+        put_bits(out, o.x, select(0xFFu, 0xFFFFu, unit == 2u));
+    }}
+}}
+"
+    );
+    source
+        .replace("DST_DECL", &format!("@group(0) @binding(2) var<storage, read_write> dst: {ty};"))
+        .replace("WRITE_TEXEL", &write)
+}
+
+/// Host formats loads write straight into the texture (`textureStore` into a level of a 2D
+/// texture with one layer) instead of into the output buffer and then copying: storage texture
+/// formats every WebGPU implementation supports, with the WGSL that turns the host bytes into
+/// the texel. Render targets the title samples come back in these, a few dozen per frame.
+pub(crate) fn direct_format(format: TextureFormat) -> Option<(&'static str, &'static str)> {
+    if format == TextureFormat::RGBA8Unorm {
+        Some(("rgba8unorm", "unpack4x8unorm(o.x)"))
+    } else if format == TextureFormat::RGBA16Float {
+        Some(("rgba16float", "vec4<f32>(unpack2x16float(o.x), unpack2x16float(o.y))"))
+    } else if format == TextureFormat::R32Float {
+        Some(("r32float", "vec4<f32>(bitcast<f32>(o.x), 0.0, 0.0, 1.0)"))
+    } else if format == TextureFormat::RGBA32Float {
+        Some(("rgba32float", "bitcast<vec4<f32>>(o)"))
+    } else {
+        None
+    }
+}
+
+/// The shader writing level texels into a storage texture of `format` (see [`direct_format`]).
+fn direct_shader_variant(source: &str, format: TextureFormat) -> String {
+    let (name, texel) = direct_format(format).expect("a direct format");
+    let write = format!(
+        "fn write_texel(out: u32, texel: vec2<u32>, unit: u32, o: vec4<u32>) {{
+    // Blocks past the level's edge (guest pitch padding) are dropped, not clamped onto it.
+    if (all(texel < textureDimensions(dst_tex))) {{
+        textureStore(dst_tex, vec2<i32>(texel), {texel});
+    }}
+}}
+"
+    );
+    source
+        .replace("DST_DECL", &format!("@group(0) @binding(2) var dst_tex: texture_storage_2d<{name}, write>;"))
+        .replace("WRITE_TEXEL", &write)
 }

@@ -1336,13 +1336,16 @@ impl TextureCache {
             return (p.texture, p.views);
         }
         self.make_room(bytes);
+        // Loads write formats that allow it straight into 2D textures (see `direct_format`).
+        let direct = !key.is_3d && key.layers == 1 && gpu_load::direct_format(key.format).is_some();
+        let usage = TextureUsage::TextureBinding | TextureUsage::CopyDst | TextureUsage::CopySrc;
         let texture = device.create_texture(&TextureDescriptor {
             label: "xenos texture",
             size: extent(key.width, key.height, key.layers),
             mip_level_count: key.mip_level_count,
             dimension: if key.is_3d { TextureDimension::D3 } else { TextureDimension::D2 },
             format: key.format,
-            usage: TextureUsage::TextureBinding | TextureUsage::CopyDst | TextureUsage::CopySrc,
+            usage: if direct { usage | TextureUsage::StorageBinding } else { usage },
             ..Default::default()
         });
         (texture, [None, None, None, None])
