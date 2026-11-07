@@ -569,7 +569,29 @@ pub(crate) fn resolve_module(scale: u32) -> String {
 /// The resolve shader reading a host texture standing for the whole surface instead of the
 /// EDRAM-layout buffer (`--gpu d3d`): no dump into EDRAM layout first. Entry `main`.
 pub(crate) fn resolve_direct_module(src: SrcKind, scale: u32) -> String {
-    format!("{}{}{}{RESOLVE_FROM_TEXTURE}{RESOLVE_BODY}", common(scale), src_decl(src), src_load(src))
+    specialize_resolve(&format!("{}{}{}{RESOLVE_FROM_TEXTURE}{RESOLVE_BODY}", common(scale), src_decl(src), src_load(src)))
+}
+
+/// `ResolveParams` fields a resolve pipeline is specialized on: an override constant `S_<FIELD>`
+/// each, read instead of the uniform unless left at its default (`RESOLVE_UNSPECIALIZED`).
+/// Folded into the code, they leave the compiler only the conversion the resolve does; with
+/// every path of the switches live it spilled registers, which made resolves several times slower.
+pub(crate) const RESOLVE_SPECIALIZED: [&str; 8] =
+    ["flags", "src_format", "mode", "sample_select", "dest_format", "dest_num", "dest_bpp", "msaa"];
+pub(crate) const RESOLVE_UNSPECIALIZED: u32 = 0xFFFF_FFFF;
+
+fn specialize_resolve(source: &str) -> String {
+    let mut body = source.to_string();
+    let mut decls = String::new();
+    for field in RESOLVE_SPECIALIZED {
+        body = body.replace(&format!("p.{field}"), &format!("s_{field}()"));
+        let name = field.to_uppercase();
+        decls += &format!(
+            "override S_{name}: u32 = {RESOLVE_UNSPECIALIZED}u;\n\
+             fn s_{field}() -> u32 {{ return select(p.{field}, S_{name}, S_{name} != {RESOLVE_UNSPECIALIZED}u); }}\n"
+        );
+    }
+    body + &decls
 }
 
 const RESOLVE_FROM_EDRAM: &str = r#"

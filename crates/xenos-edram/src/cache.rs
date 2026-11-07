@@ -191,7 +191,10 @@ struct Pipelines {
     clears: HashMap<(TextureFormat, u32, bool), RenderPipeline>,
     resolve: Option<(BindGroupLayout, ComputePipeline)>,
     /// Resolves reading a host texture directly (`--gpu d3d`), by source kind.
-    resolve_direct: HashMap<SrcKind, (BindGroupLayout, ComputePipeline)>,
+    /// Per source kind, the layout and module; pipelines per specialization (see
+    /// `shaders::RESOLVE_SPECIALIZED`).
+    resolve_direct: HashMap<SrcKind, (BindGroupLayout, PipelineLayout, ShaderModule)>,
+    resolve_direct_pipelines: HashMap<(SrcKind, [u32; 8]), ComputePipeline>,
     store: [Option<(BindGroupLayout, ComputePipeline)>; 2],
     /// By multisampling: the stencil bit layout, pipeline layout and module.
     stencil_bit_modules: [Option<(BindGroupLayout, PipelineLayout, ShaderModule)>; 2],
@@ -441,9 +444,11 @@ impl Pipelines {
         })
     }
 
-    fn resolve_direct(&mut self, device: &Device, kind: SrcKind) -> &(BindGroupLayout, ComputePipeline) {
+    /// The direct resolve pipeline for `kind` specialized on `spec` (the values of
+    /// `shaders::RESOLVE_SPECIALIZED`, in order).
+    fn resolve_direct(&mut self, device: &Device, kind: SrcKind, spec: [u32; 8]) -> (BindGroupLayout, ComputePipeline) {
         let scale = self.scale;
-        self.resolve_direct.entry(kind).or_insert_with(|| {
+        let (bgl, pl, module) = self.resolve_direct.entry(kind).or_insert_with(|| {
             let mut entries = src_layout_entries(kind, ShaderStage::Compute);
             entries.push(BindGroupLayoutEntry {
                 binding: 3,
@@ -458,13 +463,19 @@ impl Pipelines {
             let pl = device.create_pipeline_layout("edram resolve direct", &[&bgl]);
             let module =
                 device.create_shader_module_wgsl("edram resolve direct", &shaders::resolve_direct_module(kind, scale));
-            let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            (bgl, pl, module)
+        });
+        let pipeline = self.resolve_direct_pipelines.entry((kind, spec)).or_insert_with(|| {
+            let names: Vec<String> =
+                shaders::RESOLVE_SPECIALIZED.iter().map(|f| format!("S_{}", f.to_uppercase())).collect();
+            let constants: Vec<(&str, f64)> = names.iter().map(String::as_str).zip(spec.map(f64::from)).collect();
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
                 label: "edram resolve direct",
-                layout: Some(&pl),
-                stage: ProgrammableStage::new(&module, "main"),
-            });
-            (bgl, pipeline)
-        })
+                layout: Some(pl),
+                stage: ProgrammableStage { module, entry_point: "main", constants: &constants },
+            })
+        });
+        (bgl.clone(), pipeline.clone())
     }
 
     fn resolve(&mut self, device: &Device) -> &(BindGroupLayout, ComputePipeline) {
@@ -1791,11 +1802,22 @@ impl EdramCache {
         let resolve_params = params;
         let (pipeline, bind_group) = match external {
             Some(rt) => {
-                let (layout, pipeline) = self.pipelines.resolve_direct(device, rt.src_kind());
+                // In the order of shaders::RESOLVE_SPECIALIZED.
+                let spec = [
+                    flags,
+                    source.format,
+                    plan.mode,
+                    info.copy_sample_select.raw(),
+                    info.dest_format.raw(),
+                    dest_info.copy_dest_number.raw(),
+                    plan.dest_bpp,
+                    source.msaa_samples.raw(),
+                ];
+                let (layout, pipeline) = self.pipelines.resolve_direct(device, rt.src_kind(), spec);
                 let mut entries = vec![BindGroupEntry { binding: 0, resource: resolve_params.binding() }];
                 entries.extend(src_entries(rt));
                 entries.push(BindGroupEntry { binding: 3, resource: whole(&out) });
-                (pipeline.clone(), cached_bind_group(&self.groups, device, "edram resolve direct", layout, &entries))
+                (pipeline, cached_bind_group(&self.groups, device, "edram resolve direct", &layout, &entries))
             }
             None => {
                 let (layout, pipeline) = self.pipelines.resolve(device);
