@@ -51,6 +51,14 @@ pub struct CommandEncoder {
     device: Device,
 }
 
+/// An encoder dropped unfinished (e.g. the renderer stopping mid-frame) ends its open blit or
+/// compute encoder first: Metal aborts the process when one is released still encoding.
+impl Drop for CommandEncoder {
+    fn drop(&mut self) {
+        self.end_blit();
+    }
+}
+
 impl std::fmt::Debug for CommandEncoder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CommandEncoder({:p})", Retained::as_ptr(&self.raw))

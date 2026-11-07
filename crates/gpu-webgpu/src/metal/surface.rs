@@ -126,6 +126,12 @@ impl SurfaceFrame {
             let cb = c.shared.new_command_buffer();
             cb.setLabel(Some(&ns("present")));
             let drawable: &ProtocolObject<dyn MTLDrawable> = ProtocolObject::from_ref(&*self.drawable);
+            // On ProMotion iPhones the pacing a drawable asks for is what raises the display
+            // to 120 Hz (with a plain present it mostly stayed at 60 even with a display link
+            // preferring 120).
+            #[cfg(target_os = "ios")]
+            cb.presentDrawable_afterMinimumDuration(drawable, 1.0 / 120.0);
+            #[cfg(not(target_os = "ios"))]
             cb.presentDrawable(drawable);
             cb.commit();
         });
