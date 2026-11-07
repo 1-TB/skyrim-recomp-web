@@ -96,6 +96,11 @@ impl GpuSource for SharedSource<'_> {
         self.shared.gather(encoder, address, len, dst, dst_offset)
     }
 
+    fn locate(&self, address: u32, len: u32) -> Option<(Buffer, u64)> {
+        let (chunk, offset) = self.shared.contiguous(address, len)?;
+        Some((self.shared.chunks[chunk].clone(), offset))
+    }
+
     fn take_encoder(&mut self, device: &Device) -> CommandEncoder {
         self.encoder.take().unwrap_or_else(|| device.create_command_encoder("xenos"))
     }

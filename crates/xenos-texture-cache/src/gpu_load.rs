@@ -24,6 +24,13 @@ pub trait GpuSource {
     /// GPU copy into `dst` at `dst_offset`. `false` (with nothing encoded) if part of the range
     /// isn't mirrored.
     fn gather(&self, encoder: &mut CommandEncoder, address: u32, len: u32, dst: &Buffer, dst_offset: u64) -> bool;
+    /// Where physical bytes `[address, address + len)` lie contiguously in one buffer of the GPU
+    /// copy: that buffer and the offset of `address` in it, so a load reads them in place
+    /// instead of gathering them into the upload buffer first (a copy, and on Apple GPUs a
+    /// separate encoder with idle time around it). `None` if they don't.
+    fn locate(&self, _address: u32, _len: u32) -> Option<(Buffer, u64)> {
+        None
+    }
     /// The encoder a load records into, after the work recorded so far; handed back with
     /// [`GpuSource::return_encoder`].
     fn take_encoder(&mut self, device: &Device) -> CommandEncoder;
@@ -311,7 +318,12 @@ impl GpuLoader {
             // Rounded out to whole dwords; the extra bytes are never read as texels.
             let start = address & !3;
             let end = (u64::from(address) + u64::from(len.max(1))).next_multiple_of(4);
-            if !source.gather(&mut encoder, start, (end - u64::from(start)) as u32, &upload, offset) {
+            let span = (end - u64::from(start)) as u32;
+            if let Some((buffer, at)) = source.locate(start, span) {
+                sources.push((buffer, start.wrapping_sub(at as u32)));
+                continue;
+            }
+            if !source.gather(&mut encoder, start, span, &upload, offset) {
                 // Copies gathered so far only fill the upload buffer, which nothing reads yet.
                 source.return_encoder(device, encoder);
                 return false;
