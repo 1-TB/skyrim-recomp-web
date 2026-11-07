@@ -25,10 +25,15 @@ pub const SYSTEM_CONSTANTS_BINDING: u32 = 3;
 pub const SHARED_MEMORY_GROUP: u32 = 1;
 /// Binding of the first buffer of mirrored blocks of guest physical memory; the others follow.
 pub const SHARED_MEMORY_BINDING: u32 = 0;
-/// Buffers of mirrored blocks.
+/// Buffers of mirrored blocks. Apple GPUs take one buffer (each load then skips a switch over
+/// the buffers: +3% fps on an M2); elsewhere the slots grow in 32 MiB buffers as needed (the
+/// web's `--render-debug mirror=MIB` cap and lazy growth keep phone memory down).
+#[cfg(target_vendor = "apple")]
+pub const SHARED_MEMORY_CHUNKS: u32 = 1;
+#[cfg(not(target_vendor = "apple"))]
 pub const SHARED_MEMORY_CHUNKS: u32 = 4;
-/// Bytes (slots) per buffer of mirrored blocks.
-pub const SHARED_MEMORY_CHUNK_BYTES: u32 = 32 << 20;
+/// Bytes (slots) per buffer of mirrored blocks (128 MiB in all).
+pub const SHARED_MEMORY_CHUNK_BYTES: u32 = (128 << 20) / SHARED_MEMORY_CHUNKS;
 /// Binding of the block -> slot table.
 pub const SHARED_MEMORY_TABLE_BINDING: u32 = SHARED_MEMORY_BINDING + SHARED_MEMORY_CHUNKS;
 /// Guest physical memory is mirrored in blocks of this size, each in any slot.
@@ -314,10 +319,7 @@ fn xe_shared_load_near(i: u32, block: u32, slot: u32) -> u32 {{
 fn xe_shared_load_slot(slot: u32, i: u32) -> u32 {{
     if (slot == 0u) {{ return 0u; }}
     let o = (((slot - 1u) << {shift}u) & {chunk_mask:#X}u) | (i & {mask:#X}u);
-    switch ((slot - 1u) >> {chunk_shift}u) {{
-{cases}        default: {{}}
-    }}
-    return 0u;
+{cases}    return 0u;
 }}
 ",
         shared = (0..SHARED_MEMORY_CHUNKS)
@@ -332,13 +334,18 @@ fn xe_shared_load_slot(slot: u32, i: u32) -> u32 {{
         shift = (SHARED_MEMORY_BLOCK_BYTES / 4).ilog2(),
         mask = SHARED_MEMORY_BLOCK_BYTES / 4 - 1,
         chunk_mask = SHARED_MEMORY_CHUNK_BYTES / 4 - 1,
-        chunk_shift = (SHARED_MEMORY_CHUNK_BYTES / SHARED_MEMORY_BLOCK_BYTES).ilog2(),
         blocks = SHARED_MEMORY_BLOCKS,
-        cases = (0..SHARED_MEMORY_CHUNKS)
-            .map(|n| format!(
-                "        case {n}u: {{ if (o < arrayLength(&xe_shared_memory_{n})) {{ return xe_shared_memory_{n}[o]; }} }}\n"
-            ))
-            .collect::<String>(),
+        // One buffer needs no switch (a switch per load costs vertex shaders measurably).
+        cases = if SHARED_MEMORY_CHUNKS == 1 {
+            "    if (o < arrayLength(&xe_shared_memory_0)) { return xe_shared_memory_0[o]; }\n".to_string()
+        } else {
+            let cases: String = (0..SHARED_MEMORY_CHUNKS)
+                .map(|n| format!(
+                    "        case {n}u: {{ if (o < arrayLength(&xe_shared_memory_{n})) {{ return xe_shared_memory_{n}[o]; }} }}\n"
+                ))
+                .collect();
+            format!("    switch ((slot - 1u) >> {}u) {{\n{cases}        default: {{}}\n    }}\n", (SHARED_MEMORY_CHUNK_BYTES / SHARED_MEMORY_BLOCK_BYTES).ilog2())
+        },
     )
 }
 

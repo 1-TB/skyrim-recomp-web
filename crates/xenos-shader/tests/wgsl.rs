@@ -476,12 +476,13 @@ fn common_declarations_match_binding_constants() {
     assert!(decl.contains("@group(0) @binding(1) var<uniform> xe_bool_loop: XeBoolLoopConstants;"));
     assert!(decl.contains("@group(0) @binding(2) var<uniform> xe_fetch: XeFetchConstants;"));
     assert!(decl.contains("@group(0) @binding(3) var<uniform> xe_system: XeSystemConstants;"));
-    for n in 0..4 {
+    let chunks = bindings::SHARED_MEMORY_CHUNKS;
+    for n in 0..chunks {
         assert!(
             decl.contains(&format!("@group(1) @binding({n}) var<storage, read> xe_shared_memory_{n}: array<u32>;"))
         );
     }
-    assert!(decl.contains("@group(1) @binding(4) var<storage, read> xe_shared_table: array<u32>;"));
+    assert!(decl.contains(&format!("@group(1) @binding({chunks}) var<storage, read> xe_shared_table: array<u32>;")));
     assert!(decl.contains("fn xe_shared_load(i: u32) -> u32"));
     let module = validate_wgsl(&decl);
     let mut layouter = naga::proc::Layouter::default();

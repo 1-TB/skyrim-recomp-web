@@ -1857,7 +1857,10 @@ impl EdramCache {
             extent_len: info.copy_dest_extent_length,
             block_1111: is_1111,
         };
-        let store_target = shared.filter(|t| layout.extent_len != 0 && t.chunks.len() == STORE_DST_BUFFERS as usize);
+        // With fewer slot buffers than the shader declares (one on Apple GPUs), the spare
+        // bindings repeat the last buffer: no slot word selects them.
+        let store_target = shared
+            .filter(|t| layout.extent_len != 0 && (1..=STORE_DST_BUFFERS as usize).contains(&t.chunks.len()));
         let store = store_target.map(|target| {
             let params_words = [
                     layout.base & 0x1FFF_FFFF,
@@ -1893,10 +1896,10 @@ impl EdramCache {
                     BindGroupEntry { binding: 0, resource: params.binding() },
                     BindGroupEntry { binding: 1, resource: whole(&out) },
                     BindGroupEntry { binding: 2, resource: whole(target.table) },
-                    BindGroupEntry { binding: 3, resource: whole(&target.chunks[0]) },
-                    BindGroupEntry { binding: 4, resource: whole(&target.chunks[1]) },
-                    BindGroupEntry { binding: 5, resource: whole(&target.chunks[2]) },
-                    BindGroupEntry { binding: 6, resource: whole(&target.chunks[3]) },
+                    BindGroupEntry { binding: 3, resource: whole(&target.chunks[0.min(target.chunks.len() - 1)]) },
+                    BindGroupEntry { binding: 4, resource: whole(&target.chunks[1.min(target.chunks.len() - 1)]) },
+                    BindGroupEntry { binding: 5, resource: whole(&target.chunks[2.min(target.chunks.len() - 1)]) },
+                    BindGroupEntry { binding: 6, resource: whole(&target.chunks[3.min(target.chunks.len() - 1)]) },
                 ],
             );
             let (gx, gy) =
