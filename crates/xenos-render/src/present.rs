@@ -1,5 +1,6 @@
-//! Shows the guest's front buffer (VdSwap's fetch constant) in the presentation target,
-//! letterboxed to keep its aspect. The front buffer comes from the texture cache, which loads it
+//! Shows the guest's front buffer (VdSwap's fetch constant) in the presentation target:
+//! letterboxed to keep its aspect, zoomed to fill the target (cropping the overhang) or
+//! stretched, per [`set_aspect`]. The front buffer comes from the texture cache, which loads it
 //! from the GPU copy of guest memory when a resolve stored it there.
 
 use gpu_webgpu::*;
@@ -11,12 +12,15 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
 }
 
+// The part of the frame shown: offset (xy) and size (zw) in texture coordinates.
+@group(0) @binding(3) var<uniform> crop: vec4<f32>;
+
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> VsOut {
     let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
     var o: VsOut;
     o.pos = vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
-    o.uv = vec2<f32>(p.x, 1.0 - p.y);
+    o.uv = crop.xy + vec2<f32>(p.x, 1.0 - p.y) * crop.zw;
     return o;
 }
 
@@ -123,6 +127,85 @@ struct Shown {
     group: BindGroup,
 }
 
+/// Slots of the crop ring: each encode takes the next one, so a crop written for one target
+/// never replaces another's before that one's work is submitted.
+const CROP_SLOTS: u64 = 8;
+const CROP_SLOT: u64 = 256;
+/// Crop ring slot 0 always holds the whole frame.
+const WHOLE: u32 = 0;
+
+/// How frames fill a target of another aspect ratio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aspect {
+    /// The whole frame, as large as it fits, with black bars (the default).
+    Fit,
+    /// Zoomed to cover the target, cropping the edges that overhang.
+    Fill,
+    /// Stretched to the target.
+    Stretch,
+}
+
+impl std::str::FromStr for Aspect {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Aspect, String> {
+        match s {
+            "fit" => Ok(Aspect::Fit),
+            "fill" => Ok(Aspect::Fill),
+            "stretch" => Ok(Aspect::Stretch),
+            _ => Err(format!("aspect {s}: not fit, fill or stretch")),
+        }
+    }
+}
+
+static ASPECT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// How presenters fit frames to a target of another aspect ratio from now on.
+pub fn set_aspect(aspect: Aspect) {
+    ASPECT.store(aspect as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn aspect() -> Aspect {
+    match ASPECT.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => Aspect::Fill,
+        2 => Aspect::Stretch,
+        _ => Aspect::Fit,
+    }
+}
+
+/// Where a frame goes in a target.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Placement {
+    /// The rectangle of the target drawn to (x, y, width, height).
+    dest: (f32, f32, f32, f32),
+    /// The part of the frame shown there (offset and size in texture coordinates).
+    crop: [f32; 4],
+    /// The size the whole frame is scaled to (larger than `dest` where cropped).
+    scaled: (u32, u32),
+}
+
+fn place(aspect: Aspect, frame: (u32, u32), target: (u32, u32)) -> Placement {
+    let whole = [0.0, 0.0, 1.0, 1.0];
+    let (tw, th) = (target.0 as f32, target.1 as f32);
+    match aspect {
+        Aspect::Fit => {
+            let dest = letterbox(frame, target);
+            Placement { dest, crop: whole, scaled: (dest.2.round() as u32, dest.3.round() as u32) }
+        }
+        Aspect::Stretch => Placement { dest: (0.0, 0.0, tw, th), crop: whole, scaled: target },
+        Aspect::Fill => {
+            let (fw, fh) = (frame.0.max(1) as f32, frame.1.max(1) as f32);
+            let scale = (tw / fw).max(th / fh);
+            let (w, h) = (fw * scale, fh * scale);
+            let (cw, ch) = (tw / w, th / h);
+            Placement {
+                dest: (0.0, 0.0, tw, th),
+                crop: [(1.0 - cw) / 2.0, (1.0 - ch) / 2.0, cw, ch],
+                scaled: (w.round() as u32, h.round() as u32),
+            }
+        }
+    }
+}
+
 /// MetalFX upscaling for one frame size and output size.
 struct Upscale {
     scaler: SpatialScaler,
@@ -153,6 +236,10 @@ pub(crate) struct Presenter {
     format: TextureFormat,
     /// The identity channel mapping, for showing the upscaled frame.
     identity: Buffer,
+    /// `CROP_SLOTS` crops; slot `WHOLE` is the whole frame.
+    crops: Buffer,
+    /// The crop ring slot the next encode writes (1 to `CROP_SLOTS - 1`) and the crop in each.
+    crop_slots: std::cell::RefCell<(u32, [[f32; 4]; CROP_SLOTS as usize])>,
     upscale: std::cell::RefCell<Option<Upscale>>,
     /// MetalFX couldn't scale between these sizes (not retried for them).
     upscale_failed: std::cell::Cell<Option<((u32, u32), (u32, u32))>>,
@@ -196,6 +283,15 @@ impl Presenter {
                         min_binding_size: 16,
                     },
                 },
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStage::Vertex,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: 16,
+                    },
+                },
             ],
         );
         let pipeline_layout = device.create_pipeline_layout("present", &[&layout]);
@@ -232,6 +328,15 @@ impl Presenter {
         });
         let bytes: Vec<u8> = [0u32, 1, 2, 3].iter().flat_map(|v| v.to_le_bytes()).collect();
         device.queue().write_buffer(&identity, 0, &bytes);
+        let crops = device.create_buffer(&BufferDescriptor {
+            label: "present crops",
+            size: CROP_SLOTS * CROP_SLOT,
+            usage: BufferUsage::Uniform | BufferUsage::CopyDst,
+            mapped_at_creation: false,
+        });
+        let whole = [0.0f32, 0.0, 1.0, 1.0];
+        let bytes: Vec<u8> = whole.iter().flat_map(|v| v.to_le_bytes()).collect();
+        device.queue().write_buffer(&crops, u64::from(WHOLE) * CROP_SLOT, &bytes);
         Presenter {
             pipeline,
             layout,
@@ -241,6 +346,8 @@ impl Presenter {
             frames: 0,
             format: target_format,
             identity,
+            crop_slots: std::cell::RefCell::new((1, [[f32::NAN; 4]; CROP_SLOTS as usize])),
+            crops,
             upscale: std::cell::RefCell::new(None),
             upscale_failed: std::cell::Cell::new(None),
         }
@@ -268,6 +375,10 @@ impl Presenter {
                     binding: 2,
                     resource: BindingResource::Buffer { buffer: swizzle, offset: 0, size: None },
                 },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Buffer { buffer: &self.crops, offset: 0, size: Some(16) },
+                },
             ],
         );
         self.shown = Some(Shown { width: front.width, height: front.height, group });
@@ -284,39 +395,60 @@ impl Presenter {
         width: u32,
         height: u32,
     ) {
-        if let Some(shown) = &self.shown {
-            let (x, y, w, h) = letterbox((shown.width, shown.height), (width, height));
-            let out = (w.round() as u32, h.round() as u32);
+        let placement = self.shown.as_ref().map(|s| place(aspect(), (s.width, s.height), (width, height)));
+        if let (Some(shown), Some(p)) = (&self.shown, placement) {
             if METALFX.load(std::sync::atomic::Ordering::Relaxed)
-                && (out.0 > shown.width || out.1 > shown.height)
-                && self.encode_upscaled(device, encoder, shown, target, (x.round(), y.round()), out)
+                && (p.scaled.0 > shown.width || p.scaled.1 > shown.height)
+                && self.encode_upscaled(device, encoder, shown, target, p)
             {
                 return;
             }
         }
         let mut pass =
             encoder.begin_render_pass("present", &[Some(RenderPassColorAttachment::clear(target, BACKGROUND))], None);
-        if let Some(shown) = &self.shown {
-            let (x, y, w, h) = letterbox((shown.width, shown.height), (width, height));
+        if let (Some(shown), Some(p)) = (&self.shown, placement) {
+            let crop = self.crop_offset(device, p.crop);
+            let (x, y, w, h) = p.dest;
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &shown.group, &[]);
+            pass.set_bind_group(0, &shown.group, &[crop]);
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
             pass.draw(3, 1, 0, 0);
         }
         pass.end();
     }
 
+    /// The dynamic offset of a crop ring slot holding `crop` (written for the next submit).
+    fn crop_offset(&self, device: &Device, crop: [f32; 4]) -> u32 {
+        if crop == [0.0, 0.0, 1.0, 1.0] {
+            return WHOLE * CROP_SLOT as u32;
+        }
+        let mut slots = self.crop_slots.borrow_mut();
+        let (next, held) = &mut *slots;
+        // The previous slot already holds it (the same placement as last time).
+        let previous = if *next == 1 { CROP_SLOTS as u32 - 1 } else { *next - 1 };
+        if held[previous as usize] == crop {
+            return previous * CROP_SLOT as u32;
+        }
+        let slot = *next;
+        *next = if slot + 1 == CROP_SLOTS as u32 { 1 } else { slot + 1 };
+        held[slot as usize] = crop;
+        let bytes: Vec<u8> = crop.iter().flat_map(|v| v.to_le_bytes()).collect();
+        device.queue().write_buffer(&self.crops, u64::from(slot) * CROP_SLOT, &bytes);
+        slot * CROP_SLOT as u32
+    }
+
     /// Draws the frame into the MetalFX scaler's input (1:1, applying its swizzle), scales it to
-    /// `out` and copies that to `target` at `origin` (1:1). `false` if MetalFX can't.
+    /// `p.scaled` and draws the placement's crop of that to its rectangle of `target`. `false`
+    /// if MetalFX can't.
     fn encode_upscaled(
         &self,
         device: &Device,
         encoder: &mut CommandEncoder,
         shown: &Shown,
         target: &TextureView,
-        origin: (f32, f32),
-        out: (u32, u32),
+        p: Placement,
     ) -> bool {
+        let out = p.scaled;
         let sizes = ((shown.width, shown.height), out);
         if self.upscale_failed.get() == Some(sizes) {
             return false;
@@ -340,6 +472,10 @@ impl Presenter {
                         binding: 2,
                         resource: BindingResource::Buffer { buffer: &self.identity, offset: 0, size: None },
                     },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: BindingResource::Buffer { buffer: &self.crops, offset: 0, size: Some(16) },
+                    },
                 ],
             );
             *upscale = Some(Upscale { scaler, sizes, group });
@@ -351,16 +487,18 @@ impl Presenter {
             None,
         );
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &shown.group, &[]);
+        pass.set_bind_group(0, &shown.group, &[WHOLE * CROP_SLOT as u32]);
         pass.set_viewport(0.0, 0.0, shown.width as f32, shown.height as f32, 0.0, 1.0);
         pass.draw(3, 1, 0, 0);
         pass.end();
         encoder.spatial_scale(&u.scaler);
         let mut pass =
             encoder.begin_render_pass("present", &[Some(RenderPassColorAttachment::clear(target, BACKGROUND))], None);
+        let crop = self.crop_offset(device, p.crop);
+        let (x, y, w, h) = p.dest;
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &u.group, &[]);
-        pass.set_viewport(origin.0, origin.1, out.0 as f32, out.1 as f32, 0.0, 1.0);
+        pass.set_bind_group(0, &u.group, &[crop]);
+        pass.set_viewport(x.round(), y.round(), w.round(), h.round(), 0.0, 1.0);
         pass.draw(3, 1, 0, 0);
         pass.end();
         true
@@ -369,7 +507,20 @@ impl Presenter {
 
 #[cfg(test)]
 mod tests {
-    use super::letterbox;
+    use super::{Aspect, letterbox, place};
+
+    #[test]
+    fn placements() {
+        let fit = place(Aspect::Fit, (1280, 720), (2868, 1320));
+        assert_eq!(fit.crop, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(fit.scaled, (2347, 1320));
+        let fill = place(Aspect::Fill, (1280, 720), (2868, 1320));
+        assert_eq!(fill.dest, (0.0, 0.0, 2868.0, 1320.0));
+        assert_eq!(fill.scaled, (2868, 1613));
+        assert!((fill.crop[1] - (1.0 - 1320.0 / 1613.25) / 2.0).abs() < 1e-5 && fill.crop[0] == 0.0);
+        let stretch = place(Aspect::Stretch, (1280, 720), (2868, 1320));
+        assert_eq!((stretch.dest, stretch.scaled), ((0.0, 0.0, 2868.0, 1320.0), (2868, 1320)));
+    }
 
     #[test]
     fn letterbox_keeps_aspect() {

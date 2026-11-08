@@ -31,17 +31,20 @@ pub struct Settings {
     pub metalfx: bool,
     /// The title's 4x multisample anti-aliasing (off: faster).
     pub msaa: bool,
+    /// How the 16:9 frame fills the wider screen (`--aspect`): fit, fill or stretch.
+    pub aspect: &'static str,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true }
+        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true, aspect: "fit" }
     }
 }
 
 const SCALES: [u32; 3] = [1, 2, 3];
 const ANISOTROPY: [u16; 4] = [1, 4, 8, 16];
 const FPS_CAPS: [u32; 3] = [30, 60, 120];
+const ASPECTS: [&str; 3] = ["fit", "fill", "stretch"];
 
 impl Settings {
     /// Reads `path` (`key=value` lines); missing or unknown values keep their defaults.
@@ -70,6 +73,11 @@ impl Settings {
                 "show_fps" => s.show_fps = value == "true",
                 "metalfx" => s.metalfx = value == "true",
                 "msaa" => s.msaa = value != "false",
+                "aspect" => {
+                    if let Some(a) = ASPECTS.iter().find(|a| **a == value) {
+                        s.aspect = a;
+                    }
+                }
                 _ => {}
             }
         }
@@ -78,8 +86,8 @@ impl Settings {
 
     pub fn save(&self, path: &Path) {
         let text = format!(
-            "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\nmsaa={}\n",
-            self.resolution_scale, self.anisotropy, self.fps_cap, self.show_fps, self.metalfx, self.msaa
+            "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\nmsaa={}\naspect={}\n",
+            self.resolution_scale, self.anisotropy, self.fps_cap, self.show_fps, self.metalfx, self.msaa, self.aspect
         );
         if let Err(e) = std::fs::write(path, text) {
             log::warn!("saving {}: {e}", path.display());
@@ -94,6 +102,7 @@ impl Settings {
             ("--resolution-scale", self.resolution_scale.to_string()),
             ("--anisotropy", self.anisotropy.to_string()),
             ("--vblank-hz", vblank.to_string()),
+            ("--aspect", self.aspect.to_string()),
         ]
         .into_iter()
         .flat_map(|(flag, value)| [flag.to_string(), value])
@@ -121,6 +130,7 @@ pub struct Panel {
     fps_cap: Retained<UISegmentedControl>,
     upscaling: Retained<UISegmentedControl>,
     msaa: Retained<UISegmentedControl>,
+    aspect: Retained<UISegmentedControl>,
     show_fps: Retained<UISwitch>,
 }
 
@@ -151,7 +161,7 @@ impl Panel {
         let root = UIView::new(mtm);
         root.setBackgroundColor(Some(&UIColor::colorWithWhite_alpha(0.08, 0.96)));
         let index = |list: &[u32], v: u32| list.iter().position(|&x| x == v).unwrap_or(0);
-        let scale = segments(mtm, &["720p", "1440p (2×)", "2160p (3×)"], index(&SCALES, settings.resolution_scale));
+        let scale = segments(mtm, &["1×", "2× supersampled", "3× supersampled"], index(&SCALES, settings.resolution_scale));
         let anisotropy = segments(
             mtm,
             &["Game default", "4×", "8×", "16×"],
@@ -160,6 +170,11 @@ impl Panel {
         let fps_cap = segments(mtm, &["30", "60", "120"], index(&FPS_CAPS, settings.fps_cap));
         let upscaling = segments(mtm, &["Bicubic", "MetalFX"], usize::from(settings.metalfx));
         let msaa = segments(mtm, &["Off (faster)", "4× MSAA"], usize::from(settings.msaa));
+        let aspect = segments(
+            mtm,
+            &["Fit (16:9)", "Fill (crop)", "Stretch"],
+            ASPECTS.iter().position(|&a| a == settings.aspect).unwrap_or(0),
+        );
         let show_fps = UISwitch::new(mtm);
         show_fps.setOn(settings.show_fps);
         let control = |c: Retained<UISegmentedControl>| Retained::into_super(Retained::into_super(c));
@@ -169,13 +184,16 @@ impl Panel {
             (label(mtm, "Frame rate limit", 17.0, 0.9), control(fps_cap.clone()), false),
             (label(mtm, "Upscaling", 17.0, 0.9), control(upscaling.clone()), false),
             (label(mtm, "Anti-aliasing", 17.0, 0.9), control(msaa.clone()), false),
+            (label(mtm, "Aspect ratio", 17.0, 0.9), control(aspect.clone()), false),
             (label(mtm, "Show FPS", 17.0, 0.9), Retained::into_super(Retained::into_super(show_fps.clone())), true),
         ];
         let title = label(mtm, "Settings", 28.0, 1.0);
         let note = label(
             mtm,
-            "Higher resolutions are smoother and sharper but cost frame rate. Close the app to change \
-             these again; args.txt in Documents still overrides them.",
+            "Supersampling draws at 2× or 3× and averages down to the game's 720p: smoother edges at a \
+             large cost in frame rate. Fill zooms to the screen's shape, cropping the top and bottom \
+             (and some of the HUD). Close the app to change these again; args.txt in Documents still \
+             overrides them.",
             13.0,
             0.6,
         );
@@ -202,7 +220,7 @@ impl Panel {
         root.addSubview(&play);
         title.setTextAlignment(NSTextAlignment::Left);
         parent.addSubview(&root);
-        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, msaa, show_fps }
+        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, msaa, aspect, show_fps }
     }
 
     /// Covers the whole view, with the content laid out in `area` (the safe area).
@@ -239,6 +257,7 @@ impl Panel {
             show_fps: self.show_fps.isOn(),
             metalfx: self.upscaling.selectedSegmentIndex() == 1,
             msaa: self.msaa.selectedSegmentIndex() == 1,
+            aspect: ASPECTS[pick(&self.aspect).min(ASPECTS.len() - 1)],
         }
     }
 

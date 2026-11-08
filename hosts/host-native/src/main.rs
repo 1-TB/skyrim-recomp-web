@@ -12,6 +12,8 @@ const NATIVE_USAGE: &str = "\
 By default the game runs in a window with sound, keyboard, mouse and gamepad input.
   --dump-frames DIR        render headlessly with WebGPU and write frames to DIR as PNG
   --dump-every N           write every Nth presented frame (default 60)
+  --dump-size WxH          write frames as shown on a WxH screen (upscaled, with --aspect)
+                           instead of at the title's own size
   --dump-audio FILE        write the played audio to FILE (raw 48 kHz stereo signed 16-bit little-endian)
                            instead of playing it
   --no-window              run the title without a window or renderer
@@ -22,7 +24,7 @@ fn main() {
     let args = std::env::args()
         .skip(1)
         .flat_map(|a| if a == "--no-window" || a == "--window" { vec![a, "1".into()] } else { vec![a] });
-    let mut opts = match boot::parse(args, &["--dump-frames", "--dump-every", "--dump-audio", "--no-window", "--window"]) {
+    let mut opts = match boot::parse(args, &["--dump-frames", "--dump-every", "--dump-size", "--dump-audio", "--no-window", "--window"]) {
         Ok(o) => o,
         Err(msg) => {
             eprintln!("usage: skyrim-native --game-dir DIR [options]\n{msg}\n{NATIVE_USAGE}");
@@ -41,7 +43,7 @@ fn main() {
     crash::install();
     runtime_core::thread::set_thread_start_hook(crash::install_alt_stack);
     let content = game_root.parent().unwrap_or(std::path::Path::new(".")).join("content");
-    let mut render = xenos_render::native::NativeOptions { dump_dir: None, dump_every: 60, window: None };
+    let mut render = xenos_render::native::NativeOptions { dump_dir: None, dump_every: 60, dump_size: None, window: None };
     let mut audio_dump: Option<std::path::PathBuf> = None;
     let mut no_window = false;
     let mut force_window = false;
@@ -51,6 +53,13 @@ fn main() {
             "--dump-audio" => audio_dump = Some(value.into()),
             "--no-window" => no_window = true,
             "--window" => force_window = true,
+            "--dump-size" => match value.split_once('x').map(|(w, h)| (w.parse(), h.parse())) {
+                Some((Ok(w), Ok(h))) => render.dump_size = Some((w, h)),
+                _ => {
+                    eprintln!("--dump-size {value}: not WxH");
+                    std::process::exit(2);
+                }
+            },
             "--dump-every" => match value.parse() {
                 Ok(n) => render.dump_every = n,
                 Err(e) => {

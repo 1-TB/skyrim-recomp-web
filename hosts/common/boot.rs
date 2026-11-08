@@ -54,6 +54,9 @@ options:
                            anti-aliasing; faster)
   --metalfx                scale frames up to the window with MetalFX (Apple GPUs) instead of
                            bicubic filtering
+  --aspect MODE            how the 16:9 frame fills a window or screen of another shape: fit
+                           (whole frame, black bars; default), fill (zoom in, cropping the
+                           edges) or stretch
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
                            scissor (shade one pixel per draw), nodraw (record but skip draw calls),
                            frames=N (let the renderer run N frames ahead of the GPU; default 2),
@@ -160,6 +163,7 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
                 xenos_render::set_resolution_scale(scale)?;
             }
             "--metalfx" => xenos_render::set_metalfx(true),
+            "--aspect" => xenos_render::set_aspect(value()?.parse()?),
             "--no-msaa" => xenos_render::set_single_sample(true),
             "--anisotropy" => {
                 let n: u16 = value()?.parse().map_err(|e| format!("--anisotropy: {e}"))?;

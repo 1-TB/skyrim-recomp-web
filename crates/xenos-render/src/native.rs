@@ -16,6 +16,9 @@ pub struct NativeOptions {
     /// Write every `dump_every`-th presented frame to `<dir>/frame_NNNNNN.png`.
     pub dump_dir: Option<PathBuf>,
     pub dump_every: u64,
+    /// Write the frames as the presenter shows them at this size (a screen's, to see the
+    /// upscaling and aspect ratio), instead of at the frame's own size.
+    pub dump_size: Option<(u32, u32)>,
     /// Present in this window.
     pub window: Option<Window>,
 }
@@ -304,6 +307,7 @@ fn run(
             if !r.presenter.frames.is_multiple_of(every) {
                 return;
             }
+            let (w, h) = options.dump_size.unwrap_or((w, h));
             let target = match offscreen.take() {
                 Some(o) if o.width == w && o.height == h => o,
                 _ => Offscreen::new(&r.device, w, h, format),

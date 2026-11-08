@@ -89,7 +89,7 @@ pub fn set_min_anisotropy(n: u16) {
     xenos_texture_cache::set_min_anisotropy(n);
 }
 
-pub use present::set_metalfx;
+pub use present::{Aspect, set_aspect, set_metalfx};
 
 /// Guest physical memory, shared with the emulated CPU.
 pub trait PhysicalMemory: Send + Sync {

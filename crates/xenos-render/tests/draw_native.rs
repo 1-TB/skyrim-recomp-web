@@ -216,7 +216,7 @@ fn draw_resolve_and_present_through_gpu_memory() {
     let _ = std::fs::remove_dir_all(&dir);
     let handle = native::start(
         memory.clone(),
-        NativeOptions { dump_dir: Some(dir.clone()), dump_every: 1, window: None },
+        NativeOptions { dump_dir: Some(dir.clone()), dump_every: 1, dump_size: None, window: None },
         Box::new(|device| Box::new(xenos_render::edram::EdramTargets::new(device))),
     )
     .expect("renderer");

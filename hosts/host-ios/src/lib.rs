@@ -120,7 +120,7 @@ fn start(opts: boot::Options, window: xenos_render::native::Window) {
     let content = opts.content.clone().expect("set by skyrt_ios_main");
     let game = vfs::GameRoot::Dir(game_root);
     // `--dump-frames DIR` (in Documents) and `--dump-every N` write presented frames as PNG.
-    let mut render = xenos_render::native::NativeOptions { dump_dir: None, dump_every: 60, window: Some(window) };
+    let mut render = xenos_render::native::NativeOptions { dump_dir: None, dump_every: 60, dump_size: None, window: Some(window) };
     for (flag, value) in &opts.extra {
         match flag.as_str() {
             "--dump-frames" => render.dump_dir = Some(documents().join(value)),
