@@ -325,6 +325,9 @@ struct ConstantCache {
 struct ConstantBlock {
     offset: u32,
     data: Vec<u8>,
+    /// Float constant blocks: the constants a packed block holds (bit per vec4, in index order),
+    /// `None` for a block of `[0, count)`.
+    packed: Option<[u64; 4]>,
 }
 
 impl ConstantBlock {
@@ -351,7 +354,7 @@ impl ConstantBlock {
                 b.data.clear();
                 b.data.extend_from_slice(data);
             }
-            None => *slot = Some(ConstantBlock { offset, data: data.to_vec() }),
+            None => *slot = Some(ConstantBlock { offset, data: data.to_vec(), packed: None }),
         }
         offset
     }
@@ -656,6 +659,9 @@ impl Executor {
             ],
         );
         let floats = ConstantPatcher::new(device, alignment);
+        // Blocks written by the CPU (unified memory) can hold just the constants a shader reads;
+        // patched ones (the web) start from the previous block, which needs the fixed layout.
+        xenos_shader::set_packed_float_constants(floats.direct());
         let constants_groups =
             (0..floats.sets()).map(|set| constants_group(device, &constants_layout, floats.blocks(set))).collect();
         let shared_layout = device.create_bind_group_layout(
@@ -1740,9 +1746,13 @@ impl Executor {
         if crate::debug::tracing(self.frame) {
             self.trace_draw(&vs, ps.as_deref(), &setup, &system);
         }
+        let float_read = |t: &xenos_shader::Translation| FloatReads {
+            count: t.info.float_constants_read(),
+            packed: t.float_constants_packed.then_some(t.info.float_constants),
+        };
         let float_reads = [
-            vs.translation.info.float_constants_read(),
-            ps.as_ref().map_or(0, |p| p.translation.info.float_constants_read()),
+            float_read(&vs.translation),
+            ps.as_ref().map_or(FloatReads { count: 0, packed: None }, |p| float_read(&p.translation)),
         ];
         let constant_offsets = self.push_constants(&system, float_reads);
 
@@ -1848,7 +1858,7 @@ impl Executor {
     /// are uploaded (a binding still spans all 256; the rest are never read). Blocks equal to the
     /// last ones pushed are reused: titles rewrite most constants before every draw, mostly with
     /// the values already there.
-    fn push_constants(&mut self, system: &SystemConstants, float_reads: [u32; 2]) -> [u32; 5] {
+    fn push_constants(&mut self, system: &SystemConstants, float_reads: [FloatReads; 2]) -> [u32; 5] {
         let dirty_bits = self.regs.take_dirty();
         let cache = &mut self.constant_cache;
         let mut scratch = std::mem::take(&mut cache.scratch);
@@ -1857,7 +1867,7 @@ impl Executor {
         let mut float = [0u32; 2];
         let mut values = std::mem::take(&mut cache.values);
         for stage in 0..2 {
-            let count = float_reads[stage] as usize;
+            let count = float_reads[stage].count as usize;
             let slot = &mut cache.float[stage];
             if count == 0 {
                 // Nothing read: any offset will do.
@@ -1865,12 +1875,20 @@ impl Executor {
                 continue;
             }
             let base = stage * 256;
+            if let Some(used) = float_reads[stage].packed {
+                float[stage] = push_packed_floats(&mut self.regs, &mut self.floats, &mut self.stats, slot, stage, used);
+                continue;
+            }
+            // A packed block doesn't hold `[0, count)`: start over.
+            if slot.as_ref().is_some_and(|b| b.packed.is_some()) {
+                *slot = None;
+            }
             let Some(block) = slot.as_mut() else {
                 // The stage's first block in this submission: all of it is sent.
                 scratch.clear();
                 self.regs.float_constants_window(base as u32, count as u32, &mut scratch);
                 let offset = self.floats.push(stage as u32, None, &scratch, FLOAT_CONSTANTS_SIZE);
-                *slot = Some(ConstantBlock { offset, data: scratch.clone() });
+                *slot = Some(ConstantBlock { offset, data: scratch.clone(), packed: None });
                 self.regs.clear_float_written(stage, 256);
                 float[stage] = offset;
                 self.stats.float_vec4s_changed[stage] += count as u64;
@@ -2610,6 +2628,84 @@ fn pipeline_descriptor<R>(
 /// Creates a pipeline synchronously, checked with an error scope (wgpu-native has no async
 /// creation, and aborts a submit that uses an invalid pipeline).
 #[cfg(not(target_os = "emscripten"))]
+/// The float constants a shader reads: the first `count`, or with `packed` (a packed
+/// translation) the ones marked, in index order.
+#[derive(Clone, Copy)]
+struct FloatReads {
+    count: u32,
+    packed: Option<[u64; 4]>,
+}
+
+/// The offset of a packed float constant block of stage `stage` holding the constants `used`
+/// marks (see `xenos_shader::set_packed_float_constants`): `slot`'s if it has their values, else
+/// of a new one (the CPU writes blocks directly: packing is for direct constant writes), which
+/// becomes `slot`. Only the written constants are compared; another layout is gathered anew.
+fn push_packed_floats(
+    regs: &mut RegisterFile,
+    floats: &mut ConstantPatcher,
+    stats: &mut ExecutorStats,
+    slot: &mut Option<ConstantBlock>,
+    stage: usize,
+    used: [u64; 4],
+) -> u32 {
+    debug_assert!(floats.direct(), "packed float constants need direct constant writes");
+    let base = stage * 256;
+    let indices = |mask: [u64; 4]| {
+        mask.into_iter().enumerate().flat_map(|(w, word)| {
+            let mut bits = word;
+            std::iter::from_fn(move || {
+                (bits != 0).then(|| {
+                    let i = w * 64 + bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
+                    i
+                })
+            })
+        })
+    };
+    let changed = match slot.as_mut().filter(|b| b.packed == Some(used)) {
+        Some(block) => {
+            // Written constants the block holds, at their rank among the used ones.
+            let written = regs.float_written(stage);
+            let mut changed = 0u64;
+            let mut before = 0usize;
+            for (w, &word) in used.iter().enumerate() {
+                let mut bits = word & written[w];
+                while bits != 0 {
+                    let bit = bits.trailing_zeros();
+                    bits &= bits - 1;
+                    let r = before + (word & ((1u64 << bit) - 1)).count_ones() as usize;
+                    let v = regs.float_vec4(base + w * 64 + bit as usize);
+                    if v[..] != block.data[r * 16..r * 16 + 16] {
+                        block.data[r * 16..r * 16 + 16].copy_from_slice(&v);
+                        changed += 1;
+                    }
+                }
+                before += word.count_ones() as usize;
+            }
+            if changed == 0 {
+                regs.clear_float_written(stage, 256);
+                stats.constant_blocks_reused += 1;
+                return block.offset;
+            }
+            changed
+        }
+        None => {
+            let mut data = Vec::with_capacity(used.iter().map(|m| m.count_ones() as usize).sum::<usize>() * 16);
+            for i in indices(used) {
+                data.extend_from_slice(&regs.float_vec4(base + i));
+            }
+            *slot = Some(ConstantBlock { offset: 0, data, packed: Some(used) });
+            used.iter().map(|m| u64::from(m.count_ones())).sum()
+        }
+    };
+    let block = slot.as_mut().expect("block set above");
+    block.offset = floats.push_full(&block.data, FLOAT_CONSTANTS_SIZE);
+    regs.clear_float_written(stage, 256);
+    stats.float_vec4s_changed[stage] += changed;
+    stats.float_upload_bytes[stage] += block.data.len() as u64;
+    block.offset
+}
+
 /// A pipeline compiling in the background, once it's done.
 fn wait_for(pending: &Pending<gpu_webgpu::Result<RenderPipeline>>) -> gpu_webgpu::Result<RenderPipeline> {
     loop {

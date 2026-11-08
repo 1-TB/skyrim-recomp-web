@@ -54,6 +54,22 @@ pub fn set_float24_depth(on: bool) {
     FLOAT24_DEPTH.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Float constants read at fixed indices are packed (see [`set_packed_float_constants`]).
+static PACKED_FLOAT_CONSTANTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes shaders that read float constants only at fixed indices read them packed: constant `i`
+/// at [`crate::ShaderInfo::float_constant_rank`]`(i)` of the bound block, so the renderer sends
+/// just the ones read (a pixel shader reading c0-c10 and c255 otherwise needs all 256 sent
+/// whenever one changes). Translations say whether they are packed
+/// ([`crate::Translation::float_constants_packed`]). Set before translating any shader.
+pub fn set_packed_float_constants(on: bool) {
+    PACKED_FLOAT_CONSTANTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn packed_float_constants(info: &crate::ShaderInfo) -> bool {
+    PACKED_FLOAT_CONSTANTS.load(std::sync::atomic::Ordering::Relaxed) && info.float_constants_packable()
+}
+
 pub(crate) fn float24_depth() -> bool {
     FLOAT24_DEPTH.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -284,6 +300,9 @@ impl<'a> Generator<'a> {
         match op.source {
             StorageSource::Register => format!("xe_r[{}]", self.register_index(op.index, op.addressing)),
             StorageSource::ConstantFloat => match op.addressing {
+                AddressingMode::Absolute if packed_float_constants(self.info) => {
+                    format!("xe_float_constants[{}u]", self.info.float_constant_rank(op.index & 255))
+                }
                 AddressingMode::Absolute => format!("xe_float_constants[{}u]", op.index & 255),
                 AddressingMode::AddressRegisterRelative => {
                     format!("xe_float_constant({} + xe_a0)", op.index)

@@ -106,6 +106,19 @@ impl ShaderInfo {
             .map_or(0, |w| w as u32 * 64 + 64 - self.float_constants[w].leading_zeros())
     }
 
+    /// Whether the shader's float constants can be packed: read only at fixed indices.
+    pub fn float_constants_packable(&self) -> bool {
+        !self.float_dynamic_addressing
+    }
+
+    /// Position of float constant `index` among the ones the shader reads (in index order): where
+    /// it is in a packed block.
+    pub fn float_constant_rank(&self, index: u32) -> u32 {
+        let (w, bit) = ((index >> 6) as usize, index & 63);
+        self.float_constants[..w].iter().map(|m| m.count_ones()).sum::<u32>()
+            + (self.float_constants[w] & ((1u64 << bit) - 1)).count_ones()
+    }
+
     pub fn is_float_constant_used(&self, index: u32) -> bool {
         self.float_dynamic_addressing
             || (index < 256 && self.float_constants[(index >> 6) as usize] >> (index & 63) & 1 != 0)
@@ -316,5 +329,23 @@ impl ShaderInfo {
             info.float_constants = [u64::MAX; 4];
         }
         info
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ShaderInfo;
+
+    #[test]
+    fn float_constant_ranks_follow_index_order() {
+        let mut info = ShaderInfo::default();
+        for i in [3u32, 10, 63, 64, 200, 255] {
+            info.float_constants[(i >> 6) as usize] |= 1 << (i & 63);
+        }
+        let ranks: Vec<u32> = [3u32, 10, 63, 64, 200, 255].iter().map(|&i| info.float_constant_rank(i)).collect();
+        assert_eq!(ranks, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(info.float_constants_read(), 256);
+        info.float_dynamic_addressing = true;
+        assert!(!info.float_constants_packable());
     }
 }

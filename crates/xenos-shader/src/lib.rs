@@ -27,7 +27,10 @@ mod wgsl;
 pub use analysis::{ShaderInfo, TextureFetchUse, VertexAttribute, VertexBinding};
 pub use bindings::{BoolLoopConstants, SystemConstants};
 pub use program::{Program, UcodeError};
-pub use wgsl::{FLOAT24_DEPTH_WGSL, TextureBinding, TextureBindingDimension, set_alpha_test_by_sample_mask, set_float24_depth};
+pub use wgsl::{
+    FLOAT24_DEPTH_WGSL, TextureBinding, TextureBindingDimension, set_alpha_test_by_sample_mask, set_float24_depth,
+    set_packed_float_constants,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ShaderStage {
@@ -125,6 +128,9 @@ pub struct Translation {
     pub structured_control_flow: bool,
     /// Memory export is used but not performed (see the crate documentation).
     pub uses_memexport: bool,
+    /// Float constants are read packed (see [`set_packed_float_constants`]): the bound block
+    /// holds the ones `info.float_constants` marks, in index order.
+    pub float_constants_packed: bool,
     /// Non-fatal translation issues (unsupported or invalid instructions).
     pub warnings: Vec<String>,
     pub info: ShaderInfo,
@@ -181,6 +187,7 @@ impl Shader {
             uses_shared_memory: output.uses_shared_memory,
             structured_control_flow: output.structured_control_flow,
             uses_memexport: info.uses_memexport(),
+            float_constants_packed: wgsl::packed_float_constants(info),
             warnings: {
                 let mut w = output.warnings;
                 if info.uses_memexport() {
