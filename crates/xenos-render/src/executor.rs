@@ -51,10 +51,17 @@ const PIXEL_TEXTURE_BINDING_BASE: u32 = 96;
 /// Per-submission indices (converted on the CPU, or copied out of shared memory); a draw with
 /// more is skipped.
 const INDEX_RING_SIZE: u64 = 4 << 20;
-/// Draws per render pass before the next draw starts another (same targets, contents loaded):
-/// longer passes were slower on Apple GPUs (a 1000-draw scene pass cost ~25% more than the same
-/// draws in passes of 128, presumably the tiler's buffers overflowing), shorter ones no faster.
-const MAX_PASS_DRAWS: usize = 128;
+/// Draws per render pass before the next draw starts another (same targets, contents loaded),
+/// and vertices (see `MAX_PASS_VERTICES`). Every new pass loads and stores its attachments
+/// whole (Skyrim's scene: 4x MSAA color and depth, ~70 MB each time), but too long a pass
+/// was slower on Apple GPUs (a 1000-draw scene pass cost ~25% more than the same draws in
+/// passes of 128, presumably the tiler's buffers overflowing, which stores and loads the
+/// attachments mid-pass). On an M2, Riverwood at 256 runs as fast as at 128 with a third less
+/// attachment traffic (512 MiB a frame instead of 755); at 512 it's 9% slower.
+const MAX_PASS_DRAWS: usize = 256;
+/// Vertices per render pass before the next draw starts another: the tiler's buffers fill
+/// with geometry, not draws. Riverwood's scene passes of 256 draws hold 250-700k.
+const MAX_PASS_VERTICES: u64 = 600_000;
 const FLOAT_CONSTANTS_SIZE: u64 = bindings::FLOAT_CONSTANTS_SIZE;
 const BOOL_LOOP_SIZE: u64 = 160;
 const FETCH_SIZE: u64 = bindings::FETCH_CONSTANTS_SIZE;
@@ -323,6 +330,8 @@ struct Pass {
     setup: RenderTargetSetup,
     targets: DrawTargets,
     draws: Vec<RecordedDraw>,
+    /// Vertices of its draws.
+    vertices: u64,
 }
 
 /// The constant blocks last pushed in this submission, reused by draws whose constants haven't
@@ -1101,7 +1110,19 @@ impl Executor {
         } else {
             "xenos draws".to_string()
         };
-        let mut rp = encoder.begin_render_pass(&label, &colors, depth.as_ref());
+        // Draws only reach so far right and down (a screen tile of predicated tiling, a
+        // target taller than what's drawn): the pass's attachments are loaded and stored only up
+        // to there. Clears by load action cover the whole targets.
+        let area = if clears.any() {
+            (u32::MAX, u32::MAX)
+        } else {
+            // By scissor: Metal requires scissor rectangles within the pass's area.
+            pass.draws.iter().fold((0, 0), |(w, h), d| {
+                let [sx, sy, sw, sh] = d.scissor;
+                (w.max(sx + sw), h.max(sy + sh))
+            })
+        };
+        let mut rp = encoder.begin_render_pass_within(&label, &colors, depth.as_ref(), area);
         rp.set_bind_group(bindings::SHARED_MEMORY_GROUP, &shared_group, &[]);
         // Each WebGPU call has a fixed cost (in browsers especially): state equal to the previous
         // draw's isn't set again, and index buffers are bound whole once, each draw selecting
@@ -1657,7 +1678,10 @@ impl Executor {
         mark!(self, 5);
         // Render targets (encode the previous pass first if they change).
         let reuse = self.pass.as_ref().is_some_and(|p| {
-            p.setup == setup && p.targets.height >= min_height * scale && p.draws.len() < MAX_PASS_DRAWS
+            p.setup == setup
+                && p.targets.height >= min_height * scale
+                && p.draws.len() < MAX_PASS_DRAWS
+                && p.vertices < MAX_PASS_VERTICES
         });
         if !reuse {
             self.encode_pass();
@@ -1667,7 +1691,7 @@ impl Executor {
             }
             let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder("xenos"));
             let targets = self.targets.targets(&self.device, encoder, &setup, min_height).ok_or(Skip::NoTargets)?;
-            self.pass = Some(Pass { setup: setup.clone(), targets, draws: Vec::new() });
+            self.pass = Some(Pass { setup: setup.clone(), targets, draws: Vec::new(), vertices: 0 });
         }
         let (target_width, target_height) = {
             let targets = &self.pass.as_ref().expect("set above").targets;
@@ -1869,7 +1893,9 @@ impl Executor {
             count: host.vertex_count,
             capture,
         };
-        self.pass.as_mut().expect("pass created above").draws.push(draw);
+        let pass = self.pass.as_mut().expect("pass created above");
+        pass.vertices += u64::from(draw.count);
+        pass.draws.push(draw);
         mark!(self, DRAW_STAGES.len());
         Ok(())
     }

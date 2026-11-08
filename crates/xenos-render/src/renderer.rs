@@ -394,13 +394,15 @@ pub(crate) fn calls_per_frame(c: &gpu_webgpu::counters::Counters, frames: u64) -
         .map(|(label, calls, bytes)| format!("\"{label}\" {}x {} KiB", calls / f, bytes / f / 1024))
         .collect();
     format!(
-        "{} draws, {} set_pipeline, {} set_bind_group, {} render passes, {} compute passes ({} dispatches), \
+        "{} draws, {} set_pipeline, {} set_bind_group, {} render passes ({} MiB attachment loads, {} MiB stores), {} compute passes ({} dispatches), \
          {} submits, {} write_buffer ({} KiB), {} write_texture, {} copies; created: {} buffers, {} textures, \
          {} views, {} bind groups, {} samplers, {} pipelines (most: {}); uploads: {}",
         c.draws / f,
         c.set_pipelines / f,
         c.set_bind_groups / f,
         c.render_passes / f,
+        c.attachment_load_bytes / f >> 20,
+        c.attachment_store_bytes / f >> 20,
         c.compute_passes / f,
         c.dispatches / f,
         c.submits / f,

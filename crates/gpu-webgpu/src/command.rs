@@ -60,6 +60,19 @@ impl Device {
 
 impl CommandEncoder {
     /// `color_attachments` entries that are `None` leave that target slot unbound.
+    /// [`CommandEncoder::begin_render_pass`] for passes that draw only within `area` (width,
+    /// height from the origin). WebGPU has no render area: the whole attachments are loaded and
+    /// stored.
+    pub fn begin_render_pass_within(
+        &mut self,
+        label: &str,
+        color_attachments: &[Option<RenderPassColorAttachment<'_>>],
+        depth_stencil: Option<&RenderPassDepthStencilAttachment<'_>>,
+        _area: (u32, u32),
+    ) -> RenderPass<'_> {
+        self.begin_render_pass(label, color_attachments, depth_stencil)
+    }
+
     pub fn begin_render_pass(
         &mut self,
         label_: &str,

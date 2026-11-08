@@ -14,6 +14,8 @@ use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::ProtocolObject;
 use objc2_metal::*;
 
+use crate::{LoadOp, StoreOp};
+
 use super::resource::{GroupInner, Resource, TextureInner, attachment};
 use super::shader::{ComputeState, RenderState, StageBindings};
 use super::{Device, Id, MtlBuffer, MtlCommandBuffer, conv, ns, set_label};
@@ -173,8 +175,31 @@ impl CommandEncoder {
         color_attachments: &[Option<RenderPassColorAttachment<'_>>],
         depth_stencil: Option<&RenderPassDepthStencilAttachment<'_>>,
     ) -> RenderPass<'_> {
+        self.begin_render_pass_within(label, color_attachments, depth_stencil, (u32::MAX, u32::MAX))
+    }
+
+    /// [`CommandEncoder::begin_render_pass`] for passes that draw only within `area` (width,
+    /// height from the origin): the render target size is limited to it, so the attachments'
+    /// load and store actions only move that part between tile memory and memory (the rest
+    /// keeps its contents). Clears by load action clear only that part too.
+    pub fn begin_render_pass_within(
+        &mut self,
+        label: &str,
+        color_attachments: &[Option<RenderPassColorAttachment<'_>>],
+        depth_stencil: Option<&RenderPassDepthStencilAttachment<'_>>,
+        area: (u32, u32),
+    ) -> RenderPass<'_> {
         crate::counters::add(&crate::counters::count::render_passes, 1);
         self.end_blit();
+        // Bytes the attachments' load and store actions move between tile memory and memory.
+        let mut traffic = (0u64, 0u64);
+        let mut count_traffic = |view: &super::TextureView, bytes_per_sample: u64, load: bool, store: bool| {
+            let ((w, h), samples) = (view.extent(), view.sample_count());
+            let (w, h) = (w.min(area.0), h.min(area.1));
+            let bytes = u64::from(w) * u64::from(h) * u64::from(samples) * bytes_per_sample;
+            traffic.0 += if load { bytes } else { 0 };
+            traffic.1 += if store { bytes } else { 0 };
+        };
         let raw = autoreleasepool(|_| {
             let d = MTLRenderPassDescriptor::new();
             let mut extent = None;
@@ -197,6 +222,8 @@ impl CommandEncoder {
                 }
                 a.setLoadAction(conv::load_action(c.load_op));
                 a.setStoreAction(conv::store_action(c.store_op, resolve.is_some()));
+                let bytes = crate::format_block_info(c.view.format()).map_or(4, |(b, _)| u64::from(b));
+                count_traffic(c.view, bytes, c.load_op == LoadOp::Load, c.store_op == StoreOp::Store);
                 let Color { r, g, b, a: alpha } = c.clear_value;
                 a.setClearColor(MTLClearColor { red: r, green: g, blue: b, alpha });
             }
@@ -206,6 +233,12 @@ impl CommandEncoder {
                 extent.get_or_insert((ds.view.extent(), ds.view.sample_count()));
                 let format = ds.view.format();
                 if conv::has_depth(format) {
+                    let (load, store) = if ds.depth_read_only {
+                        (true, true)
+                    } else {
+                        (ds.depth_load_op == LoadOp::Load, ds.depth_store_op == StoreOp::Store)
+                    };
+                    count_traffic(ds.view, 4, load, store);
                     let a = d.depthAttachment();
                     a.setTexture(Some(texture));
                     a.setLevel(level);
@@ -220,6 +253,12 @@ impl CommandEncoder {
                     a.setClearDepth(f64::from(ds.depth_clear_value));
                 }
                 if conv::has_stencil(format) {
+                    let (load, store) = if ds.stencil_read_only {
+                        (true, true)
+                    } else {
+                        (ds.stencil_load_op == LoadOp::Load, ds.stencil_store_op == StoreOp::Store)
+                    };
+                    count_traffic(ds.view, 1, load, store);
                     let a = d.stencilAttachment();
                     a.setTexture(Some(texture));
                     a.setLevel(level);
@@ -235,14 +274,16 @@ impl CommandEncoder {
                 }
             }
             if let Some(((w, h), samples)) = extent {
-                d.setRenderTargetWidth(w as usize);
-                d.setRenderTargetHeight(h as usize);
+                d.setRenderTargetWidth(w.min(area.0).max(1) as usize);
+                d.setRenderTargetHeight(h.min(area.1).max(1) as usize);
                 d.setDefaultRasterSampleCount(samples as usize);
             }
             super::timing::render_pass(&self.raw, label, &d);
             self.raw.renderCommandEncoderWithDescriptor(&d)
         })
         .expect("cannot create a Metal render encoder");
+        crate::counters::add(&crate::counters::count::attachment_load_bytes, traffic.0);
+        crate::counters::add(&crate::counters::count::attachment_store_bytes, traffic.1);
         set_label!(raw, label);
         RenderPass {
             raw,

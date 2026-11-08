@@ -53,6 +53,8 @@ mod defs {
         dispatches,
         shader_modules,
         shader_bytes,
+        attachment_load_bytes,
+        attachment_store_bytes,
     );
 }
 pub(crate) use defs::count;
