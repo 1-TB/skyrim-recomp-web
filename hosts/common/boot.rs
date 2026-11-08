@@ -374,7 +374,10 @@ pub fn game_width(ratio: f64) -> u32 {
 fn set_game_width(vfs: &Vfs, width: u32) {
     let settings = format!("[Display]\r\nbIgnoreResolutionCheck=1\r\niSize W={width}\r\niSize H={GAME_HEIGHT}\r\n");
     match vfs.append_on_read("game:\\Skyrim.ini", settings.as_bytes()) {
-        Ok(()) => log::info!("game frame {width}x{GAME_HEIGHT}"),
+        Ok(()) => {
+            log::info!("game frame {width}x{GAME_HEIGHT}");
+            kernel_hle::menus::set_wide_frame(true);
+        }
         Err(e) => log::warn!("--game-aspect: {e}"),
     }
 }

@@ -177,6 +177,23 @@ PPC_FUNC({f}) {{
             .unwrap();
         }
     }
+    // BSScaleformManager::LoadMovie(manager, menu, view, name, scale mode, background alpha):
+    // kernel-hle's menus module picks the scale mode (menus on frames wider than 16:9).
+    const SKYRIM_LOAD_MOVIE: &str = "sub_82A9AB68";
+    if skyrim && declared.contains(SKYRIM_LOAD_MOVIE) {
+        writeln!(
+            cpp,
+            r#"
+extern "C" uint32_t skyrt_movie_scale_mode(uint32_t name, uint32_t mode);
+extern "C" PPC_FUNC(__imp__{f});
+PPC_FUNC({f}) {{
+    ctx.r7.u64 = skyrt_movie_scale_mode(ctx.r6.u32, ctx.r7.u32);
+    __imp__{f}(ctx, base);
+}}"#,
+            f = SKYRIM_LOAD_MOVIE
+        )
+        .unwrap();
+    }
     if skyrim && declared.contains(SKYRIM_RING_WAIT) {
         writeln!(
             cpp,

@@ -16,6 +16,7 @@ pub mod gpu;
 pub mod input;
 pub mod io;
 pub mod logging;
+pub mod menus;
 pub mod objects;
 pub mod overlapped;
 pub mod status;
