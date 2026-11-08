@@ -24,14 +24,20 @@ impl Generator<'_> {
 
         let vop = alu.vector_opcode;
         let vector_needed = alu.vector_result.used_result_components() != 0 || ucode::vector_changes_state(vop);
+        // Whether the first two operands are the same value (a square: `dp3 r1, r0, r0`).
+        let mut same_vectors = false;
         if vector_needed {
             let count = if vop == v::CUBE { 1 } else { alu.vector_operand_count };
+            let mut operands = Vec::new();
             for (i, operand) in alu.vector_operands[..count as usize].iter().enumerate() {
                 let e = self.operand_vec4(operand);
                 self.line(&format!("let xe_v{i} = {e};"));
+                operands.push(e);
             }
+            same_vectors = operands.len() >= 2 && operands[0] == operands[1];
         }
         let sop = alu.scalar_opcode;
+        let mut same_scalars = false;
         match alu.scalar_operand_count {
             1 => {
                 let a = self.operand_scalar(&alu.scalar_operands[0], 0);
@@ -39,6 +45,7 @@ impl Generator<'_> {
                 if alu.scalar_operands[0].component_count == 2 {
                     let b = self.operand_scalar(&alu.scalar_operands[0], 1);
                     self.line(&format!("let xe_sb = {b};"));
+                    same_scalars = a == b;
                 }
             }
             2 => {
@@ -46,15 +53,16 @@ impl Generator<'_> {
                 let b = self.operand_scalar(&alu.scalar_operands[1], 0);
                 self.line(&format!("let xe_sa = {a};"));
                 self.line(&format!("let xe_sb = {b};"));
+                same_scalars = a == b;
             }
             _ => {}
         }
 
         if vector_needed {
-            self.emit_vector_op(vop);
+            self.emit_vector_op(vop, same_vectors);
         }
         let scalar_written = alu.scalar_result.used_write_mask() != 0;
-        self.emit_scalar_op(sop, scalar_written);
+        self.emit_scalar_op(sop, scalar_written, same_scalars);
 
         self.store(&alu.vector_result, if vector_needed { Value::Vec("xe_vr") } else { Value::None });
         self.store(&alu.scalar_result, Value::Scalar("xe_sr"));
@@ -74,10 +82,14 @@ impl Generator<'_> {
         }
     }
 
-    fn emit_vector_op(&mut self, op: u32) {
+    /// `same`: the first two operands are the same value. Their product needs no Shader Model 3
+    /// zero rule then (x * x is +0 for +-0, +Inf for +-Inf and NaN for NaN either way), which
+    /// spares two comparisons and a select per component.
+    fn emit_vector_op(&mut self, op: u32, same: bool) {
         let cmp = comparison(op);
         let e = match op {
             v::ADD => "xe_v0 + xe_v1".to_string(),
+            v::MUL if same => "xe_v0 * xe_v1".to_string(),
             v::MUL => "xe_mul(xe_v0, xe_v1)".to_string(),
             v::MAX => "xe_max(xe_v0, xe_v1)".to_string(),
             v::MIN => "xe_min(xe_v0, xe_v1)".to_string(),
@@ -87,9 +99,12 @@ impl Generator<'_> {
             v::FRC => "xe_v0 - floor(xe_v0)".to_string(),
             v::TRUNC => "trunc(xe_v0)".to_string(),
             v::FLOOR => "floor(xe_v0)".to_string(),
+            v::MAD if same => "xe_v0 * xe_v1 + xe_v2".to_string(),
             v::MAD => "xe_mul(xe_v0, xe_v1) + xe_v2".to_string(),
             v::CNDEQ | v::CNDGE | v::CNDGT => format!("select(xe_v2, xe_v1, xe_v0 {cmp} vec4<f32>(0.0))"),
+            v::DP4 if same => "vec4<f32>(dot(xe_v0, xe_v1))".to_string(),
             v::DP4 => "vec4<f32>(xe_dp4(xe_v0, xe_v1))".to_string(),
+            v::DP3 if same => "vec4<f32>(dot(xe_v0.xyz, xe_v1.xyz))".to_string(),
             v::DP3 => "vec4<f32>(xe_dp3(xe_v0, xe_v1))".to_string(),
             v::DP2ADD => "vec4<f32>(xe_dp2add(xe_v0, xe_v1, xe_v2.x))".to_string(),
             v::CUBE => "xe_cube(xe_v0)".to_string(),
@@ -117,8 +132,10 @@ impl Generator<'_> {
 
     /// Emits the scalar operation into `xe_sr`, updating ps (except for retain_prev, whose result
     /// is only materialized when written).
-    fn emit_scalar_op(&mut self, op: u32, written: bool) {
+    /// `same`: both scalar operands are the same value (see [`Self::emit_vector_op`]).
+    fn emit_scalar_op(&mut self, op: u32, written: bool, same: bool) {
         let e = match op {
+            s::MULS | s::MULSC0 | s::MULSC1 if same => "xe_sa * xe_sb".to_string(),
             s::ADDS | s::ADDSC0 | s::ADDSC1 => "xe_sa + xe_sb".to_string(),
             s::ADDS_PREV => "xe_sa + xe_ps".to_string(),
             s::MULS | s::MULSC0 | s::MULSC1 => "xe_mul1(xe_sa, xe_sb)".to_string(),

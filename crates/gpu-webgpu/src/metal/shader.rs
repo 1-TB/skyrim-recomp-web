@@ -317,9 +317,10 @@ fn compile_options() -> Retained<MTLCompileOptions> {
     o.setLanguageVersion(MTLLanguageVersion::Version3_0);
     // The translator marks positions `@invariant`; Metal only honors it with this set.
     o.setPreserveInvariance(true);
-    // Relaxed, not fast: it may reassociate and fuse (pixel shaders are ALU-bound: +9% fps on
-    // an M2 over safe math) but honors NaN and Inf, which the guest's shaders rely on (SM3
-    // 0 * inf = 0 selects, alpha tests on their results); fast math assumes neither occurs.
+    // Relaxed: it may reassociate and fuse (pixel shaders are ALU-bound: +9% fps on an M2 over
+    // safe math). It keeps infinities, but like fast math it assumes no NaN: `x != x` folds to
+    // false (measured on an M2). The translator's SM3 zero rule tests the operands for zero, not
+    // the product for NaN, and NaN tests that matter are made on the bits.
     o.setMathMode(MTLMathMode::Relaxed);
     o
 }

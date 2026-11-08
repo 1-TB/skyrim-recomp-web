@@ -367,7 +367,8 @@ fn xe_color_range(c: vec4<f32>, range: u32) -> vec4<f32> {
     if (range == 0u) {
         return c;
     }
-    let finite = select(vec4<f32>(0.0), c, c == c);
+    // NaN tested on the bits: Metal's relaxed math folds `c == c` to true.
+    let finite = select(vec4<f32>(0.0), c, (bitcast<vec4<u32>>(c) & vec4<u32>(0x7FFFFFFFu)) <= vec4<u32>(0x7F800000u));
     if (range == 1u) {
         return clamp(finite, vec4<f32>(0.0), vec4<f32>(31.875, 31.875, 31.875, 1.0));
     }
