@@ -275,6 +275,14 @@ pub(crate) struct TextureInner {
     tracked: bool,
 }
 
+impl Drop for TextureInner {
+    fn drop(&mut self) {
+        if self.tracked {
+            crate::memory::freed(self as *const TextureInner as usize);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Texture {
     pub(crate) inner: Rc<TextureInner>,
@@ -502,7 +510,8 @@ impl Texture {
     /// Drops this handle's Metal texture; views and running command buffers keep theirs.
     pub fn destroy(&self) {
         if self.inner.tracked {
-            crate::memory::untrack(self.raw() as usize);
+            // Views share the inner object (and their own Metal textures hold the memory).
+            crate::memory::destroyed(self.raw() as usize, Rc::as_ptr(&self.inner) as usize);
         }
         self.inner.raw.borrow_mut().take();
     }

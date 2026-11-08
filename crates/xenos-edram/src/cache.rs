@@ -568,11 +568,31 @@ enum Held {
     Sampler(gpu_webgpu::Sampler),
 }
 
-/// Bind groups by layout and resources (see `cached_bind_group`).
-type GroupCache = HashMap<Vec<u64>, (BindGroup, Vec<Held>)>;
+/// Bind groups by layout and resources (see `cached_bind_group`), with the frame each was last
+/// used in.
+#[derive(Default)]
+struct GroupCache {
+    groups: HashMap<Vec<u64>, (BindGroup, Vec<Held>, u64)>,
+    frame: u64,
+}
+
+impl GroupCache {
+    /// Frame boundary: drops the groups unused for [`GROUP_MAX_IDLE_FRAMES`]. They hold their
+    /// resources, so a group of surfaces or buffers the renderer has destroyed would keep their
+    /// memory allocated (on Metal, hundreds of MiB after a menu replaces the title's render
+    /// targets at higher resolution scales).
+    fn end_frame(&mut self) {
+        self.frame += 1;
+        let frame = self.frame;
+        self.groups.retain(|_, (_, _, used)| *used + GROUP_MAX_IDLE_FRAMES >= frame);
+    }
+}
 
 /// Bind groups cached at most (the cache is cleared when full).
 const MAX_CACHED_GROUPS: usize = 2048;
+
+/// Frames a cached bind group is kept without being used.
+const GROUP_MAX_IDLE_FRAMES: u64 = 60;
 
 fn uniform(arena: &RefCell<ParamsArena>, device: &Device, words: &[u32]) -> Params {
     let _ = PARAMS_SLOT.checked_sub(words.len() as u64 * 4).expect("EDRAM parameters larger than a slot");
@@ -664,11 +684,13 @@ fn cached_bind_group(
         }
     }
     let mut cache = cache.borrow_mut();
-    if let Some((group, _)) = cache.get(&key) {
+    let frame = cache.frame;
+    if let Some((group, _, used)) = cache.groups.get_mut(&key) {
+        *used = frame;
         return group.clone();
     }
-    if cache.len() >= MAX_CACHED_GROUPS {
-        cache.clear();
+    if cache.groups.len() >= MAX_CACHED_GROUPS {
+        cache.groups.clear();
     }
     let group = device.create_bind_group(label, layout, entries);
     let held = entries
@@ -679,7 +701,7 @@ fn cached_bind_group(
             BindingResource::Sampler(s) => Held::Sampler((*s).clone()),
         })
         .collect();
-    cache.insert(key, (group.clone(), held));
+    cache.groups.insert(key, (group.clone(), held, frame));
     group
 }
 
@@ -737,7 +759,7 @@ impl EdramCache {
                 pending: Vec::new(),
                 pending_start: 0,
             }),
-            groups: RefCell::new(HashMap::new()),
+            groups: RefCell::new(GroupCache::default()),
         }
     }
 
@@ -777,11 +799,13 @@ impl EdramCache {
     /// [`RT_MAX_IDLE_TIME`] (their contents are unreachable; a later use starts a new one).
     pub fn end_frame(&mut self) {
         self.trim_unowned(RT_MAX_IDLE_FRAMES, RT_MAX_IDLE_TIME);
+        self.groups.get_mut().end_frame();
     }
 
     /// Frame boundary for caches drawing to their own surfaces (`resolve_external` only), with
     /// everything recorded submitted: frees the buffers done with.
     pub fn end_external_frame(&mut self) {
+        self.groups.get_mut().end_frame();
         self.scaled.end_frame(&mut self.retired_buffers);
         for buffer in self.retired_buffers.drain(..) {
             buffer.destroy();

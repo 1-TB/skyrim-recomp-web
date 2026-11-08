@@ -384,6 +384,7 @@ impl Shared {
 
     /// Runs what completed GPU work unblocks.
     fn poll(&self) {
+        crate::memory::DRIVER_ALLOCATED.store(self.raw.currentAllocatedSize() as u64, std::sync::atomic::Ordering::Relaxed);
         let done = self.completed();
         self.in_flight.borrow_mut().retain(|(serial, _)| *serial > done);
         let gpu_errors = std::mem::take(&mut *self.tracker.errors.lock().unwrap());

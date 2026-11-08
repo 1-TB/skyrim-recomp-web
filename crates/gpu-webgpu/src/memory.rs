@@ -35,6 +35,46 @@ pub(crate) fn untrack(raw: usize) {
     }
 }
 
+/// Objects destroyed while something else (a view, a bind group) still holds their memory, by
+/// owner address: destroyed -> (kind, label, bytes).
+static HELD: Mutex<BTreeMap<usize, (&'static str, String, u64)>> = Mutex::new(BTreeMap::new());
+
+/// `raw` was destroyed; its memory stays allocated until `owner` is freed ([`freed`]).
+pub(crate) fn destroyed(raw: usize, owner: usize) {
+    let entry = {
+        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = live.objects.remove(&raw);
+        if let Some((_, _, bytes)) = &entry {
+            live.total -= bytes;
+        }
+        entry
+    };
+    if let Some(entry) = entry {
+        HELD.lock().unwrap_or_else(|e| e.into_inner()).insert(owner, entry);
+    }
+}
+
+/// The last reference to `owner`'s memory is gone.
+pub(crate) fn freed(owner: usize) {
+    HELD.lock().unwrap_or_else(|e| e.into_inner()).remove(&owner);
+}
+
+/// Objects destroyed but still holding memory (through views and the like), grouped by kind and
+/// label, largest first.
+pub fn held_after_destroy() -> Vec<LiveGroup> {
+    let held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    group(held.values())
+}
+
+/// Bytes the GPU driver has allocated for the process, where it reports them (Metal's
+/// `currentAllocatedSize`, updated as devices are polled; 0 elsewhere). Unlike [`totals`] it
+/// counts memory only once the last reference to an object is gone.
+pub(crate) static DRIVER_ALLOCATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn driver_allocated() -> u64 {
+    DRIVER_ALLOCATED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Bytes live now and the most ever live at once.
 pub fn totals() -> (u64, u64) {
     let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
@@ -53,8 +93,12 @@ pub struct LiveGroup {
 /// Live objects grouped by kind and label, largest first.
 pub fn live_by_label() -> Vec<LiveGroup> {
     let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    group(live.objects.values())
+}
+
+fn group<'a>(objects: impl Iterator<Item = &'a (&'static str, String, u64)>) -> Vec<LiveGroup> {
     let mut groups: Vec<LiveGroup> = Vec::new();
-    for (kind, label, bytes) in live.objects.values() {
+    for (kind, label, bytes) in objects {
         match groups.iter_mut().find(|g| g.kind == *kind && g.label == *label) {
             Some(g) => {
                 g.count += 1;

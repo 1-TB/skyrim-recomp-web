@@ -193,12 +193,19 @@ impl MemoryReport {
         } else {
             String::new()
         };
+        let held: Vec<String> = gpu_webgpu::memory::held_after_destroy()
+            .into_iter()
+            .take(4)
+            .map(|g| format!("{} \"{}\" {} MiB ({})", g.kind, g.label, mib(g.bytes), g.count))
+            .collect();
+        let labels = if held.is_empty() { labels } else { format!("{labels}; held after destroy: {}", held.join(", ")) };
         let rate = (now_uploaded - self.uploads_at_report) as f64 / self.last_at.elapsed().as_secs_f64().max(0.001);
         log::info!(
-            "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB){wasm}; uploads {:.1} MiB/s (peak {:.1} MiB/s){labels}",
+            "memory: guest committed {} MiB (linear pool {pool_used}/{pool_size} MiB), GPU {} MiB (peak {} MiB, driver {} MiB){wasm}; uploads {:.1} MiB/s (peak {:.1} MiB/s){labels}",
             mib(committed),
             mib(gpu),
             mib(gpu_peak),
+            mib(gpu_webgpu::memory::driver_allocated()),
             rate / f64::from(1 << 20),
             self.peak_tick as f64 / f64::from(1 << 20)
         );
@@ -232,6 +239,16 @@ fn apple_footprint() -> String {
         fn task_info(task: u32, flavor: i32, info: *mut i32, count: *mut u32) -> i32;
         #[cfg(target_os = "ios")]
         fn os_proc_available_memory() -> usize;
+        fn malloc_zone_statistics(zone: *mut core::ffi::c_void, stats: *mut MallocStatistics);
+    }
+    /// `malloc_statistics_t` (malloc/malloc.h).
+    #[repr(C)]
+    #[derive(Default)]
+    struct MallocStatistics {
+        blocks_in_use: u32,
+        size_in_use: usize,
+        max_size_in_use: usize,
+        size_allocated: usize,
     }
     let mut info = TaskVmInfo::default();
     let mut count = (size_of::<TaskVmInfo>() / 4) as u32;
@@ -241,9 +258,15 @@ fn apple_footprint() -> String {
         return String::new();
     }
     let footprint = info.phys_footprint >> 20;
+    // The host heap's share of it (all malloc zones), to tell a host leak from Metal's or the
+    // guest's pages.
+    let mut heap = MallocStatistics::default();
+    // SAFETY: a null zone sums every zone into `heap`.
+    unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut heap) };
+    let footprint = format!("{footprint} MiB (malloc {} MiB)", heap.size_in_use >> 20);
     #[cfg(target_os = "ios")]
     // SAFETY: no arguments; returns 0 outside an app.
-    return format!(", footprint {footprint} MiB, {} MiB left", unsafe { os_proc_available_memory() } >> 20);
+    return format!(", footprint {footprint}, {} MiB left", unsafe { os_proc_available_memory() } >> 20);
     #[cfg(not(target_os = "ios"))]
-    format!(", footprint {footprint} MiB")
+    format!(", footprint {footprint}")
 }
