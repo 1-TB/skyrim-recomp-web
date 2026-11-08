@@ -1706,30 +1706,37 @@ impl EdramCache {
             Some((rt, offset)) => (rt, offset),
             None => (&self.rts[&clear.key], [0, 0]),
         };
-        let color = [Some(RenderPassColorAttachment::load(&rt.attachment))];
+        let [x0, y0, x1, y1] = clear.rect;
+        let [x0, y0, x1, y1] = [x0 + offset[0], y0 + offset[1], x1 + offset[0], y1 + offset[1]].map(|v| v * self.scale);
+        let (x1, y1) = (x1.min(rt.width), y1.min(rt.height));
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        // The pass covers only up to the rectangle's far corner (where passes have a render
+        // area), so its attachments are only loaded and stored that far; from the origin, the
+        // clear draw writes all of that (every channel, sample and stencil bit), so the old
+        // contents aren't loaded at all.
+        let whole = gpu_webgpu::RENDER_AREA && x0 == 0 && y0 == 0;
+        let load = if whole { LoadOp::Clear } else { LoadOp::Load };
+        let mut color_attachment = RenderPassColorAttachment::load(&rt.attachment);
+        color_attachment.load_op = load;
+        let color = [Some(color_attachment)];
         let depth = RenderPassDepthStencilAttachment {
             view: &rt.attachment,
-            depth_load_op: LoadOp::Load,
+            depth_load_op: load,
             depth_store_op: StoreOp::Store,
             depth_clear_value: 0.0,
             depth_read_only: false,
-            stencil_load_op: LoadOp::Load,
+            stencil_load_op: load,
             stencil_store_op: StoreOp::Store,
             stencil_clear_value: 0,
             stencil_read_only: false,
         };
         let mut pass = if clear.key.is_depth {
-            encoder.begin_render_pass("edram clear", &[], Some(&depth))
+            encoder.begin_render_pass_within("edram clear", &[], Some(&depth), (x1, y1))
         } else {
-            encoder.begin_render_pass("edram clear", &color, None)
+            encoder.begin_render_pass_within("edram clear", &color, None, (x1, y1))
         };
-        let [x0, y0, x1, y1] = clear.rect;
-        let [x0, y0, x1, y1] = [x0 + offset[0], y0 + offset[1], x1 + offset[0], y1 + offset[1]].map(|v| v * self.scale);
-        let (x1, y1) = (x1.min(rt.width), y1.min(rt.height));
-        if x0 >= x1 || y0 >= y1 {
-            pass.end();
-            return;
-        }
         pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &params.dynamic_offset());

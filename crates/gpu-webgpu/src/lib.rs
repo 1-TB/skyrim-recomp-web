@@ -128,6 +128,11 @@ pub use ffi::{
 /// Metal backend's compile threads); wgpu-native's compiles before returning.
 pub const BACKGROUND_PIPELINES: bool = cfg!(metal_backend);
 
+/// Whether [`CommandEncoder::begin_render_pass_within`] limits passes to their area (Metal's
+/// render target size): load and store actions, clears included, then affect only that part of
+/// the attachments. WebGPU has no render area: there they affect the whole attachments.
+pub const RENDER_AREA: bool = cfg!(metal_backend);
+
 /// Where the Metal backend writes the MSL it generates for each pipeline stage (`None`: nowhere).
 /// The webgpu.h backend compiles shaders inside its implementation and ignores this.
 pub static MSL_DUMP_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
