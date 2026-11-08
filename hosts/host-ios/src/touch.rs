@@ -93,20 +93,23 @@ impl Rect {
     }
 }
 
-/// The buttons' rectangles in an area of `w`×`h` points.
-fn layout(w: f64, h: f64) -> Vec<Rect> {
+/// The buttons' rectangles in an area of `w`×`h` points, `zoom` times touch.js's size: each
+/// corner's group grows from its corner (sizes and distances from the edges scale together, so
+/// the buttons keep their gaps); Back and Start, near the middle, keep their places.
+fn layout(w: f64, h: f64, zoom: f64) -> Vec<Rect> {
     BUTTONS
         .iter()
         .map(|b| {
-            let size = w * if is_face(b) { 0.07 } else { 0.05 };
+            let size = w * if is_face(b) { 0.07 } else { 0.05 } * zoom;
+            let from_edge = |f: f64| if f < 0.3 { f * zoom } else { f - (zoom - 1.0) * 0.025 };
             let x = match b.x {
-                Left(f) => f * w,
-                Right(f) => w - f * w - size,
+                Left(f) => from_edge(f) * w,
+                Right(f) => w - from_edge(f) * w - size,
                 _ => unreachable!("x is Left or Right"),
             };
             let y = match b.y {
-                Top(f) => f * h,
-                Bottom(f) => h - f * h - size,
+                Top(f) => f * zoom * h,
+                Bottom(f) => h - f * zoom * h - size,
                 _ => unreachable!("y is Top or Bottom"),
             };
             Rect { x, y, w: size, h: size }
@@ -152,6 +155,8 @@ pub struct Touchpad {
     pub state: State,
     /// A button was newly pressed (for haptic feedback).
     pub pressed_new: bool,
+    /// Size of the controls relative to touch.js's (None: 1).
+    zoom: Option<f64>,
 }
 
 impl Touchpad {
@@ -159,8 +164,20 @@ impl Touchpad {
     pub fn resize(&mut self, w: f64, h: f64) {
         if self.size != (w, h) {
             self.size = (w, h);
-            self.rects = layout(w, h);
+            self.rects = layout(w, h, self.zoom());
         }
+    }
+
+    /// Makes the controls `zoom` times touch.js's size.
+    pub fn set_zoom(&mut self, zoom: f64) {
+        if self.zoom() != zoom {
+            self.zoom = Some(zoom);
+            self.rects = layout(self.size.0, self.size.1, zoom);
+        }
+    }
+
+    pub fn zoom(&self) -> f64 {
+        self.zoom.unwrap_or(1.0)
     }
 
     fn hit(&self, x: f64, y: f64) -> Option<usize> {
@@ -315,6 +332,7 @@ pub struct Overlay {
 #[derive(Clone, PartialEq)]
 struct DrawnState {
     size: (f64, f64),
+    zoom: f64,
     pressed: Vec<bool>,
     sticks: [Option<((f64, f64), (f64, f64))>; 2],
     visible: bool,
@@ -366,6 +384,7 @@ impl Overlay {
         }
         let state = DrawnState {
             size: pad.size,
+            zoom: pad.zoom(),
             pressed: pad.pressed.iter().map(|&n| n > 0).collect(),
             sticks: pad.sticks.map(|s| s.map(|(_, at, knob)| (at, knob))),
             visible,
@@ -376,7 +395,7 @@ impl Overlay {
         }
         self.root.setHidden(!visible);
         let (w, _) = state.size;
-        let resized = previous.as_ref().is_none_or(|p| p.size != state.size);
+        let resized = previous.as_ref().is_none_or(|p| (p.size, p.zoom) != (state.size, state.zoom));
         for (i, ((view, label), r)) in self.buttons.iter().zip(&pad.rects).enumerate() {
             if resized {
                 view.setFrame(rect(r.x, r.y, r.w, r.h));
@@ -390,7 +409,7 @@ impl Overlay {
             }
             view.setBackgroundColor(Some(&ui_color(if state.pressed[i] { FILL_ON } else { FILL })));
         }
-        let ring_size = w * RING;
+        let ring_size = w * RING * state.zoom;
         let knob_size = ring_size * KNOB;
         for ((ring, knob), stick) in self.rings.iter().zip(&state.sticks) {
             let Some(((x, y), (dx, dy))) = *stick else {

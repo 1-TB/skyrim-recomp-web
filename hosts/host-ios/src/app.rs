@@ -307,8 +307,9 @@ define_class!(
                     fps.update(kernel.gpu.swap_count());
                 }
                 let in_menu = s.panel.is_some();
+                let touch_on = s.current.is_none_or(|c| c.touch_zoom().is_some());
                 if let Some(overlay) = &mut s.overlay {
-                    overlay.draw(&mut s.touch, !s.pad_connected && !in_menu);
+                    overlay.draw(&mut s.touch, !s.pad_connected && !in_menu && touch_on);
                 }
                 if let Some(gear) = &s.gear {
                     gear.setHidden(s.pad_connected || in_menu);
@@ -385,6 +386,7 @@ fn play(view: &SkyrtView, settings: Settings) {
             s.fps = Some(FpsLabel::new(mtm, view));
         }
         s.current = Some(settings);
+        s.touch.set_zoom(settings.touch_zoom().unwrap_or(1.0));
         s.gear = Some(gear_button(mtm, view));
         Some((s.boot.take()?, s.render_window.take()?))
     })
@@ -442,7 +444,7 @@ enum Phase {
 
 fn touches_changed(view: &SkyrtView, touches: &NSSet<UITouch>, phase: Phase) {
     with_state(|s| {
-        if s.pad_connected {
+        if s.pad_connected || s.current.is_some_and(|c| c.touch_zoom().is_none()) {
             return;
         }
         let origin = s.overlay.as_ref().map_or(CGPoint { x: 0.0, y: 0.0 }, |o| o.area.origin);
@@ -628,6 +630,8 @@ fn apply(view: &SkyrtView, old: Settings, new: Settings) {
     let mtm = view.mtm();
     with_state(|s| {
         s.current = Some(new);
+        s.touch.reset();
+        s.touch.set_zoom(new.touch_zoom().unwrap_or(1.0));
         match (new.show_fps, s.fps.take()) {
             (true, None) => s.fps = Some(FpsLabel::new(mtm, view)),
             (true, Some(fps)) => s.fps = Some(fps),

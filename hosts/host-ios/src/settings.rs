@@ -35,11 +35,13 @@ pub struct Settings {
     /// `--game-aspect`; from the next launch) or how a 16:9 frame does (`--aspect`): fit, fill
     /// or stretch.
     pub aspect: &'static str,
+    /// The on-screen controls: off, or their size (small, normal, large).
+    pub touch: &'static str,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true, aspect: "wide" }
+        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true, aspect: "wide", touch: "normal" }
     }
 }
 
@@ -47,6 +49,7 @@ const SCALES: [u32; 3] = [1, 2, 3];
 const ANISOTROPY: [u16; 4] = [1, 4, 8, 16];
 const FPS_CAPS: [u32; 3] = [30, 60, 120];
 const ASPECTS: [&str; 4] = ["wide", "fit", "fill", "stretch"];
+const TOUCH: [&str; 4] = ["off", "small", "normal", "large"];
 
 impl Settings {
     /// Reads `path` (`key=value` lines); missing or unknown values keep their defaults.
@@ -80,6 +83,11 @@ impl Settings {
                         s.aspect = a;
                     }
                 }
+                "touch" => {
+                    if let Some(t) = TOUCH.iter().find(|t| **t == value) {
+                        s.touch = t;
+                    }
+                }
                 _ => {}
             }
         }
@@ -88,8 +96,15 @@ impl Settings {
 
     pub fn save(&self, path: &Path) {
         let text = format!(
-            "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\nmsaa={}\naspect={}\n",
-            self.resolution_scale, self.anisotropy, self.fps_cap, self.show_fps, self.metalfx, self.msaa, self.aspect
+            "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\nmsaa={}\naspect={}\ntouch={}\n",
+            self.resolution_scale,
+            self.anisotropy,
+            self.fps_cap,
+            self.show_fps,
+            self.metalfx,
+            self.msaa,
+            self.aspect,
+            self.touch
         );
         if let Err(e) = std::fs::write(path, text) {
             log::warn!("saving {}: {e}", path.display());
@@ -124,6 +139,16 @@ impl Settings {
 }
 
 impl Settings {
+    /// Size of the on-screen controls relative to the standard layout (None: off).
+    pub fn touch_zoom(&self) -> Option<f64> {
+        match self.touch {
+            "off" => None,
+            "small" => Some(0.8),
+            "large" => Some(1.2),
+            _ => Some(1.0),
+        }
+    }
+
     /// `--aspect` for these settings: a frame the game draws at the screen's shape fits it.
     pub fn presentation(&self) -> &'static str {
         if self.aspect == "wide" { "fit" } else { self.aspect }
@@ -144,6 +169,7 @@ pub struct Panel {
     upscaling: Retained<UISegmentedControl>,
     msaa: Retained<UISegmentedControl>,
     aspect: Retained<UISegmentedControl>,
+    touch: Retained<UISegmentedControl>,
     show_fps: Retained<UISwitch>,
 }
 
@@ -195,6 +221,11 @@ impl Panel {
             &["Widescreen", "16:9", "Fill (crop)", "Stretch"],
             ASPECTS.iter().position(|&a| a == settings.aspect).unwrap_or(0),
         );
+        let touch = segments(
+            mtm,
+            &["Off", "Small", "Normal", "Large"],
+            TOUCH.iter().position(|&t| t == settings.touch).unwrap_or(2),
+        );
         let show_fps = UISwitch::new(mtm);
         show_fps.setOn(settings.show_fps);
         let control = |c: Retained<UISegmentedControl>| Retained::into_super(Retained::into_super(c));
@@ -205,6 +236,7 @@ impl Panel {
             (label(mtm, "Upscaling", 17.0, 0.9), control(upscaling.clone()), false),
             (label(mtm, "Anti-aliasing", 17.0, 0.9), control(msaa.clone()), false),
             (label(mtm, "Aspect ratio", 17.0, 0.9), control(aspect.clone()), false),
+            (label(mtm, "Touch controls", 17.0, 0.9), control(touch.clone()), false),
             (label(mtm, "Show FPS", 17.0, 0.9), Retained::into_super(Retained::into_super(show_fps.clone())), true),
         ];
         let title = label(mtm, "Settings", 28.0, 1.0);
@@ -242,7 +274,7 @@ impl Panel {
         root.addSubview(&play);
         title.setTextAlignment(NSTextAlignment::Left);
         parent.addSubview(&root);
-        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, msaa, aspect, show_fps }
+        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, msaa, aspect, touch, show_fps }
     }
 
     /// Covers the whole view, with the content laid out in `area` (the safe area).
@@ -280,6 +312,7 @@ impl Panel {
             metalfx: self.upscaling.selectedSegmentIndex() == 1,
             msaa: self.msaa.selectedSegmentIndex() == 1,
             aspect: ASPECTS[pick(&self.aspect).min(ASPECTS.len() - 1)],
+            touch: TOUCH[pick(&self.touch).min(TOUCH.len() - 1)],
         }
     }
 
