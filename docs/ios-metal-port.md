@@ -20,7 +20,9 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
-| Nov 7 | Relaxed shader math | Metal libraries compile with `MTLMathMode::Relaxed` (reassociation and FMA, NaN/Inf honored) instead of safe: Mac 65.6 → 71.5 fps, frames unchanged by eye; to check on the phone (woman by the fence, grass) |
+| Nov 7 | Squares without the zero rule, NaN on the bits | mul/mad/dp3/dp4/muls of an operand with itself skip the SM3 zero-rule select (exact): Mac 71-72 → 73.4 fps. Relaxed math assumes no NaN after all (a Metal kernel's `select(p, 0, p != p)` returns NaN for 0 × inf under relaxed and fast math), so `xe_color_range` tests NaN on the bits |
+| Nov 7 | Background pipelines (stutter) | Walking through Riverwood hitched 35-235 ms per new shader (Metal compiling on the renderer thread). Compiled stages are cached per shader module (pipelines differing in render state shared none: load screen 506 → 10 ms of pipelines), shaders carry only the prelude helpers they use (WGSL 27 → 18 KB, naga parse 1.4 → 1 ms), and on Metal pipelines compile and WGSL parses on worker threads, draws skipped until ready like the web build (`--render-debug wait-pipelines` waits): walk worst frame 235 → 23 ms, first world frame 266 → ~93 ms. Slow frames (≥ 30 ms) are logged with the renderer's work; stall reports show what the command processor waits on |
+| Nov 7 | Relaxed shader math | Metal libraries compile with `MTLMathMode::Relaxed` (reassociation and FMA; it keeps Inf but not NaN, see above) instead of safe: Mac 65.6 → 71.5 fps, frames unchanged by eye; to check on the phone (woman by the fence, grass) |
 | Nov 7 | Vector stores and vslo in one step | The recompiler emits stvlx/stvrx as one translated copy with one dirty mark (they stored a byte at a time, each translated and marked) and vslo as one byte shuffle; the hottest guest function (sub_823BB4D8, ~12% of the title's main thread) takes 55% less time. Mac 64.4 → 65.6 fps |
 | Nov 7 | Renderer CPU trims | The command processor drops register writes of the value already sent and sends one `Arc` per distinct microcode (the renderer knows shaders by pointer instead of hashing them per load); changed float constants are applied walking the mask bits. Renderer-bound benchmark (`--render-debug solid --vblank-hz 1000`): 114.6 → 117.8 fps |
 | Nov 7 | One mirror buffer on Apple GPUs | The guest memory mirror is one 128 MiB buffer on Apple targets (four 32 MiB ones elsewhere), so shader loads skip the switch over buffers: Mac 62.5 → 64.4 fps |
@@ -82,6 +84,16 @@ at ~107 encoder switches per frame. No gain from: plain multiplies instead of SM
 semantics, no depth writes and no discards (+3%), 3 frames in flight, `--no-msaa` +10%. Without
 draws the title runs at the 120 fps cap, so the guest isn't the limit. The command processor's
 4 waits per frame are on a word the title's GPU interrupt callback clears (not on our fences).
+
+Measured on Nov 7 (Mac, ~72 fps, `gpu-time` labels): the main scene is a 1280×720 4× MSAA pass
+(vertex 2.3 ms + fragment 1.9 ms per frame); texture loads 1.4 ms, resolves ~1.6 ms, gaps 3.35 ms
+(~20-30 µs per dependent encoder switch). Trade-offs: single-sampled MSAA surfaces +15% (82
+fps), float32 depth (no per-pixel depth output) +8% (77), both 84; plain multiplies (no SM3 zero
+rule; wrong for 0 × inf) +7% (77). No gain from: passes capped at 64 or 256 draws instead of
+128, hardware half→float in vertex fetch, a fixed-size mirror declaration (no bounds clamps),
+the command processor skipping waits satisfied by deferred fences (its 4 waits per frame are
+for the title's interrupt callback). GPU counters: ALU utilization ~45% but F32 only ~9%, so the
+ALU time is mostly integer/select work; bandwidth ~20%, texture limiters ~11%.
 
 Remaining ideas, largest first: render-to-texture shortcut (a resolve whose destination is
 sampled with the same format becomes a texture copy instead of resolve → guest memory → texture
