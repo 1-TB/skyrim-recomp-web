@@ -138,6 +138,17 @@ pub const RENDER_AREA: bool = cfg!(metal_backend);
 pub static MSL_DUMP_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
 
 /// The GPU implementation in use, e.g. `wgpu-native 29.0.1.1`.
+/// Runs `f` inside an Objective-C autorelease pool (Metal), draining what it autoreleased when
+/// it returns; elsewhere just runs it. Metal hands back command encoders and other objects
+/// autoreleased, and a thread that never drains a pool keeps them all: the renderer thread
+/// grew by ~0.4 MiB/s while the title streamed textures, until its pump ran in one per round.
+pub fn autoreleasepool<R>(f: impl FnOnce() -> R) -> R {
+    #[cfg(metal_backend)]
+    return objc2::rc::autoreleasepool(|_| f());
+    #[cfg(not(metal_backend))]
+    f()
+}
+
 pub fn implementation() -> String {
     #[cfg(metal_backend)]
     {

@@ -280,45 +280,48 @@ fn run(
             std::thread::park_timeout(Duration::from_millis(50));
             continue;
         }
-        instance.process_events();
         let started = std::time::Instant::now();
         let before = handle.completed();
-        renderer.pump(handle, Some(Duration::from_millis(5)), None, |r, size| {
-            let Some((w, h)) = size else { return };
-            if let Some(p) = presentation.as_mut() {
-                let started = std::time::Instant::now();
-                p.present(&r.device, &r.presenter);
-                present_time += started.elapsed();
-            }
-            let now = std::time::Instant::now();
-            if let Some(&last) = presents.last() {
-                let interval = now - last;
-                // Slow, and not merely paced so (the logo videos run at 24 fps).
-                let slow = interval >= SLOW_FRAME && interval > frame_interval * 3 / 2;
-                frame_interval = interval;
-                slow_frame(r, slow.then_some(interval), &mut frame_times, &mut frame_calls, &mut frame_gpu_wait, frame_dumped);
-            }
-            frame_dumped = false;
-            presents.push(now);
-            let Some(dir) = &options.dump_dir else { return };
-            if !dumpable {
-                return;
-            }
-            if !r.presenter.frames.is_multiple_of(every) {
-                return;
-            }
-            let (w, h) = options.dump_size.unwrap_or((w, h));
-            let target = match offscreen.take() {
-                Some(o) if o.width == w && o.height == h => o,
-                _ => Offscreen::new(&r.device, w, h, format),
-            };
-            let path = dir.join(format!("frame_{:06}.png", r.presenter.frames));
-            match dump(&r.device, &r.presenter, &target, &path) {
-                Ok(()) => log::info!("renderer: wrote {}", path.display()),
-                Err(e) => log::error!("renderer: {}: {e}", path.display()),
-            }
-            offscreen = Some(target);
-            frame_dumped = true;
+        // One autorelease pool per round, so Metal's autoreleased objects are freed.
+        gpu_webgpu::autoreleasepool(|| {
+            instance.process_events();
+            renderer.pump(handle, Some(Duration::from_millis(5)), None, |r, size| {
+                let Some((w, h)) = size else { return };
+                if let Some(p) = presentation.as_mut() {
+                    let started = std::time::Instant::now();
+                    p.present(&r.device, &r.presenter);
+                    present_time += started.elapsed();
+                }
+                let now = std::time::Instant::now();
+                if let Some(&last) = presents.last() {
+                    let interval = now - last;
+                    // Slow, and not merely paced so (the logo videos run at 24 fps).
+                    let slow = interval >= SLOW_FRAME && interval > frame_interval * 3 / 2;
+                    frame_interval = interval;
+                    slow_frame(r, slow.then_some(interval), &mut frame_times, &mut frame_calls, &mut frame_gpu_wait, frame_dumped);
+                }
+                frame_dumped = false;
+                presents.push(now);
+                let Some(dir) = &options.dump_dir else { return };
+                if !dumpable {
+                    return;
+                }
+                if !r.presenter.frames.is_multiple_of(every) {
+                    return;
+                }
+                let (w, h) = options.dump_size.unwrap_or((w, h));
+                let target = match offscreen.take() {
+                    Some(o) if o.width == w && o.height == h => o,
+                    _ => Offscreen::new(&r.device, w, h, format),
+                };
+                let path = dir.join(format!("frame_{:06}.png", r.presenter.frames));
+                match dump(&r.device, &r.presenter, &target, &path) {
+                    Ok(()) => log::info!("renderer: wrote {}", path.display()),
+                    Err(e) => log::error!("renderer: {}: {e}", path.display()),
+                }
+                offscreen = Some(target);
+                frame_dumped = true;
+            });
         });
         for e in device.take_errors() {
             log::error!("renderer: GPU error: {e:?}");
