@@ -264,6 +264,12 @@ fn run(
     let mut report_calls = gpu_webgpu::counters::snapshot();
     let mut report_times = renderer.executor.times();
     let mut report_draws = renderer.executor.stats.draws;
+    // Per frame, for the slow-frame log: the renderer's work and GPU waits since the last frame.
+    let mut frame_times = renderer.executor.times();
+    let mut frame_calls = gpu_webgpu::counters::snapshot();
+    let mut frame_gpu_wait = Duration::ZERO;
+    let mut frame_dumped = false;
+    let mut frame_interval = Duration::ZERO;
 
     loop {
         if PAUSED.load(Ordering::Relaxed) {
@@ -281,7 +287,16 @@ fn run(
                 p.present(&r.device, &r.presenter);
                 present_time += started.elapsed();
             }
-            presents.push(std::time::Instant::now());
+            let now = std::time::Instant::now();
+            if let Some(&last) = presents.last() {
+                let interval = now - last;
+                // Slow, and not merely paced so (the logo videos run at 24 fps).
+                let slow = interval >= SLOW_FRAME && interval > frame_interval * 3 / 2;
+                frame_interval = interval;
+                slow_frame(r, slow.then_some(interval), &mut frame_times, &mut frame_calls, &mut frame_gpu_wait, frame_dumped);
+            }
+            frame_dumped = false;
+            presents.push(now);
             let Some(dir) = &options.dump_dir else { return };
             if !dumpable {
                 return;
@@ -299,6 +314,7 @@ fn run(
                 Err(e) => log::error!("renderer: {}: {e}", path.display()),
             }
             offscreen = Some(target);
+            frame_dumped = true;
         });
         for e in device.take_errors() {
             log::error!("renderer: GPU error: {e:?}");
@@ -317,7 +333,9 @@ fn run(
         // Waiting for the GPU (frames in flight, a resolve, uploads): block until it gets
         // somewhere rather than spinning through pump (which kept a core busy reading clocks).
         if renderer.executor.busy() {
+            let started = std::time::Instant::now();
             device.wait_for_gpu_progress();
+            frame_gpu_wait += started.elapsed();
         }
         let window = report_at.elapsed();
         if window >= Duration::from_secs(5) {
@@ -353,6 +371,50 @@ fn run(
             report_at = std::time::Instant::now();
         }
     }
+}
+
+/// Frames shown this long after the previous one (and half again longer than it) are logged with
+/// what the renderer did since.
+const SLOW_FRAME: Duration = Duration::from_millis(30);
+
+/// Logs a slow frame (`slow` is how long it took) with the renderer's work since the previous
+/// frame (stutter: is it the renderer, the GPU, or the title submitting late), and starts the
+/// next frame's tally.
+fn slow_frame(
+    r: &Renderer,
+    slow: Option<Duration>,
+    times: &mut crate::executor::OpTimes,
+    calls: &mut gpu_webgpu::counters::Counters,
+    gpu_wait: &mut Duration,
+    dumped: bool,
+) {
+    let now_times = r.executor.times();
+    let now_calls = gpu_webgpu::counters::snapshot();
+    if let Some(interval) = slow {
+        let ms = |now: Duration, then: Duration| (now - then).as_secs_f64() * 1000.0;
+        let c = now_calls.since(calls);
+        log::info!(
+            "renderer: slow frame {}: {:.1} ms; texture sets {:.1} ms, pipelines {:.1} ms ({} created), shaders {:.1} ms, \
+             resolves {:.1} ms, submits {:.1} ms, waiting for the GPU {:.1} ms; {} draws, {} KiB written, {} textures \
+             created{}",
+            r.presenter.frames,
+            interval.as_secs_f64() * 1000.0,
+            ms(now_times.texture_sets, times.texture_sets),
+            ms(now_times.pipelines, times.pipelines),
+            c.pipelines,
+            ms(now_times.shaders, times.shaders),
+            ms(now_times.resolves, times.resolves),
+            ms(now_times.submits, times.submits),
+            gpu_wait.as_secs_f64() * 1000.0,
+            c.draws,
+            c.write_buffer_bytes / 1024,
+            c.textures,
+            if dumped { "; the previous frame was dumped" } else { "" },
+        );
+    }
+    *times = now_times;
+    *calls = now_calls;
+    *gpu_wait = Duration::ZERO;
 }
 
 /// Renders the current front buffer into `target`, reads it back and writes a PNG.

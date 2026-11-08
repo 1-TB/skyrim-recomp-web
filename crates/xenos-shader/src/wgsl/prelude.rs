@@ -1,4 +1,5 @@
-//! WGSL helper functions included in every translated shader (unused ones cost nothing).
+//! WGSL helper functions for translated shaders; each shader gets the ones it uses
+//! ([`used_prelude`]).
 
 /// (component count, fixed-point component widths: 0 = float, compressed or unknown) per
 /// `xenos::TextureFormat` 0..63.
@@ -458,3 +459,88 @@ fn xe_compare(function: u32, a: f32, b: f32) -> bool {
     }
 }
 "#;
+
+/// The items (functions and constants) of [`PRELUDE`] and the texture format table that `code`
+/// uses, directly or through other items it keeps, in prelude order. Parsing the whole prelude
+/// was most of a shader module's creation (naga's WGSL front end, ~1.4 ms per shader natively).
+pub(crate) fn used_prelude(code: &str) -> String {
+    let table = texture_format_table();
+    let items: Vec<(&str, String)> = prelude_items(PRELUDE).chain([("xe_texture_formats", table)]).collect();
+    let mut kept = vec![false; items.len()];
+    let mut pending: Vec<usize> = (0..items.len()).filter(|&i| mentions(code, items[i].0)).collect();
+    while let Some(i) = pending.pop() {
+        if std::mem::replace(&mut kept[i], true) {
+            continue;
+        }
+        pending.extend((0..items.len()).filter(|&j| !kept[j] && j != i && mentions(&items[i].1, items[j].0)));
+    }
+    let mut out = String::new();
+    for (i, (_, text)) in items.iter().enumerate() {
+        if kept[i] {
+            out.push_str(text);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The top-level `fn` and `const` items of `prelude` as (name, text), each with the comment lines
+/// (at the start of a line) right before it.
+fn prelude_items(prelude: &str) -> impl Iterator<Item = (&str, String)> {
+    let mut items: Vec<(&str, String)> = Vec::new();
+    let mut comments = String::new();
+    for line in prelude.lines() {
+        if let Some(rest) = line.strip_prefix("fn ").or_else(|| line.strip_prefix("const ")) {
+            let name = &rest[..rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len())];
+            items.push((name, std::mem::take(&mut comments)));
+        } else if line.starts_with("//") {
+            comments.push_str(line);
+            comments.push('\n');
+            continue;
+        } else if !line.trim().is_empty()
+            && let Some((_, text)) = items.last_mut()
+        {
+            // A comment inside an item stays there.
+            text.push_str(&std::mem::take(&mut comments));
+        }
+        if let Some((_, text)) = items.last_mut() {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    items.into_iter()
+}
+
+/// Whether identifier `name` occurs in `text` as a whole word.
+fn mentions(text: &str, name: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    text.match_indices(name).any(|(at, _)| !text[..at].ends_with(ident) && !text[at + name.len()..].starts_with(ident))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prelude_items_cover_the_prelude() {
+        let items: Vec<_> = prelude_items(PRELUDE).collect();
+        let joined: String = items.iter().map(|(_, t)| t.as_str()).collect();
+        let strip = |s: &str| s.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join("\n");
+        assert_eq!(strip(&joined), strip(PRELUDE), "every non-blank prelude line is in an item");
+        assert!(items.iter().any(|(n, _)| *n == "xe_mul") && items.iter().any(|(n, _)| *n == "XE_FLT_MAX"));
+    }
+
+    #[test]
+    fn used_prelude_follows_references() {
+        let used = used_prelude("fn main() { let x = xe_dp4(a, b); }");
+        assert!(used.contains("fn xe_dp4("));
+        // Everything a kept item calls is kept too.
+        for (name, _) in prelude_items(PRELUDE) {
+            if mentions(&used, name) {
+                assert!(used.contains(&format!("fn {name}(")) || used.contains(&format!("const {name}")), "{name}");
+            }
+        }
+        assert!(!used.contains("fn xe_cube("));
+        assert!(!mentions("xe_dp4x", "xe_dp4") && mentions("(xe_dp4)", "xe_dp4"));
+    }
+}

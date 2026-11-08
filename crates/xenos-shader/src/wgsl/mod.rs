@@ -776,9 +776,8 @@ impl<'a> Generator<'a> {
         m.push_str("// Translated from Xenos microcode by xenos-shader.\n");
         m.push_str("diagnostic(off, derivative_uniformity);\n\n");
         m.push_str(&bindings::common_declarations(self.stage));
-        m.push_str(prelude::PRELUDE);
-        m.push_str(&prelude::texture_format_table());
-        m.push('\n');
+        // The prelude's items this shader uses go here once the rest is written.
+        let prelude_at = m.len();
 
         for b in &self.texture_bindings {
             let (kind, name) = match b.dimension {
@@ -858,6 +857,8 @@ var<private> xe_out_depth: f32;
                 ("xe_ps_main", 0, inputs)
             }
         };
+        let prelude = prelude::used_prelude(&m);
+        m.insert_str(prelude_at, &prelude);
         Output {
             wgsl: m,
             entry_point,

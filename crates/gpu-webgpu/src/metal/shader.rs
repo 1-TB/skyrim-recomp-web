@@ -26,6 +26,21 @@ pub(crate) struct ShaderInner {
     label: String,
     /// The parsed module, or the parse/validation error.
     module: std::result::Result<(naga::Module, naga::valid::ModuleInfo), String>,
+    /// Stages compiled from this module, by everything besides the module that the MSL
+    /// depends on: pipelines differing only in render state (most of a title's) share their
+    /// shaders, and compiling MSL is most of a pipeline's cost (~20 ms per stage).
+    stages: std::cell::RefCell<std::collections::HashMap<StageKey, CompiledStage>>,
+}
+
+/// What a stage's MSL depends on besides its module (see [`StageRequest`]).
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct StageKey {
+    entry: String,
+    constants: Vec<(String, u64)>,
+    naga_stage: naga::ShaderStage,
+    point: bool,
+    sample_mask: u32,
+    vertex_buffers: usize,
 }
 
 #[derive(Clone)]
@@ -52,7 +67,7 @@ impl Device {
         if let Err(e) = &module {
             self.shared.report(ErrorType::Validation, format!("shader module {label:?}: {e}"));
         }
-        ShaderModule { inner: Rc::new(ShaderInner { label: label.to_string(), module }) }
+        ShaderModule { inner: Rc::new(ShaderInner { label: label.to_string(), module, stages: Default::default() }) }
     }
 }
 
@@ -78,6 +93,7 @@ pub(crate) struct StageBindings {
     pub(crate) workgroup_memory: Vec<usize>,
 }
 
+#[derive(Clone)]
 struct CompiledStage {
     function: Id<dyn MTLFunction>,
     bindings: StageBindings,
@@ -294,7 +310,26 @@ struct StageRequest<'a> {
     label: &'a str,
 }
 
+/// [`compile_stage_uncached`] once per module and [`StageKey`].
 fn compile_stage(shared: &Shared, req: &StageRequest<'_>) -> std::result::Result<CompiledStage, String> {
+    let key = StageKey {
+        entry: req.stage.entry_point.to_string(),
+        constants: req.stage.constants.iter().map(|&(k, v)| (k.to_string(), v.to_bits())).collect(),
+        naga_stage: req.naga_stage,
+        point: req.topology == MTLPrimitiveTopologyClass::Point,
+        sample_mask: req.sample_mask,
+        vertex_buffers: req.vertex_buffers.len(),
+    };
+    let shader = &req.stage.module.inner;
+    if let Some(stage) = shader.stages.borrow().get(&key) {
+        return Ok(stage.clone());
+    }
+    let stage = compile_stage_uncached(shared, req)?;
+    shader.stages.borrow_mut().insert(key, stage.clone());
+    Ok(stage)
+}
+
+fn compile_stage_uncached(shared: &Shared, req: &StageRequest<'_>) -> std::result::Result<CompiledStage, String> {
     let shader = &req.stage.module.inner;
     let (module, info) = shader.module.as_ref().map_err(|e| format!("invalid shader module {:?}: {e}", shader.label))?;
     let entry = if req.stage.entry_point.is_empty() {

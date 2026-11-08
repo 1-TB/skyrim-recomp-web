@@ -430,6 +430,7 @@ fn wait_for_title(kernel: &'static Kernel, limit: Option<Duration>) -> Option<u3
             reported = true;
             log::warn!("no frame presented for {:?} (after swap #{swaps}); blocked threads:", last_change.elapsed());
             kernel.log_waiters();
+            kernel.log_command_processor(kernel.rt.mem());
         }
     }
 }

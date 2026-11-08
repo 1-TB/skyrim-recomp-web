@@ -261,6 +261,10 @@ pub struct Gpu {
     progress_waiters: AtomicU32,
     progress_lock: Mutex<()>,
     progress_changed: Condvar,
+    /// For the stall report ([`Gpu::log_command_processor`]): the ring position the command
+    /// processor has read to, and what it is blocked on, since when.
+    cp_read_index: AtomicU32,
+    cp_blocked: Mutex<Option<(Instant, String)>>,
 }
 
 impl Default for Gpu {
@@ -286,6 +290,8 @@ impl Gpu {
             progress_waiters: AtomicU32::new(0),
             progress_lock: Mutex::new(()),
             progress_changed: Condvar::new(),
+            cp_read_index: AtomicU32::new(0),
+            cp_blocked: Mutex::new(None),
         }
     }
 
@@ -386,6 +392,20 @@ impl Kernel {
         self.gpu.write_register(mem, reg::CP_RB_WPTR, 0);
         log::info!("GPU: primary ring buffer at {base:#010X}, {size_bytes:#X} bytes");
         self.gpu.command_processor.call_once(|| self.spawn_kernel_thread("gpu-cp", command_processor_main));
+    }
+
+    /// Logs where the command processor is (for a title that stopped presenting): how far it
+    /// has read the ring, where the title has written to, and what it is blocked on.
+    pub fn log_command_processor(&self, mem: &GuestMemory) {
+        let blocked = match &*self.gpu.cp_blocked.lock().unwrap() {
+            Some((since, what)) => format!("blocked for {:?} on {what}", since.elapsed()),
+            None => "not blocked".into(),
+        };
+        log::info!(
+            "command processor: read to {:#X}, CP_RB_WPTR {:#X}; {blocked}",
+            self.gpu.cp_read_index.load(Ordering::Relaxed),
+            self.gpu.read_register(mem, reg::CP_RB_WPTR),
+        );
     }
 
     /// VdEnableRingBufferRPtrWriteBack: `ptr` is physical, like the ring's.
@@ -563,6 +583,7 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
                 reader.skip(reader.remaining);
             }
             cp.run_deferred(false);
+            k.gpu.cp_read_index.store(reader.pos, Ordering::Relaxed);
             if let Some(a) = writeback {
                 mem.write_u32(a, reader.pos);
                 k.gpu.note_progress();
@@ -715,11 +736,19 @@ impl CommandProcessor<'_> {
     }
 
     /// Lets the backend catch up before an effect the CPU can observe.
+    /// Runs `f`, which blocks, noted as blocked on `what` for the stall report.
+    fn blocked<R>(&self, what: impl FnOnce() -> String, f: impl FnOnce() -> R) -> R {
+        *self.k.gpu.cp_blocked.lock().unwrap() = Some((Instant::now(), what()));
+        let r = f();
+        *self.k.gpu.cp_blocked.lock().unwrap() = None;
+        r
+    }
+
     fn sync(&mut self, opcode: u32) {
         self.flush_registers();
-        if let Some(b) = &self.backend {
+        if let Some(b) = self.backend.clone() {
             let started = Instant::now();
-            b.wait_idle();
+            self.blocked(|| format!("the renderer going idle (opcode {opcode:#04X})"), || b.wait_idle());
             self.syncs[opcode as usize & 0x7F] += 1;
             self.sync_wait += started.elapsed();
         }
@@ -756,7 +785,7 @@ impl CommandProcessor<'_> {
                     return;
                 }
                 let started = Instant::now();
-                b.wait_for(seq);
+                self.blocked(|| format!("the renderer reaching {seq} for {action:?}"), || b.wait_for(seq));
                 self.sync_wait += started.elapsed();
             }
             self.deferred.pop_front();
@@ -771,7 +800,7 @@ impl CommandProcessor<'_> {
             && b.completed() < seq
         {
             let started = Instant::now();
-            b.wait_for(seq);
+            self.blocked(|| format!("the renderer reaching {seq} for {action:?} (WAIT_REG_MEM)"), || b.wait_for(seq));
             self.syncs[pm4::WAIT_REG_MEM as usize] += 1;
             self.sync_wait += started.elapsed();
         }
@@ -1052,7 +1081,17 @@ impl CommandProcessor<'_> {
                     }
                     if !self.reg_mem_matches(info, addr, reference, mask) {
                         self.sync(pm4::WAIT_REG_MEM);
-                        self.wait_reg_mem(info, addr, reference, mask, wait);
+                        self.blocked(
+                            || {
+                                let value = if info & 0x10 != 0 { self.load(addr) } else { self.read_register(addr) };
+                                format!(
+                                    "WAIT_REG_MEM on {} {addr:#010X} (value {value:#X} & {mask:#X}, ref {reference:#X}, op {})",
+                                    if info & 0x10 != 0 { "memory" } else { "register" },
+                                    info & 7
+                                )
+                            },
+                            || self.wait_reg_mem(info, addr, reference, mask, wait),
+                        );
                     }
                 }
             }
