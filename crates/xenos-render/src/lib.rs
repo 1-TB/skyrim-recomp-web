@@ -91,6 +91,16 @@ pub fn set_min_anisotropy(n: u16) {
 
 pub use present::{Aspect, set_aspect, set_metalfx};
 
+/// Set by [`reconfigure`], taken by the renderer at its next frame boundary.
+pub(crate) static RECONFIGURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Applies [`set_resolution_scale`], [`set_single_sample`] and [`set_min_anisotropy`] made
+/// after the renderer started, at its next frame (`--gpu d3d`; with the EDRAM renderer they
+/// wait for the next start). The surfaces are made again then, so that frame may flash.
+pub fn reconfigure() {
+    RECONFIGURE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Guest physical memory, shared with the emulated CPU.
 pub trait PhysicalMemory: Send + Sync {
     /// Copies `out.len()` bytes starting at physical address `addr`. Unmapped bytes read as 0.

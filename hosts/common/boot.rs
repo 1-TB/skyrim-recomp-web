@@ -32,6 +32,8 @@ options:
   --tap BUTTON@SECONDS     press a port-1 button at that time after boot (held for 200 ms
                            and two frames), e.g. START@20
                            (A B X Y START BACK LB RB LS RS UP DOWN LEFT RIGHT; repeatable)
+  --rescale-at SECONDS:N   (testing) change the resolution scale to N while running, SECONDS
+                           after start (repeatable)
   --hold CONTROL[=VALUE]@START+DURATION
                            hold a port-1 control from START for DURATION seconds: a button,
                            LS=X,Y or RS=X,Y (sticks, -1..1, up positive) or LT=V / RT=V
@@ -147,6 +149,21 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             }
             "--tap" => o.taps.push(parse_tap(&value()?)?),
             "--hold" => o.holds.push(parse_hold(&value()?)?),
+            "--rescale-at" => {
+                let v = value()?;
+                let (at, scale) = v.split_once(':').ok_or(format!("--rescale-at {v}: not SECONDS:SCALE"))?;
+                let at: f64 = at.parse().map_err(|e| format!("--rescale-at {v}: {e}"))?;
+                let scale: u32 = scale.parse().map_err(|e| format!("--rescale-at {v}: {e}"))?;
+                if !(1..=3).contains(&scale) {
+                    return Err(format!("--rescale-at {v}: scale not 1, 2 or 3"));
+                }
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs_f64(at));
+                    log::info!("--rescale-at: resolution scale {scale}");
+                    let _ = xenos_render::set_resolution_scale(scale);
+                    xenos_render::reconfigure();
+                });
+            }
             "--render-debug" => xenos_render::debug::enable(&value()?)?,
             "--gpu-sync-draws" => kernel_hle::gpu::SYNC_DRAWS.store(true, std::sync::atomic::Ordering::Relaxed),
             "--gpu-sync" => kernel_hle::gpu::SYNC_EFFECTS.store(kernel_hle::gpu::SYNC_FORCED_ON, std::sync::atomic::Ordering::Relaxed),

@@ -979,6 +979,12 @@ impl TextureCache {
 
     /// Drops every texture and sampler (e.g. after the device was lost and recreated, together
     /// with a new cache) and forgets failures.
+    /// Forgets the samplers made so far (made again on next use, e.g. after
+    /// [`set_min_anisotropy`]); bind groups holding them keep them.
+    pub fn clear_samplers(&mut self) {
+        self.samplers.clear();
+    }
+
     pub fn clear(&mut self) {
         self.textures.clear();
         self.retired.clear();

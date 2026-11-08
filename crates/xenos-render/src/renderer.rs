@@ -264,6 +264,11 @@ impl Renderer {
                     let mosaic = d3d.borrow_mut().execute(&self.device, cmd);
                     if present {
                         self.mosaic = mosaic;
+                        // Settings changed while running take effect between frames.
+                        if crate::RECONFIGURE.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                            d3d.borrow_mut().reconfigure(&self.device);
+                            self.executor.reconfigured();
+                        }
                     }
                 }
             }

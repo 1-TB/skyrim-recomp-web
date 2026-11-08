@@ -247,6 +247,32 @@ impl D3dRenderer {
         }
     }
 
+    /// Settings changed ([`crate::reconfigure`]): every surface is made again at the current
+    /// resolution scale and sample count (its contents are lost; the next frame draws them
+    /// again), and the EDRAM shaders for the scale. Called between frames.
+    pub(crate) fn reconfigure(&mut self, device: &Device) {
+        self.scale = crate::RESOLUTION_SCALE.load(std::sync::atomic::Ordering::Relaxed).clamp(1, 3);
+        self.edram = None;
+        let surfaces: Vec<Surface> = self
+            .surfaces
+            .iter()
+            .map(|(&(address, depth), h)| Surface {
+                address,
+                header: d3d_hle::args::SurfaceHeader { address, words: h.header },
+                depth,
+            })
+            .collect();
+        for s in &surfaces {
+            if let Some(h) = self.surfaces.remove(&(s.address, s.depth)) {
+                self.release(h.texture_key);
+            }
+        }
+        for s in &surfaces {
+            self.surface(device, s);
+        }
+        log::info!("d3d renderer: {} surfaces made again at scale {}", surfaces.len(), self.scale);
+    }
+
     /// The resolve and transfer shaders, built for the resolution scale.
     fn edram_cache(&self, device: &Device) -> xenos_edram::EdramCache {
         let options = xenos_edram::EdramOptions { resolution_scale: self.scale, ..Default::default() };

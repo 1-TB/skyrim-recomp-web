@@ -1035,6 +1035,15 @@ impl Executor {
         self.constant_cache = ConstantCache { scratch, values, ..Default::default() };
     }
 
+    /// Settings changed while running ([`crate::reconfigure`]): draws are scaled by the
+    /// targets' resolution scale from now on, and samplers are made again (anisotropy).
+    pub fn reconfigured(&mut self) {
+        self.encode_pass();
+        self.resolution_scale = self.targets.resolution_scale().max(1);
+        self.textures.clear_samplers();
+        self.texture_sets.clear();
+    }
+
     /// Ends the render pass being recorded: the next draw starts a new one (with the render
     /// targets then current, `--gpu d3d`).
     pub fn end_pass(&mut self) {
