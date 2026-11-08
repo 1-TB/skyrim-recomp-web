@@ -731,7 +731,9 @@ impl CommandProcessor<'_> {
         if let Some(b) = &self.backend
             && !self.pending.is_empty()
         {
-            b.registers(std::mem::take(&mut self.pending));
+            // The next batch is about as long: grown once, not from empty every time.
+            let capacity = self.pending.len();
+            b.registers(std::mem::replace(&mut self.pending, Vec::with_capacity(capacity)));
         }
     }
 
@@ -954,10 +956,13 @@ impl CommandProcessor<'_> {
                     return self.overflow(start, packet, count, r.remaining);
                 }
                 let base = packet & 0x7FFF;
-                let one_register = packet & 0x8000 != 0;
-                for i in 0..count {
-                    let v = r.read(self.mem);
-                    self.write_register(if one_register { base } else { base + i }, v);
+                if packet & 0x8000 != 0 {
+                    for _ in 0..count {
+                        let v = r.read(self.mem);
+                        self.write_register(base, v);
+                    }
+                } else {
+                    self.write_run(r, base, count);
                 }
                 true
             }
@@ -1173,10 +1178,7 @@ impl CommandProcessor<'_> {
                     r.skip(count - 1);
                     return true;
                 };
-                for i in 0..count - 1 {
-                    let v = r.read(mem);
-                    self.write_register(base + index + i, v);
-                }
+                self.write_run(r, base + index, count - 1);
             }
             pm4::LOAD_ALU_CONSTANT => {
                 let (address, offset_type, size) = (r.read(mem) & 0x3FFF_FFFF, r.read(mem), r.read(mem) & 0xFFF);
@@ -1381,7 +1383,38 @@ impl CommandProcessor<'_> {
 
     /// Register write from the command stream, with the side effects of the
     /// registers that have them.
+    /// Writes `count` registers from `first` on with the next dwords of `r`: like
+    /// [`CommandProcessor::write_register`] for each, but with the check for unchanged constants
+    /// made in the loop (a call per register cost most of the command processor's time).
+    fn write_run(&mut self, r: &mut Reader, first: u32, count: u32) {
+        let skip_unchanged = self.backend.is_some()
+            && !self.d3d_peek
+            && self.d3d_marker.is_none()
+            && crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3dVerify;
+        for i in 0..count {
+            let v = r.read(self.mem);
+            let index = first + i;
+            if skip_unchanged && index >= MMIO_REGISTERS && self.sent.get(index as usize) == Some(&v) {
+                continue;
+            }
+            self.write_register(index, v);
+        }
+    }
+
     fn write_register(&mut self, index: u32, value: u32) {
+        // Titles rewrite their shader constants before every draw (~100k register writes per
+        // frame in Riverwood), mostly with the values they have: a constant (at and above
+        // MMIO_REGISTERS, which only this path writes) equal to the value sent last is already in
+        // the register file and the renderer's, so nothing more is done for it.
+        if index >= MMIO_REGISTERS
+            && self.backend.is_some()
+            && !self.d3d_peek
+            && self.d3d_marker.is_none()
+            && self.sent.get(index as usize) == Some(&value)
+            && crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3dVerify
+        {
+            return;
+        }
         if let Some(mask) = self.d3d_predicated
             && matches!(index, reg::PA_SC_WINDOW_SCISSOR_TL | reg::PA_SC_WINDOW_SCISSOR_BR)
         {
