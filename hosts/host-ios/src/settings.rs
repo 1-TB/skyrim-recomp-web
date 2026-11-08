@@ -161,7 +161,7 @@ impl Panel {
         let root = UIView::new(mtm);
         root.setBackgroundColor(Some(&UIColor::colorWithWhite_alpha(0.08, 0.96)));
         let index = |list: &[u32], v: u32| list.iter().position(|&x| x == v).unwrap_or(0);
-        let scale = segments(mtm, &["1×", "2× supersampled", "3× supersampled"], index(&SCALES, settings.resolution_scale));
+        let scale = segments(mtm, &["720p", "1440p (2×)", "2160p (3×)"], index(&SCALES, settings.resolution_scale));
         let anisotropy = segments(
             mtm,
             &["Game default", "4×", "8×", "16×"],
@@ -190,8 +190,8 @@ impl Panel {
         let title = label(mtm, "Settings", 28.0, 1.0);
         let note = label(
             mtm,
-            "Supersampling draws at 2× or 3× and averages down to the game's 720p: smoother edges at a \
-             large cost in frame rate. Fill zooms to the screen's shape, cropping the top and bottom \
+            "Higher resolutions are sharper but cost frame rate (the GPU draws 4 or 9 times the \
+             pixels). Fill zooms to the screen's shape, cropping the top and bottom \
              (and some of the HUD). Close the app to change these again; args.txt in Documents still \
              overrides them.",
             13.0,

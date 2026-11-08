@@ -82,6 +82,8 @@ struct SharedSource<'a> {
     /// The batch being recorded: texture loads are recorded after what it has so far (the
     /// pass being recorded is encoded later, after them).
     encoder: &'a mut Option<CommandEncoder>,
+    /// Where full-resolution copies of resolves are kept.
+    targets: &'a mut dyn RenderTargetCache,
 }
 
 impl GpuSource for SharedSource<'_> {
@@ -115,6 +117,22 @@ impl GpuSource for SharedSource<'_> {
 
     fn batched(&self) -> bool {
         true
+    }
+
+    fn scaled(&mut self, fetch: &xenos_texture::TextureFetchConstant) -> Option<xenos_texture_cache::ScaledSource> {
+        let info = fetch.format.base_format().info();
+        if info.block_width != 1 || info.block_height != 1 {
+            return None;
+        }
+        let s = self.targets.scaled_resolve(
+            (fetch.base_page << 12) & 0x1FFF_FFFF,
+            fetch.pitch_div_32 * 32,
+            fetch.width,
+            fetch.height,
+            info.bytes_per_block(),
+            fetch.endianness as u32,
+        )?;
+        Some(xenos_texture_cache::ScaledSource { buffer: s.buffer, scale: s.scale, pitch: s.pitch })
     }
 }
 
@@ -810,6 +828,7 @@ impl Executor {
             shared: &mut self.shared,
             memory: &*self.memory,
             encoder: &mut self.encoder,
+            targets: &mut *self.targets,
         };
         let bound = self.textures.bind_with(&self.device, &texture_memory, &constants, &binding, Some(&mut source));
         self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
@@ -822,11 +841,13 @@ impl Executor {
         if bound.fallback {
             return None;
         }
+        let (width, height) =
+            bound.texture.and_then(|(key, _)| self.textures.host_size(&key)).unwrap_or((fetch.width, fetch.height));
         Some(FrontBuffer {
             view: bound.view,
             filterable: bound.filterable,
-            width: fetch.width,
-            height: fetch.height,
+            width,
+            height,
             swizzle,
         })
     }
@@ -2219,6 +2240,7 @@ impl Executor {
                     shared: &mut self.shared,
                     memory: &*self.memory,
                     encoder: &mut self.encoder,
+                    targets: &mut *self.targets,
                 };
                 let bound = self.textures.bind_with(&self.device, &texture_memory, &fetch, binding, Some(&mut source));
                 self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;

@@ -42,6 +42,80 @@ pub trait GpuSource {
     /// `TextureCache::flush_loads` before submitting it: the loads' parameters are uploaded
     /// together then.
     fn batched(&self) -> bool;
+    /// A full-resolution copy of the resolves holding `fetch`'s base level (see
+    /// `xenos_edram::ScaledResolve`), when rendering is scaled up: textures of resolve output
+    /// are loaded from it at that size instead. Only asked when [`GpuSource::covers`] the
+    /// texture.
+    fn scaled(&mut self, _fetch: &TextureFetchConstant) -> Option<ScaledSource> {
+        None
+    }
+}
+
+/// A full-resolution copy of a texture's data: its texels `scale` times along each axis,
+/// untiled in rows of `pitch` texels from the start of `buffer`, in the fetch constant's
+/// format without its byte swap.
+pub struct ScaledSource {
+    pub buffer: Buffer,
+    pub scale: u32,
+    pub pitch: u32,
+}
+
+/// Physical address the scaled copy is loaded as being at (fetch constants need a base page).
+const SCALED_BASE: u32 = 0x1000;
+
+impl ScaledSource {
+    /// The fetch constant describing the copy as a texture at [`SCALED_BASE`].
+    pub(crate) fn fetch(&self, fetch: &TextureFetchConstant) -> TextureFetchConstant {
+        let mut f = fetch.clone();
+        f.width = fetch.width * self.scale;
+        f.height = fetch.height * self.scale;
+        f.pitch_div_32 = self.pitch / 32;
+        f.tiled = false;
+        f.endianness = Endian::None;
+        f.base_page = SCALED_BASE >> 12;
+        f.mip_page = 0;
+        f.mip_min_level = 0;
+        f.mip_max_level = 0;
+        f.packed_mips = false;
+        f
+    }
+}
+
+/// The scaled copy as the source of a load: every address the load reads is in it.
+pub(crate) struct ScaledData<'a> {
+    pub inner: &'a mut dyn GpuSource,
+    pub buffer: Buffer,
+}
+
+impl GpuSource for ScaledData<'_> {
+    fn covers(&mut self, _ranges: &[GuestRange]) -> bool {
+        true
+    }
+
+    fn sync(&mut self, _ranges: &[GuestRange]) -> bool {
+        true
+    }
+
+    fn gather(&self, _encoder: &mut CommandEncoder, _address: u32, _len: u32, _dst: &Buffer, _dst_offset: u64) -> bool {
+        false
+    }
+
+    fn locate(&self, address: u32, len: u32) -> Option<(Buffer, u64)> {
+        let offset = u64::from(address.checked_sub(SCALED_BASE)?);
+        (offset + u64::from(len) <= self.buffer.size()).then(|| (self.buffer.clone(), offset))
+    }
+
+    fn take_encoder(&mut self, device: &Device) -> CommandEncoder {
+        self.inner.take_encoder(device)
+    }
+
+    fn return_encoder(&mut self, device: &Device, encoder: CommandEncoder) {
+        self.inner.return_encoder(device, encoder);
+    }
+
+    fn batched(&self) -> bool {
+        self.inner.batched()
+    }
 }
 
 /// Row alignment of `copy_buffer_to_texture`.

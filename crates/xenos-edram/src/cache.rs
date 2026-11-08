@@ -22,6 +22,7 @@ use crate::format::{
     ColorTargetInfo, DEPTH_FORMAT_CODE_BASE, DepthTargetInfo, EdramOptions, host_color_format, host_depth_format,
 };
 use crate::ownership::{OwnedRange, OwnershipMap};
+use crate::scaled::{DestKey, ScaledCopies, ScaledResolve};
 use crate::shaders::{self, STORE_DST_BUFFERS, SrcKind};
 use crate::{EdramError, GuestMemoryAccess};
 
@@ -632,6 +633,11 @@ pub struct EdramCache {
     /// Stencil transfer scratch targets by (width, height, samples).
     stencil_scratch: HashMap<(u32, u32, u32), StencilScratch>,
     pipelines: Pipelines,
+    /// Pipelines at scale 1, for the full-resolution copies of resolves (`scaled`): a host
+    /// pixel each, not the average of a guest pixel's.
+    pipelines_1x: Pipelines,
+    /// Full-resolution copies of resolves (at resolution scales above 1).
+    scaled: ScaledCopies,
     params: RefCell<ParamsArena>,
     groups: RefCell<GroupCache>,
 }
@@ -718,6 +724,8 @@ impl EdramCache {
             readback_pool: Vec::new(),
             stencil_scratch: HashMap::new(),
             pipelines: Pipelines { scale, ..Default::default() },
+            pipelines_1x: Pipelines { scale: 1, ..Default::default() },
+            scaled: ScaledCopies::default(),
             params: RefCell::new(ParamsArena {
                 buffer: device.create_buffer(&BufferDescriptor {
                     label: "edram params",
@@ -769,6 +777,49 @@ impl EdramCache {
     /// [`RT_MAX_IDLE_TIME`] (their contents are unreachable; a later use starts a new one).
     pub fn end_frame(&mut self) {
         self.trim_unowned(RT_MAX_IDLE_FRAMES, RT_MAX_IDLE_TIME);
+    }
+
+    /// Frame boundary for caches drawing to their own surfaces (`resolve_external` only), with
+    /// everything recorded submitted: frees the buffers done with.
+    pub fn end_external_frame(&mut self) {
+        self.scaled.end_frame(&mut self.retired_buffers);
+        for buffer in self.retired_buffers.drain(..) {
+            buffer.destroy();
+        }
+    }
+
+    /// The full-resolution copy of resolves holding a texture's base level: the 2D tiled
+    /// texture of `width` x `height` pixels at physical address `base`, with rows of `pitch`
+    /// pixels, `bytes_per_element` bytes each and the fetch constant's byte swap `endian`
+    /// (`xenos_texture::Endian`). `None` at resolution scale 1, or if resolves haven't written
+    /// all of it since anything else did. The caller checks that the GPU copy of guest memory
+    /// still holds resolve output there.
+    pub fn scaled_resolve(
+        &mut self,
+        base: u32,
+        pitch: u32,
+        width: u32,
+        height: u32,
+        bytes_per_element: u32,
+        endian: u32,
+    ) -> Option<ScaledResolve> {
+        if self.scale == 1 {
+            return None;
+        }
+        // Copies are kept by their destination's height, which a texture may be shorter than.
+        let scale = self.scale;
+        self.scaled.find_any_height(
+            |k| k.base == base && k.pitch == pitch && k.bytes_per_element == bytes_per_element && k.endian == endian,
+            width,
+            height,
+            scale,
+        )
+    }
+
+    /// Guest memory `[address, address + len)` changed other than by a resolve through this
+    /// cache: full-resolution copies of it are out of date.
+    pub fn forget_scaled(&mut self, address: u32, len: u32) {
+        self.scaled.forget((address & 0x1FFF_FFFF, len), None, &mut self.retired_buffers);
     }
 
     fn trim_unowned(&mut self, max_idle_frames: u32, max_idle_time: std::time::Duration) {
@@ -1774,10 +1825,7 @@ impl EdramCache {
             | ((source.format_is_64bpp as u32) << 1)
             | ((dest_info.copy_dest_swap as u32) << 2)
             | ((source.decode_pwl_gamma as u32) << 3);
-        let params = uniform(
-            &self.params,
-            device,
-            &[
+        let resolve_words = [
                 info.rect.width,
                 info.rect.height,
                 info.edram_offset_x_div_8 << 3,
@@ -1802,24 +1850,24 @@ impl EdramCache {
                 0,
                 0,
                 0,
-            ],
-        );
+        ];
+        let params = uniform(&self.params, device, &resolve_words);
+        // In the order of shaders::RESOLVE_SPECIALIZED.
+        let spec = [
+            flags,
+            source.format,
+            plan.mode,
+            info.copy_sample_select.raw(),
+            info.dest_format.raw(),
+            dest_info.copy_dest_number.raw(),
+            plan.dest_bpp,
+            source.msaa_samples.raw(),
+        ];
         // The output buffer is bound whole (the shaders don't take its length), so the group
         // doesn't depend on this resolve's size.
         let resolve_params = params;
         let (pipeline, bind_group) = match external {
             Some(rt) => {
-                // In the order of shaders::RESOLVE_SPECIALIZED.
-                let spec = [
-                    flags,
-                    source.format,
-                    plan.mode,
-                    info.copy_sample_select.raw(),
-                    info.dest_format.raw(),
-                    dest_info.copy_dest_number.raw(),
-                    plan.dest_bpp,
-                    source.msaa_samples.raw(),
-                ];
                 let (layout, pipeline) = self.pipelines.resolve_direct(device, rt.src_kind(), spec);
                 let mut entries = vec![BindGroupEntry { binding: 0, resource: resolve_params.binding() }];
                 entries.extend(src_entries(rt));
@@ -1906,6 +1954,59 @@ impl EdramCache {
                 if is_1111 { (info.rect.width / 4, info.rect.height / 4) } else { (info.rect.width, info.rect.height) };
             (store_pipeline, bind_group, params, gx.div_ceil(8), gy.div_ceil(8))
         });
+        // The full-resolution copy (see `scaled`) of a resolve from a host surface into a 2D 32
+        // or 64 bpp destination: the resolve again at scale 1 over the host pixels, written
+        // untiled at its place in the destination scaled up.
+        let mut scaled = None;
+        if store.is_some() {
+            let bpe = layout.bytes_per_element;
+            let s = self.scale;
+            let key = DestKey {
+                base: layout.base & 0x1FFF_FFFF,
+                pitch: layout.pitch_aligned,
+                height: layout.height_aligned,
+                bytes_per_element: bpe,
+                endian: layout.endian as u32,
+            };
+            let rect = [layout.offset_x, layout.offset_y, info.rect.width, info.rect.height];
+            let size = u64::from(key.pitch * s) * u64::from(key.height * s) * u64::from(bpe);
+            let eligible = s > 1
+                && !layout.is_3d
+                && !is_1111
+                && (bpe == 4 || bpe == 8)
+                && plan.words_per_pixel * 4 == bpe
+                && plan.mode != 3
+                && size <= self.max_output_bytes
+                && rect[0] + rect[2] <= key.pitch
+                && rect[1] + rect[3] <= key.height;
+            match external {
+                Some(rt) if eligible => {
+                    let (buffer, rect) = self.scaled.resolving(device, key, rect, s, &mut self.retired_buffers);
+                    let pitch = key.pitch * s;
+                    let mut words = resolve_words;
+                    words[0] *= s;
+                    words[1] *= s;
+                    words[2] *= s;
+                    words[3] *= s;
+                    // Output: the first word and the row pitch in pixels.
+                    words[21] = (rect[1] * s * pitch + rect[0] * s) * plan.words_per_pixel;
+                    words[22] = pitch;
+                    let params = uniform(&self.params, device, &words);
+                    let (bgl, pipeline) = self.pipelines_1x.resolve_direct(device, rt.src_kind(), spec);
+                    let mut entries = vec![BindGroupEntry { binding: 0, resource: params.binding() }];
+                    entries.extend(src_entries(rt));
+                    entries.push(BindGroupEntry { binding: 3, resource: whole(&buffer) });
+                    let group = cached_bind_group(&self.groups, device, "edram scaled resolve", &bgl, &entries);
+                    let grid = ((info.rect.width * s).div_ceil(8), (info.rect.height * s).div_ceil(8));
+                    scaled = Some((pipeline, group, params, grid));
+                }
+                _ => self.scaled.forget(
+                    (layout.extent_start & 0x1FFF_FFFF, layout.extent_len),
+                    None,
+                    &mut self.retired_buffers,
+                ),
+            }
+        }
         {
             // The size and kind show in GPU traces (and `gpu-time`), where resolves dominate.
             let label = format!(
@@ -1927,6 +2028,11 @@ impl EdramCache {
             if let Some((store_pipeline, bind_group, params, gx, gy)) = &store {
                 pass.set_pipeline(store_pipeline);
                 pass.set_bind_group(0, bind_group, &params.dynamic_offset());
+                pass.dispatch_workgroups(*gx, *gy, 1);
+            }
+            if let Some((pipeline, group, params, (gx, gy))) = &scaled {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, group, &params.dynamic_offset());
                 pass.dispatch_workgroups(*gx, *gy, 1);
             }
             pass.end();

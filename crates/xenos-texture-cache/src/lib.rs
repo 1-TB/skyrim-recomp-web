@@ -27,7 +27,7 @@ mod format;
 mod gpu_load;
 mod hash;
 
-pub use gpu_load::GpuSource;
+pub use gpu_load::{GpuSource, ScaledSource};
 
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -166,6 +166,8 @@ pub struct CacheStats {
     pub reloads: u64,
     /// Binds served by an existing texture.
     pub hits: u64,
+    /// Loads of resolve output from its full-resolution copy (see [`ScaledSource`]).
+    pub scaled_loads: u64,
     /// Binds that used a fallback view instead of guest data.
     pub fallbacks: u64,
     /// Loads put off to a later frame by [`CacheConfig::max_load_bytes_per_second`].
@@ -641,6 +643,12 @@ impl TextureCache {
             scratch: Vec::new(),
             stats: CacheStats::default(),
         }
+    }
+
+    /// Size of the host texture cached for `key` (larger than the guest's for resolve output
+    /// loaded from its full-resolution copy).
+    pub fn host_size(&self, key: &TextureKey) -> Option<(u32, u32)> {
+        self.textures.get(key).map(|e| (e.width, e.height))
     }
 
     pub fn caps(&self) -> HostCaps {
@@ -1131,6 +1139,34 @@ impl TextureCache {
         if let Some(gpu) = gpu
             && (gpu.covers(&ranges) || (self.config.gpu_conversion && gpu.sync(&ranges)))
         {
+            // Resolve output drawn at a higher resolution: from its full-resolution copy.
+            if host_dim == HostDimension::D2
+                && fetch.mip_max_level == 0
+                && fetch.tiled
+                && gpu.covers(&ranges)
+                && let Some(scaled) = gpu.scaled(fetch)
+            {
+                let scaled_fetch = scaled.fetch(fetch);
+                let scaled_info = TextureGuestInfo::from_fetch(&scaled_fetch);
+                let mut data = gpu_load::ScaledData { inner: &mut *gpu, buffer: scaled.buffer.clone() };
+                // `verify-loads` compares loads with guest memory, which only has the guest size.
+                let verify = std::mem::replace(&mut self.config.verify_loads, false);
+                let loaded = self.gpu_converted(
+                    device,
+                    GpuData::Shared(&mut data),
+                    &scaled_fetch,
+                    &scaled_info,
+                    caps,
+                    ranges.clone(),
+                    hash,
+                );
+                self.config.verify_loads = verify;
+                if let Some(entry) = loaded {
+                    self.stats.scaled_loads += 1;
+                    return Ok(entry);
+                }
+                log::debug!("{}: not loadable from its scaled copy; loading it at guest size", info.format.name());
+            }
             match self.load_on_gpu(device, &mut *gpu, fetch, &info, caps, ranges.clone(), hash) {
                 Some(entry) => return Ok(entry),
                 None => log::debug!("{}: not loadable from GPU memory; using guest memory", info.format.name()),

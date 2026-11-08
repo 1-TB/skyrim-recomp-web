@@ -98,4 +98,18 @@ pub trait RenderTargetCache {
     fn resolution_scale(&self) -> u32 {
         1
     }
+
+    /// The full-resolution copy of the resolves holding a texture's base level, when resolves
+    /// keep one (see [`xenos_edram::ScaledResolve`] and `EdramCache::scaled_resolve`).
+    fn scaled_resolve(
+        &mut self,
+        _base: u32,
+        _pitch: u32,
+        _width: u32,
+        _height: u32,
+        _bytes_per_element: u32,
+        _endian: u32,
+    ) -> Option<xenos_edram::ScaledResolve> {
+        None
+    }
 }

@@ -28,6 +28,7 @@ mod cache;
 mod dest;
 mod format;
 mod ownership;
+mod scaled;
 mod shaders;
 
 pub use cache::{
@@ -38,6 +39,7 @@ pub use format::{
     linear_to_pwl_gamma, pwl_gamma_to_linear,
 };
 pub use ownership::OwnedRange;
+pub use scaled::ScaledResolve;
 pub use xenos_state::edram::RenderTargetKey;
 
 /// Guest physical memory as seen by the GPU (byte order as in memory).

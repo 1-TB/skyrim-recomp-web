@@ -646,8 +646,10 @@ struct ResolveParams {
     // Direct resolves: where the base's pixel (0, 0) is in the source texture (host pixels).
     src_offset_x: u32,
     src_offset_y: u32,
-    pad0: u32,
-    pad1: u32,
+    // Where pixels go in the output: the first word, and the row pitch in pixels (0: the
+    // width). Full-resolution copies place a resolve inside the scaled-up destination.
+    out_base: u32,
+    out_pitch: u32,
     pad2: u32,
 }
 
@@ -807,7 +809,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let pos = gid.xy + vec2<u32>(p.offset_x, p.offset_y);
-    let o = (gid.y * p.width + gid.x) * p.words;
+    let o = p.out_base + (gid.y * select(p.width, p.out_pitch, p.out_pitch != 0u) + gid.x) * p.words;
     let first = first_sample(p.sample_select);
     let swap = (p.flags & 4u) != 0u;
     switch (p.mode) {

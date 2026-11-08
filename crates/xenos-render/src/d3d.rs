@@ -904,8 +904,12 @@ impl crate::targets::RenderTargetCache for D3dTargets {
 
     /// The batch is submitted: the textures replaced during it can go.
     fn end_frame(&mut self) {
-        for texture in self.0.borrow_mut().retired.drain(..) {
+        let mut r = self.0.borrow_mut();
+        for texture in r.retired.drain(..) {
             texture.destroy();
+        }
+        if let Some(edram) = r.edram.as_mut() {
+            edram.end_external_frame();
         }
     }
 
@@ -917,5 +921,18 @@ impl crate::targets::RenderTargetCache for D3dTargets {
 
     fn resolution_scale(&self) -> u32 {
         self.0.borrow().scale
+    }
+
+    fn scaled_resolve(
+        &mut self,
+        base: u32,
+        pitch: u32,
+        width: u32,
+        height: u32,
+        bytes_per_element: u32,
+        endian: u32,
+    ) -> Option<xenos_edram::ScaledResolve> {
+        let mut r = self.0.borrow_mut();
+        r.edram.as_mut()?.scaled_resolve(base, pitch, width, height, bytes_per_element, endian)
     }
 }
