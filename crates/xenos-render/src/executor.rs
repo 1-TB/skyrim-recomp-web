@@ -195,8 +195,7 @@ pub struct OpTimes {
 /// submission contains an invalid one.
 enum PipelineEntry {
     Ready(RenderPipeline),
-    /// Web only: compiling in the background; draws using it are skipped until it's ready.
-    #[cfg_attr(not(target_os = "emscripten"), allow(dead_code))]
+    /// Compiling in the background (web and Metal); draws using it are skipped until it's ready.
     Compiling(Pending<gpu_webgpu::Result<RenderPipeline>>),
     Failed,
 }
@@ -452,6 +451,9 @@ pub struct Executor {
     warned: HashSet<String>,
     /// Pipelines the device rejected (the first few are logged with their shaders' WGSL).
     pipeline_failures: u32,
+    /// Wait for pipelines compiling in the background rather than skip their draws (tests, and
+    /// `--render-debug wait-pipelines`).
+    pub wait_for_pipelines: bool,
     pub stats: ExecutorStats,
 }
 
@@ -764,6 +766,7 @@ impl Executor {
             max_texture_dimension: limits.maxTextureDimension2D,
             warned: HashSet::new(),
             pipeline_failures: 0,
+            wait_for_pipelines: crate::debug::WAIT_FOR_PIPELINES.load(std::sync::atomic::Ordering::Relaxed),
             stats: ExecutorStats::default(),
         }
     }
@@ -2403,7 +2406,11 @@ impl Executor {
             Some(PipelineEntry::Ready(p)) => return Some(p.clone()),
             Some(PipelineEntry::Failed) => return None,
             Some(PipelineEntry::Compiling(pending)) => {
-                let result = pending.try_take()?;
+                let result = if self.wait_for_pipelines && !cfg!(target_os = "emscripten") {
+                    wait_for(pending)
+                } else {
+                    pending.try_take()?
+                };
                 return self.compiled(key, result, vs, ps);
             }
             None => {}
@@ -2428,19 +2435,24 @@ impl Executor {
         }
         let depth_only = self.depth_only.clone().filter(|_| ps.is_none() && key.depth.is_some());
         let pixel = ps.map(|p| (&p.module, p.translation.entry_point)).or(depth_only.as_ref().map(|m| (m, "xe_depth_only")));
+        // On the web and on Metal: compiled in the background (on the web a synchronous pipeline
+        // would be compiled on first use, stalling the GPU process; Metal takes 30-200 ms for a
+        // large shader, a visible hitch whenever new ones appear). Draws with the pipeline are
+        // skipped until it's ready; validation errors come back as a failed result.
         #[cfg(not(target_os = "emscripten"))]
-        let result = pipeline_descriptor(&key, vertex, pixel, layout, |desc| create_checked(&self.device, desc));
-        // On the web: compiled in the background (a synchronous pipeline would be compiled on
-        // first use, stalling the GPU process); validation errors come back as a failed result.
-        #[cfg(target_os = "emscripten")]
+        if !gpu_webgpu::BACKGROUND_PIPELINES {
+            let result = pipeline_descriptor(&key, vertex, pixel, layout, |desc| create_checked(&self.device, desc));
+            self.times.pipelines += started.elapsed();
+            return self.compiled(key, result, vs, ps);
+        }
         let pending =
             pipeline_descriptor(&key, vertex, pixel, layout, |desc| self.device.create_render_pipeline_async(desc));
         self.times.pipelines += started.elapsed();
-        #[cfg(target_os = "emscripten")]
         let result = match pending.try_take() {
             Some(r) => r,
+            // (Not on the web: there the pipeline completes once the worker yields to the browser.)
+            None if self.wait_for_pipelines && !cfg!(target_os = "emscripten") => wait_for(&pending),
             None => {
-                // Completes once the worker returns to the browser; draws wait until then.
                 self.pipelines.insert(key, PipelineEntry::Compiling(pending));
                 return None;
             }
@@ -2598,6 +2610,16 @@ fn pipeline_descriptor<R>(
 /// Creates a pipeline synchronously, checked with an error scope (wgpu-native has no async
 /// creation, and aborts a submit that uses an invalid pipeline).
 #[cfg(not(target_os = "emscripten"))]
+/// A pipeline compiling in the background, once it's done.
+fn wait_for(pending: &Pending<gpu_webgpu::Result<RenderPipeline>>) -> gpu_webgpu::Result<RenderPipeline> {
+    loop {
+        if let Some(r) = pending.try_take() {
+            return r;
+        }
+        std::thread::sleep(std::time::Duration::from_micros(200));
+    }
+}
+
 fn create_checked(device: &Device, desc: &RenderPipelineDescriptor<'_>) -> gpu_webgpu::Result<RenderPipeline> {
     device.push_error_scope(ErrorFilter::Validation);
     let pipeline = device.create_render_pipeline(desc);

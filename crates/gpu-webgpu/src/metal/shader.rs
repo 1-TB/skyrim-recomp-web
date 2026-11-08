@@ -8,6 +8,7 @@
 
 use std::fmt::Write as _;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use naga::back::msl;
 use objc2::rc::Retained;
@@ -22,14 +23,37 @@ use crate::{
     StorageTextureAccess, TextureFormat, TextureSampleType, TextureViewDimension,
 };
 
+/// A module's WGSL, parsed and validated by whichever thread needs it first (a compile worker
+/// starts as soon as the module is created): naga's front end takes ~1 ms per translated
+/// shader, hundreds of which appear on a world's first frame.
+struct Source {
+    code: String,
+    parsed: OnceLock<std::result::Result<(naga::Module, naga::valid::ModuleInfo), String>>,
+}
+
+impl Source {
+    fn parsed(&self) -> &std::result::Result<(naga::Module, naga::valid::ModuleInfo), String> {
+        self.parsed.get_or_init(|| {
+            naga::front::wgsl::parse_str(&self.code)
+                .map_err(|e| e.emit_to_string(&self.code))
+                .and_then(|m| validate(&m).map(|info| (m, info)))
+        })
+    }
+}
+
+/// A module's source, shared with the compile workers.
+type Parsed = Arc<Source>;
+
+/// A stage compiled once, by whichever pipeline (on whichever thread) gets to it first.
+type StageCell = Arc<OnceLock<std::result::Result<CompiledStage, String>>>;
+
 pub(crate) struct ShaderInner {
     label: String,
-    /// The parsed module, or the parse/validation error.
-    module: std::result::Result<(naga::Module, naga::valid::ModuleInfo), String>,
+    module: Parsed,
     /// Stages compiled from this module, by everything besides the module that the MSL
     /// depends on: pipelines differing only in render state (most of a title's) share their
     /// shaders, and compiling MSL is most of a pipeline's cost (~20 ms per stage).
-    stages: std::cell::RefCell<std::collections::HashMap<StageKey, CompiledStage>>,
+    stages: std::cell::RefCell<std::collections::HashMap<StageKey, StageCell>>,
 }
 
 /// What a stage's MSL depends on besides its module (see [`StageRequest`]).
@@ -57,16 +81,16 @@ fn validate(module: &naga::Module) -> std::result::Result<naga::valid::ModuleInf
 }
 
 impl Device {
-    /// Parse and validation errors surface through error scopes / the uncaptured-error log.
+    /// Parsed in the background; parse and validation errors surface when a pipeline uses the
+    /// module (an error report, or the failed result of an asynchronous pipeline).
     pub fn create_shader_module_wgsl(&self, label: &str, code: &str) -> ShaderModule {
         crate::counters::add(&crate::counters::count::shader_modules, 1);
         crate::counters::add(&crate::counters::count::shader_bytes, code.len() as u64);
-        let module = naga::front::wgsl::parse_str(code)
-            .map_err(|e| e.emit_to_string(code))
-            .and_then(|m| validate(&m).map(|info| (m, info)));
-        if let Err(e) = &module {
-            self.shared.report(ErrorType::Validation, format!("shader module {label:?}: {e}"));
-        }
+        let module = Arc::new(Source { code: code.to_string(), parsed: OnceLock::new() });
+        let parse = module.clone();
+        compile_workers(Box::new(move || {
+            parse.parsed();
+        }));
         ShaderModule { inner: Rc::new(ShaderInner { label: label.to_string(), module, stages: Default::default() }) }
     }
 }
@@ -310,40 +334,76 @@ struct StageRequest<'a> {
     label: &'a str,
 }
 
-/// [`compile_stage_uncached`] once per module and [`StageKey`].
-fn compile_stage(shared: &Shared, req: &StageRequest<'_>) -> std::result::Result<CompiledStage, String> {
-    let key = StageKey {
-        entry: req.stage.entry_point.to_string(),
-        constants: req.stage.constants.iter().map(|&(k, v)| (k.to_string(), v.to_bits())).collect(),
-        naga_stage: req.naga_stage,
-        point: req.topology == MTLPrimitiveTopologyClass::Point,
-        sample_mask: req.sample_mask,
-        vertex_buffers: req.vertex_buffers.len(),
-    };
-    let shader = &req.stage.module.inner;
-    if let Some(stage) = shader.stages.borrow().get(&key) {
-        return Ok(stage.clone());
-    }
-    let stage = compile_stage_uncached(shared, req)?;
-    shader.stages.borrow_mut().insert(key, stage.clone());
-    Ok(stage)
+/// Everything compiling one stage takes, owned so that a compile worker can do it.
+struct StageJob {
+    module: Parsed,
+    module_label: String,
+    entry: String,
+    constants: Vec<(String, f64)>,
+    naga_stage: naga::ShaderStage,
+    visibility: ShaderStage,
+    topology: MTLPrimitiveTopologyClass,
+    sample_mask: u32,
+    vertex_buffers: usize,
+    /// The pipeline's label (for MSL dumps).
+    label: String,
+    cell: StageCell,
 }
 
-fn compile_stage_uncached(shared: &Shared, req: &StageRequest<'_>) -> std::result::Result<CompiledStage, String> {
-    let shader = &req.stage.module.inner;
-    let (module, info) = shader.module.as_ref().map_err(|e| format!("invalid shader module {:?}: {e}", shader.label))?;
-    let entry = if req.stage.entry_point.is_empty() {
+impl StageJob {
+    /// The module's cache cell for this stage (made on the thread that owns the module).
+    fn new(req: &StageRequest<'_>) -> Self {
+        let key = StageKey {
+            entry: req.stage.entry_point.to_string(),
+            constants: req.stage.constants.iter().map(|&(k, v)| (k.to_string(), v.to_bits())).collect(),
+            naga_stage: req.naga_stage,
+            point: req.topology == MTLPrimitiveTopologyClass::Point,
+            sample_mask: req.sample_mask,
+            vertex_buffers: req.vertex_buffers.len(),
+        };
+        let shader = &req.stage.module.inner;
+        let cell = shader.stages.borrow_mut().entry(key).or_default().clone();
+        StageJob {
+            module: shader.module.clone(),
+            module_label: shader.label.clone(),
+            entry: req.stage.entry_point.to_string(),
+            constants: req.stage.constants.iter().map(|&(k, v)| (k.to_string(), v)).collect(),
+            naga_stage: req.naga_stage,
+            visibility: req.visibility,
+            topology: req.topology,
+            sample_mask: req.sample_mask,
+            vertex_buffers: req.vertex_buffers.len(),
+            label: req.label.to_string(),
+            cell,
+        }
+    }
+
+    /// The compiled stage, compiling it unless done before (or waiting for another thread
+    /// compiling it).
+    fn compile(&self, device: &Id<dyn MTLDevice>) -> std::result::Result<CompiledStage, String> {
+        self.cell.get_or_init(|| compile_stage_uncached(device, self)).clone()
+    }
+}
+
+/// [`compile_stage_uncached`] once per module and [`StageKey`].
+fn compile_stage(shared: &Shared, req: &StageRequest<'_>) -> std::result::Result<CompiledStage, String> {
+    StageJob::new(req).compile(&shared.raw)
+}
+
+fn compile_stage_uncached(device: &Id<dyn MTLDevice>, req: &StageJob) -> std::result::Result<CompiledStage, String> {
+    let (module, info) = req.module.parsed().as_ref().map_err(|e| format!("invalid shader module {:?}: {e}", req.module_label))?;
+    let entry = if req.entry.is_empty() {
         let mut eps = module.entry_points.iter().filter(|e| e.stage == req.naga_stage);
         match (eps.next(), eps.next()) {
             (Some(e), None) => e.name.clone(),
-            _ => return Err(format!("{:?} has no single {:?} entry point", shader.label, req.naga_stage)),
+            _ => return Err(format!("{:?} has no single {:?} entry point", req.module_label, req.naga_stage)),
         }
     } else {
-        req.stage.entry_point.to_string()
+        req.entry.clone()
     };
     let mut constants = naga::back::PipelineConstants::default();
-    for &(k, v) in req.stage.constants {
-        constants.insert(k.to_string(), v);
+    for (k, v) in &req.constants {
+        constants.insert(k.clone(), *v);
     }
     let (module, info) =
         naga::back::pipeline_constants::process_overrides(module, info, Some((req.naga_stage, &entry)), &constants)
@@ -352,7 +412,7 @@ fn compile_stage_uncached(shared: &Shared, req: &StageRequest<'_>) -> std::resul
         .entry_points
         .iter()
         .position(|e| e.stage == req.naga_stage && e.name == entry)
-        .ok_or_else(|| format!("entry point {entry:?} not found in {:?}", shader.label))?;
+        .ok_or_else(|| format!("entry point {entry:?} not found in {:?}", req.module_label))?;
     let (module, info) = if req.naga_stage == naga::ShaderStage::Fragment && req.sample_mask != !0 {
         let mut m = module.into_owned();
         add_sample_mask(&mut m, ep_index, req.sample_mask)?;
@@ -421,8 +481,8 @@ fn compile_stage_uncached(shared: &Shared, req: &StageRequest<'_>) -> std::resul
         bindings.sizes = Some((slot, sized));
     }
     let resource_buffers = bindings.buffers.len() + usize::from(bindings.sizes.is_some());
-    if resource_buffers + req.vertex_buffers.len() > 31 {
-        return Err(format!("{resource_buffers} buffers plus {} vertex buffers exceed Metal's 31", req.vertex_buffers.len()));
+    if resource_buffers + req.vertex_buffers > 31 {
+        return Err(format!("{resource_buffers} buffers plus {} vertex buffers exceed Metal's 31", req.vertex_buffers));
     }
     for (h, var) in module.global_variables.iter() {
         if var.space == naga::AddressSpace::WorkGroup && !ep_info[h].is_empty() {
@@ -476,15 +536,14 @@ fn compile_stage_uncached(shared: &Shared, req: &StageRequest<'_>) -> std::resul
     };
     let name = translation.entry_point_names.first().cloned().unwrap_or_else(|| Err(msl::EntryPointError::MissingBinding(Default::default())))
         .map_err(|e| format!("MSL entry point: {e:?}"))?;
-    dump_msl(req.label, &shader.label, &entry, &source);
-    let library = shared
-        .raw
+    dump_msl(&req.label, &req.module_label, &entry, &source);
+    let library = device
         .newLibraryWithSource_options_error(&ns(&source), Some(&compile_options()))
         .map_err(|e| {
             log::debug!("MSL that failed to compile:\n{source}");
-            format!("Metal compile of {:?} ({entry}): {}", shader.label, e.localizedDescription())
+            format!("Metal compile of {:?} ({entry}): {}", req.module_label, e.localizedDescription())
         })?;
-    set_label!(library, &shader.label);
+    set_label!(library, &req.module_label);
     let function = library.newFunctionWithName(&ns(&name)).ok_or_else(|| format!("function {name} missing from the library"))?;
     Ok(CompiledStage { function, bindings, workgroup_size: ep.workgroup_size, entries })
 }
@@ -622,62 +681,96 @@ fn depth_stencil_state(shared: &Shared, ds: &crate::DepthStencilState) -> Id<dyn
     state
 }
 
-fn build_render(shared: &Shared, desc: &RenderPipelineDescriptor<'_>) -> std::result::Result<(RenderState, Vec<(u32, BindGroupLayoutEntry)>), String> {
-    let (primitive, topology) = conv::primitive(desc.primitive.topology);
-    let mask = if desc.multisample.count > 1 { desc.multisample.mask | !((1u32 << desc.multisample.count) - 1) } else { !0 };
-    let vs = compile_stage(
-        shared,
-        &StageRequest {
-            stage: &desc.vertex,
-            naga_stage: naga::ShaderStage::Vertex,
-            visibility: ShaderStage::Vertex,
+/// A render pipeline to build, owned so that a compile worker can build it: everything
+/// [`build_render`] needs from the descriptor and from state the device's thread owns.
+struct RenderJob {
+    label: String,
+    vs: StageJob,
+    fs: Option<StageJob>,
+    vertex_buffers: Vec<(u64, crate::VertexStepMode, Vec<crate::VertexAttribute>)>,
+    targets: Vec<crate::ColorTargetState>,
+    depth_stencil: Option<(crate::DepthStencilState, Id<dyn MTLDepthStencilState>)>,
+    primitive: crate::PrimitiveState,
+    multisample: crate::MultisampleState,
+}
+
+/// The [`RenderJob`] for `desc` (on the device's thread: it reads shader modules and caches).
+fn render_job(shared: &Shared, desc: &RenderPipelineDescriptor<'_>) -> RenderJob {
+    let (_, topology) = conv::primitive(desc.primitive.topology);
+    let mask = sample_mask(&desc.multisample);
+    let vs = StageJob::new(&StageRequest {
+        stage: &desc.vertex,
+        naga_stage: naga::ShaderStage::Vertex,
+        visibility: ShaderStage::Vertex,
+        topology,
+        sample_mask: !0,
+        vertex_buffers: desc.vertex_buffers,
+        label: desc.label,
+    });
+    let fs = desc.fragment.as_ref().map(|f| {
+        StageJob::new(&StageRequest {
+            stage: &f.stage,
+            naga_stage: naga::ShaderStage::Fragment,
+            visibility: ShaderStage::Fragment,
             topology,
-            sample_mask: !0,
-            vertex_buffers: desc.vertex_buffers,
+            sample_mask: mask,
+            vertex_buffers: &[],
             label: desc.label,
-        },
-    )?;
-    let fs = match &desc.fragment {
-        Some(f) => Some(compile_stage(
-            shared,
-            &StageRequest {
-                stage: &f.stage,
-                naga_stage: naga::ShaderStage::Fragment,
-                visibility: ShaderStage::Fragment,
-                topology,
-                sample_mask: mask,
-                vertex_buffers: &[],
-                label: desc.label,
-            },
-        )?),
-        None => None,
-    };
+        })
+    });
+    RenderJob {
+        label: desc.label.to_string(),
+        vs,
+        fs,
+        vertex_buffers: desc.vertex_buffers.iter().map(|b| (b.array_stride, b.step_mode, b.attributes.to_vec())).collect(),
+        targets: desc.fragment.as_ref().map_or(Vec::new(), |f| f.targets.to_vec()),
+        depth_stencil: desc.depth_stencil.map(|ds| (ds, depth_stencil_state(shared, &ds))),
+        primitive: desc.primitive,
+        multisample: desc.multisample,
+    }
+}
+
+/// The coverage mask a pipeline applies (all samples unless multisampled).
+fn sample_mask(m: &crate::MultisampleState) -> u32 {
+    if m.count > 1 { m.mask | !((1u32 << m.count) - 1) } else { !0 }
+}
+
+/// Compiles a [`RenderJob`]'s stages (unless compiled before) and its pipeline state; on any
+/// thread.
+fn build_render(
+    device: &Id<dyn MTLDevice>,
+    job: RenderJob,
+) -> std::result::Result<(RenderState, Vec<(u32, BindGroupLayoutEntry)>), String> {
+    let (primitive, topology) = conv::primitive(job.primitive.topology);
+    let mask = sample_mask(&job.multisample);
+    let vs = job.vs.compile(device)?;
+    let fs = job.fs.as_ref().map(|f| f.compile(device)).transpose()?;
     let d = MTLRenderPipelineDescriptor::new();
-    set_label!(d, desc.label);
+    set_label!(d, &job.label);
     d.setVertexFunction(Some(&vs.function));
     // A depth-only pipeline with a partial sample mask still needs a fragment function to apply it.
-    let mask_only = if fs.is_none() && mask != !0 { Some(mask_only_function(shared, mask)?) } else { None };
+    let mask_only = if fs.is_none() && mask != !0 { Some(mask_only_function(device, mask)?) } else { None };
     if let Some(f) = fs.as_ref().map(|f| &f.function).or(mask_only.as_ref()) {
         d.setFragmentFunction(Some(f));
     }
     let vertex_buffer_base = vs.bindings.buffers.len() + usize::from(vs.bindings.sizes.is_some());
-    if !desc.vertex_buffers.is_empty() {
+    if !job.vertex_buffers.is_empty() {
         let vd = MTLVertexDescriptor::new();
-        for (i, b) in desc.vertex_buffers.iter().enumerate() {
+        for (i, (array_stride, step_mode, attributes)) in job.vertex_buffers.iter().enumerate() {
             let slot = vertex_buffer_base + i;
             let layout = unsafe { vd.layouts().objectAtIndexedSubscript(slot) };
-            if b.array_stride == 0 {
+            if *array_stride == 0 {
                 // Every vertex reads the same element.
-                let size = b.attributes.iter().map(|a| a.offset + conv::vertex_format(a.format).1).max().unwrap_or(4);
+                let size = attributes.iter().map(|a| a.offset + conv::vertex_format(a.format).1).max().unwrap_or(4);
                 unsafe { layout.setStride(size.next_multiple_of(4) as usize); }
                 layout.setStepFunction(MTLVertexStepFunction::Constant);
                 unsafe { layout.setStepRate(0); }
             } else {
-                unsafe { layout.setStride(b.array_stride as usize); }
-                layout.setStepFunction(conv::step_function(b.step_mode));
+                unsafe { layout.setStride(*array_stride as usize); }
+                layout.setStepFunction(conv::step_function(*step_mode));
                 unsafe { layout.setStepRate(1); }
             }
-            for a in b.attributes {
+            for a in attributes {
                 let attr = unsafe { vd.attributes().objectAtIndexedSubscript(a.shader_location as usize) };
                 attr.setFormat(conv::vertex_format(a.format).0);
                 unsafe { attr.setOffset(a.offset as usize); }
@@ -686,8 +779,8 @@ fn build_render(shared: &Shared, desc: &RenderPipelineDescriptor<'_>) -> std::re
         }
         d.setVertexDescriptor(Some(&vd));
     }
-    if let Some(f) = &desc.fragment {
-        for (i, t) in f.targets.iter().enumerate() {
+    {
+        for (i, t) in job.targets.iter().enumerate() {
             if t.format == TextureFormat::Undefined {
                 continue;
             }
@@ -707,7 +800,7 @@ fn build_render(shared: &Shared, desc: &RenderPipelineDescriptor<'_>) -> std::re
     }
     let mut depth_stencil = None;
     let mut depth_bias = (0.0, 0.0, 0.0);
-    if let Some(ds) = &desc.depth_stencil {
+    if let Some((ds, state)) = job.depth_stencil {
         let pf = conv::pixel_format(ds.format).ok_or_else(|| format!("depth format {:?}", ds.format))?;
         if conv::has_depth(ds.format) {
             d.setDepthAttachmentPixelFormat(pf);
@@ -715,14 +808,13 @@ fn build_render(shared: &Shared, desc: &RenderPipelineDescriptor<'_>) -> std::re
         if conv::has_stencil(ds.format) {
             d.setStencilAttachmentPixelFormat(pf);
         }
-        depth_stencil = Some(depth_stencil_state(shared, ds));
+        depth_stencil = Some(state);
         depth_bias = (ds.depth_bias as f32, ds.depth_bias_slope_scale, ds.depth_bias_clamp);
     }
-    d.setRasterSampleCount(desc.multisample.count.max(1) as usize);
-    d.setAlphaToCoverageEnabled(desc.multisample.alpha_to_coverage_enabled);
+    d.setRasterSampleCount(job.multisample.count.max(1) as usize);
+    d.setAlphaToCoverageEnabled(job.multisample.alpha_to_coverage_enabled);
     unsafe { d.setInputPrimitiveTopology(topology) };
-    let raw = shared
-        .raw
+    let raw = device
         .newRenderPipelineStateWithDescriptor_error(&d)
         .map_err(|e| format!("Metal render pipeline: {}", e.localizedDescription()))?;
     let mut entries = vs.entries;
@@ -741,23 +833,51 @@ fn build_render(shared: &Shared, desc: &RenderPipelineDescriptor<'_>) -> std::re
             fs: fs_bindings,
             vertex_buffer_base,
             primitive,
-            cull: conv::cull(desc.primitive.cull_mode),
-            winding: conv::winding(desc.primitive.front_face),
-            depth_clip: if desc.primitive.unclipped_depth { MTLDepthClipMode::Clamp } else { MTLDepthClipMode::Clip },
+            cull: conv::cull(job.primitive.cull_mode),
+            winding: conv::winding(job.primitive.front_face),
+            depth_clip: if job.primitive.unclipped_depth { MTLDepthClipMode::Clamp } else { MTLDepthClipMode::Clip },
             depth_bias,
         },
         entries,
     ))
 }
 
+/// Runs `job` on one of the pipeline compile threads (Metal compiles each library and pipeline
+/// on the calling thread). A few, leaving cores for the title and the renderer.
+fn compile_workers(job: Box<dyn FnOnce() + Send>) {
+    type Job = Box<dyn FnOnce() + Send>;
+    static QUEUE: OnceLock<Mutex<std::sync::mpsc::Sender<Job>>> = OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (send, receive) = std::sync::mpsc::channel::<Job>();
+        let receive = Arc::new(Mutex::new(receive));
+        let threads = std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(4).clamp(2, 4));
+        for i in 0..threads {
+            let receive = receive.clone();
+            std::thread::Builder::new()
+                .name(format!("metal-compile-{i}"))
+                .spawn(move || {
+                    loop {
+                        let job = receive.lock().unwrap().recv();
+                        match job {
+                            Ok(job) => job(),
+                            Err(_) => return,
+                        }
+                    }
+                })
+                .expect("cannot start a pipeline compile thread");
+        }
+        Mutex::new(send)
+    });
+    queue.lock().unwrap().send(job).expect("pipeline compile threads are gone");
+}
+
 /// A fragment function that only outputs `mask` as the coverage mask.
-fn mask_only_function(shared: &Shared, mask: u32) -> std::result::Result<Id<dyn MTLFunction>, String> {
+fn mask_only_function(device: &Id<dyn MTLDevice>, mask: u32) -> std::result::Result<Id<dyn MTLFunction>, String> {
     let source = format!(
         "#include <metal_stdlib>\nstruct XeMaskOnly {{ uint mask [[sample_mask]]; }};\n\
          fragment XeMaskOnly xe_mask_only() {{ return XeMaskOnly {{ {mask}u }}; }}\n"
     );
-    let library = shared
-        .raw
+    let library = device
         .newLibraryWithSource_options_error(&ns(&source), Some(&compile_options()))
         .map_err(|e| format!("mask-only fragment: {}", e.localizedDescription()))?;
     library.newFunctionWithName(&ns("xe_mask_only")).ok_or_else(|| "mask-only function missing".to_string())
@@ -776,14 +896,33 @@ impl Device {
     }
 
     fn try_render_pipeline(&self, desc: &RenderPipelineDescriptor<'_>) -> std::result::Result<RenderPipeline, String> {
-        let (state, entries) = objc2::rc::autoreleasepool(|_| build_render(&self.shared, desc))?;
+        let job = render_job(&self.shared, desc);
+        let (state, entries) = objc2::rc::autoreleasepool(|_| build_render(&self.shared.raw, job))?;
         Ok(RenderPipeline { inner: Rc::new(RenderPipelineInner { state: Some(state), entries }) })
     }
 
-    /// Compiles synchronously; failures come back as the result instead of an error report.
+    /// Compiles on the compile workers (stages each module's cache hasn't got yet, then the
+    /// pipeline state), so new shaders don't stall the caller's thread for the tens to hundreds
+    /// of milliseconds Metal takes; failures come back as the result instead of an error report.
     pub fn create_render_pipeline_async(&self, desc: &RenderPipelineDescriptor<'_>) -> Pending<Result<RenderPipeline>> {
         crate::counters::add(&crate::counters::count::pipelines, 1);
-        Pending::ready(self.try_render_pipeline(desc).map_err(|e| Error::Invalid(format!("pipeline creation failed: {e}"))))
+        let job = render_job(&self.shared, desc);
+        let device = self.shared.raw.clone();
+        let done = Arc::new(Mutex::new(None));
+        let result = done.clone();
+        compile_workers(Box::new(move || {
+            let built = objc2::rc::autoreleasepool(|_| build_render(&device, job));
+            *result.lock().unwrap() = Some(built);
+        }));
+        Pending::polled(move || {
+            let built = done.lock().unwrap().take()?;
+            Some(match built {
+                Ok((state, entries)) => {
+                    Ok(RenderPipeline { inner: Rc::new(RenderPipelineInner { state: Some(state), entries }) })
+                }
+                Err(e) => Err(Error::Invalid(format!("pipeline creation failed: {e}"))),
+            })
+        })
     }
 
     pub fn create_compute_pipeline(&self, desc: &ComputePipelineDescriptor<'_>) -> ComputePipeline {

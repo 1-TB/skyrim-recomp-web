@@ -124,6 +124,10 @@ pub use ffi::{
     WGPUVertexStepMode as VertexStepMode,
 };
 
+/// Whether `Device::create_render_pipeline_async` compiles in the background natively (the
+/// Metal backend's compile threads); wgpu-native's compiles before returning.
+pub const BACKGROUND_PIPELINES: bool = cfg!(metal_backend);
+
 /// Where the Metal backend writes the MSL it generates for each pipeline stage (`None`: nowhere).
 /// The webgpu.h backend compiles shaders inside its implementation and ignores this.
 pub static MSL_DUMP_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);

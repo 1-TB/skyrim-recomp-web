@@ -98,6 +98,7 @@ fn triangle_and_rectangle_lists_render() {
     let target = OneTarget::new(&device, SIZE);
     let texture = target.texture.clone();
     let mut executor = Executor::new(&device, memory.clone(), Box::new(target));
+    executor.wait_for_pipelines = true;
     executor.write_registers(&base_registers());
     executor.load_shader(ShaderStage::Vertex, vertex_shader().into());
     executor.load_shader(ShaderStage::Pixel, pixel_shader().into());
@@ -140,6 +141,7 @@ fn guest_index_buffers_draw_directly() {
     let target = OneTarget::new(&device, SIZE);
     let texture = target.texture.clone();
     let mut executor = Executor::new(&device, memory.clone(), Box::new(target));
+    executor.wait_for_pipelines = true;
     executor.write_registers(&base_registers());
     executor.load_shader(ShaderStage::Vertex, vertex_shader().into());
     executor.load_shader(ShaderStage::Pixel, pixel_shader().into());
@@ -202,6 +204,8 @@ fn draw_resolve_and_present_through_gpu_memory() {
     use xenos_render::Command;
     use xenos_render::native::{self, NativeOptions};
 
+    // The one frame needs its draw (backends compiling in the background skip it otherwise).
+    xenos_render::debug::enable("wait-pipelines").unwrap();
     let memory = Arc::new(Memory(Mutex::new(vec![0; 0x8_0000])));
     put_vertices(&memory, VERTICES, &[[-1.0, -1.0, 0.5], [1.0, -1.0, 0.5], [-1.0, 1.0, 0.5]]);
     let corners: Vec<u8> =

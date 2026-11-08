@@ -10,6 +10,9 @@ type Slot<T> = Rc<RefCell<Option<T>>>;
 /// instance goes away first), which is what frees the callback's reference to the slot.
 pub struct Pending<T> {
     slot: Slot<T>,
+    /// Produces the value once it exists (the Metal backend's background work).
+    #[cfg(metal_backend)]
+    poll: Option<Box<dyn Fn() -> Option<T>>>,
 }
 
 impl<T> Pending<T> {
@@ -19,20 +22,40 @@ impl<T> Pending<T> {
     pub(crate) fn new() -> (Self, *mut c_void) {
         let slot: Slot<T> = Rc::new(RefCell::new(None));
         let userdata = Box::into_raw(Box::new(slot.clone())).cast::<c_void>();
-        (Self { slot }, userdata)
+        (Self::with_slot(slot), userdata)
+    }
+
+    fn with_slot(slot: Slot<T>) -> Self {
+        Self {
+            slot,
+            #[cfg(metal_backend)]
+            poll: None,
+        }
     }
 
     pub(crate) fn ready(value: T) -> Self {
-        Self { slot: Rc::new(RefCell::new(Some(value))) }
+        Self::with_slot(Rc::new(RefCell::new(Some(value))))
     }
 
     pub fn is_ready(&self) -> bool {
+        self.poll_now();
         self.slot.borrow().is_some()
     }
 
     /// Takes the value once the callback has run.
     pub fn try_take(&self) -> Option<T> {
+        self.poll_now();
         self.slot.borrow_mut().take()
+    }
+
+    fn poll_now(&self) {
+        #[cfg(metal_backend)]
+        if let Some(poll) = &self.poll
+            && self.slot.borrow().is_none()
+            && let Some(v) = poll()
+        {
+            *self.slot.borrow_mut() = Some(v);
+        }
     }
 }
 
@@ -60,7 +83,12 @@ impl<T> Completer<T> {
 impl<T> Pending<T> {
     pub(crate) fn pair() -> (Self, Completer<T>) {
         let slot: Slot<T> = Rc::new(RefCell::new(None));
-        (Self { slot: slot.clone() }, Completer { slot })
+        (Self::with_slot(slot.clone()), Completer { slot })
+    }
+
+    /// A value `poll` produces once it exists (asked whenever the value is).
+    pub(crate) fn polled(poll: impl Fn() -> Option<T> + 'static) -> Self {
+        Self { slot: Rc::new(RefCell::new(None)), poll: Some(Box::new(poll)) }
     }
 }
 
