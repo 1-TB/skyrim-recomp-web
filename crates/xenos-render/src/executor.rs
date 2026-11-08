@@ -441,6 +441,8 @@ pub struct Executor {
     frames_in_flight: std::collections::VecDeque<Pending<gpu_webgpu::Result<()>>>,
     /// Submissions not yet known to be finished on the GPU, with the bytes uploaded before each.
     uploads_in_flight: std::collections::VecDeque<(Pending<gpu_webgpu::Result<()>>, u64)>,
+    /// The bytes of `uploads_in_flight`, kept as it changes (checked before every command).
+    uploads_in_flight_bytes: u64,
     /// `gpu_webgpu::counters::upload_bytes()` at the last submission.
     uploaded_at_submit: u64,
     /// Most bytes uploaded and not yet known to have reached the GPU (see `uploads_over_budget`).
@@ -739,6 +741,7 @@ impl Executor {
             texture_groups: FxHashMap::default(),
             frames_in_flight: Default::default(),
             uploads_in_flight: Default::default(),
+            uploads_in_flight_bytes: 0,
             uploaded_at_submit: gpu_webgpu::counters::upload_bytes(),
             upload_budget: match crate::debug::UPLOAD_CAP_MIB.load(std::sync::atomic::Ordering::Relaxed) {
                 0 => u64::MAX,
@@ -925,15 +928,17 @@ impl Executor {
     /// finished: then the renderer waits (between commands) until enough of them have. Uploads
     /// not submitted yet are submitted first, so that they're waited for too.
     fn uploads_over_budget(&mut self) -> bool {
-        let retire = |queue: &mut std::collections::VecDeque<(Pending<gpu_webgpu::Result<()>>, u64)>| {
+        let retire = |queue: &mut std::collections::VecDeque<(Pending<gpu_webgpu::Result<()>>, u64)>, total: &mut u64| {
             while queue.front().is_some_and(|(f, _)| f.is_ready()) {
-                if let Some(Err(e)) = queue.pop_front().and_then(|(f, _)| f.try_take()) {
+                let Some((f, bytes)) = queue.pop_front() else { break };
+                *total -= bytes;
+                if let Some(Err(e)) = f.try_take() {
                     log::warn!("renderer: waiting for uploads failed: {e}");
                 }
             }
-            queue.iter().map(|(_, bytes)| bytes).sum::<u64>()
+            *total
         };
-        let mut in_flight = retire(&mut self.uploads_in_flight);
+        let mut in_flight = retire(&mut self.uploads_in_flight, &mut self.uploads_in_flight_bytes);
         let pending = gpu_webgpu::counters::upload_bytes() - self.uploaded_at_submit;
         let waiting = std::mem::take(&mut self.upload_waiting);
         if in_flight + pending <= self.upload_budget {
@@ -943,7 +948,7 @@ impl Executor {
             self.flush();
         }
         self.device.poll();
-        in_flight = retire(&mut self.uploads_in_flight);
+        in_flight = retire(&mut self.uploads_in_flight, &mut self.uploads_in_flight_bytes);
         if in_flight <= self.upload_budget {
             return false;
         }
@@ -1009,6 +1014,7 @@ impl Executor {
             if uploaded > self.uploaded_at_submit {
                 let done = self.device.queue().on_submitted_work_done();
                 self.uploads_in_flight.push_back((done, uploaded - self.uploaded_at_submit));
+                self.uploads_in_flight_bytes += uploaded - self.uploaded_at_submit;
                 self.uploaded_at_submit = uploaded;
             }
         }
