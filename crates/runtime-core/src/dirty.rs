@@ -14,7 +14,7 @@
 //! (`PHYSICAL_BASE + p`), the 16 MiB and 4 KiB views that `fold_view` maps onto it, and the
 //! identity-mapped XEX region (`XEX_BASE + p`, see `AddressSpace::translate_physical`).
 
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::memory::map::{PHYS_VIEW_4K, PHYS_VIEW_16M, PHYSICAL_BASE, PHYSICAL_SIZE, XEX_BASE};
 
@@ -56,23 +56,101 @@ pub fn mark(addr: u32, len: u32) {
 /// Per page: how many times [`version`] found it written.
 static GENERATIONS: [AtomicU32; PAGES] = [const { AtomicU32::new(0) }; PAGES];
 
+/// Pages per entry of [`GROUP_GENERATIONS`].
+const GROUP_PAGES: usize = 64;
+/// Per [`GROUP_PAGES`] pages: how many times a page of the group was found written, so a range's
+/// version adds whole groups at once.
+static GROUP_GENERATIONS: [AtomicU32; PAGES / GROUP_PAGES] = [const { AtomicU32::new(0) }; PAGES / GROUP_PAGES];
+
+/// Records that physical page `page` was found written.
+#[inline]
+fn bump(page: usize) -> u32 {
+    GROUP_GENERATIONS[page / GROUP_PAGES].fetch_add(1, Ordering::AcqRel);
+    GENERATIONS[page].fetch_add(1, Ordering::AcqRel) + 1
+}
+
 /// A counter for physical page `page` that has changed whenever the page was written since it was
 /// last read. Consumes the page's mark, so everything that needs to know about writes must ask
-/// this (not [`take`]).
+/// this (or [`range_version`]), not [`take`].
 #[inline]
 pub fn version(page: u32) -> u32 {
     let Some(generation) = GENERATIONS.get(page as usize) else { return 0 };
-    if take(page) { generation.fetch_add(1, Ordering::AcqRel) + 1 } else { generation.load(Ordering::Acquire) }
+    if take(page) { bump(page as usize) } else { generation.load(Ordering::Acquire) }
 }
 
 /// A number that has changed whenever a byte of physical `[addr, addr + len)` was written since it
-/// was last asked for (the sum of the pages' [`version`]s, which only grow).
+/// was last asked for (a sum of page and group generations, which only grow).
+///
+/// Textures are validated this way every frame (hundreds of pages each), so the marks are read
+/// eight pages at a time and whole groups of pages are summed at once.
 pub fn range_version(addr: u32, len: u32) -> u64 {
     if len == 0 || addr >= PHYSICAL_SIZE {
         return 0;
     }
     let end = (u64::from(addr) + u64::from(len) - 1).min(u64::from(PHYSICAL_SIZE - 1)) as u32;
-    (addr >> PAGE_SHIFT..=end >> PAGE_SHIFT).map(|p| u64::from(version(p))).sum()
+    let (first, last) = ((addr >> PAGE_SHIFT) as usize, (end >> PAGE_SHIFT) as usize);
+    if last - first < 16 {
+        // Single pages (the guest memory mirror asks per page) and short ranges: page by page.
+        return (first..=last).map(|p| u64::from(version(p as u32))).sum();
+    }
+    // Consume the marks of every alias of the range.
+    for base in [XEX_BASE, PHYSICAL_BASE, PHYS_VIEW_16M] {
+        consume(((base >> PAGE_SHIFT) as usize) + first, first, last);
+    }
+    // The 4 KiB view is a page ahead (see `aliases`): physical page p is its page p - 1.
+    let first_4k = first.max(1);
+    if first_4k <= last {
+        consume((PHYS_VIEW_4K >> PAGE_SHIFT) as usize + first_4k - 1, first_4k, last);
+    }
+    let page_sum = |range: std::ops::Range<usize>| -> u64 {
+        GENERATIONS[range].iter().map(|g| u64::from(g.load(Ordering::Acquire))).sum()
+    };
+    let first_group = first.div_ceil(GROUP_PAGES);
+    let end_group = (last + 1) / GROUP_PAGES;
+    if first_group >= end_group {
+        return page_sum(first..last + 1);
+    }
+    page_sum(first..first_group * GROUP_PAGES)
+        + GROUP_GENERATIONS[first_group..end_group].iter().map(|g| u64::from(g.load(Ordering::Acquire))).sum::<u64>()
+        + page_sum(end_group * GROUP_PAGES..last + 1)
+}
+
+/// Takes the marks of guest pages `[mark, mark + last - first]`, which hold physical pages
+/// `[first, last]`, bumping the generations of the written ones. Reads eight marks at a time
+/// where they are aligned; most are unwritten.
+fn consume(mark: usize, first: usize, last: usize) {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    let mut i = 0;
+    let n = last - first + 1;
+    while i < n {
+        let m = mark + i;
+        if (skyrt_written.as_ptr() as usize + m) % 8 == 0 && n - i >= 8 {
+            // SAFETY: eight aligned bytes of the mark table, read as one atomic word (byte
+            // atomics write it; a torn view is impossible on the hosts this runs on).
+            let word = unsafe { &*(skyrt_written.as_ptr().add(m) as *const AtomicU64) }.load(Ordering::Acquire);
+            // A zero byte is a written page.
+            if (word.wrapping_sub(ONES) & !word & (ONES << 7)) == 0 {
+                i += 8;
+                continue;
+            }
+            for k in 0..8 {
+                take_one(m + k, first + i + k);
+            }
+            i += 8;
+        } else {
+            take_one(m, first + i);
+            i += 1;
+        }
+    }
+}
+
+/// Takes guest page `mark`'s mark, bumping physical page `page`'s generation if it was written.
+#[inline]
+fn take_one(mark: usize, page: usize) {
+    let m = &skyrt_written[mark];
+    if m.load(Ordering::Acquire) == 0 && m.swap(1, Ordering::AcqRel) == 0 {
+        bump(page);
+    }
 }
 
 /// Whether physical page `page` was written, through any of its addresses, since the last
@@ -126,6 +204,39 @@ mod tests {
         assert_ne!(w, v);
         assert_eq!(range_version(0x20_0000, 0x2000), w);
         assert_eq!(range_version(0x20_0000, 0x1000), u64::from(version(0x200)));
+    }
+
+    #[test]
+    fn range_versions_across_groups_and_aliases() {
+        // 300 pages from a page that isn't group- or word-aligned.
+        let (addr, len) = (0x30_3000u32, 300 << PAGE_SHIFT);
+        let v = range_version(addr, len);
+        assert_eq!(range_version(addr, len), v);
+        for (i, view) in [PHYSICAL_BASE, XEX_BASE, PHYS_VIEW_16M].into_iter().enumerate() {
+            // Inside a whole group, then near the ends.
+            for offset in [130u32 << PAGE_SHIFT, 0, (299 << PAGE_SHIFT) + 5] {
+                let before = range_version(addr, len);
+                mark(view + addr + offset, 1);
+                let after = range_version(addr, len);
+                assert_ne!(after, before, "view {i} offset {offset:#x}");
+                assert_eq!(range_version(addr, len), after);
+            }
+        }
+        // The 4 KiB view: physical page p at 0xE0000000 + (p - 1) pages.
+        let before = range_version(addr, len);
+        mark(PHYS_VIEW_4K + addr + (200 << PAGE_SHIFT) - 0x1000, 4);
+        assert_ne!(range_version(addr, len), before);
+        // Writes outside the range don't change it.
+        let v = range_version(addr, len);
+        mark(PHYSICAL_BASE + addr + len, 4);
+        mark(PHYSICAL_BASE + addr - 4, 4);
+        assert_eq!(range_version(addr, len), v);
+        // Page versions agree with the range's consumption.
+        mark(PHYSICAL_BASE + addr, 1);
+        let page = addr >> PAGE_SHIFT;
+        let g = version(page);
+        assert_ne!(range_version(addr, len), v, "range consumed after version() took the mark");
+        assert_eq!(version(page), g);
     }
 
     /// The physical address a guest address writes, as the runtime translates it.
