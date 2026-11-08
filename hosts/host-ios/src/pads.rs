@@ -139,3 +139,135 @@ pub fn keyboard() -> Option<Reading> {
         Some(reading)
     }
 }
+
+/// The title's rumble on the controller's haptics (CoreHaptics engines on its left and right
+/// handles, like the XInput motors: the left one heavy, the right one light). Updated on the
+/// main thread with the motor speeds the title last set.
+#[derive(Default)]
+pub struct Rumble {
+    /// The controller the engines are for (its address) and the engines, left then right.
+    engines: Option<(usize, [Option<objc2::rc::Retained<objc2_core_haptics::CHHapticEngine>>; 2])>,
+    /// Per motor: the speed playing and its player.
+    playing: [(u16, Option<Player>); 2],
+    /// When the events playing started (they're restarted before they run out).
+    started: Option<std::time::Instant>,
+    /// After a failure, engines aren't made again before this.
+    retry_at: Option<std::time::Instant>,
+}
+
+type Player = objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_core_haptics::CHHapticPatternPlayer>>;
+
+/// A continuous haptic event lasts at most this long (seconds); a longer rumble is restarted
+/// before it ends.
+const RUMBLE_EVENT_SECONDS: f64 = 30.0;
+
+impl Rumble {
+    /// Plays motor speeds `(left, right)` (0-65535) on the first controller with haptics.
+    pub fn update(&mut self, speeds: (u16, u16), now: std::time::Instant) {
+        use objc2::AnyThread;
+        use objc2_core_haptics::*;
+        // SAFETY: GameController and CoreHaptics calls on the main thread with valid arguments.
+        unsafe {
+            let controllers = GCController::controllers();
+            let Some(controller) = controllers.iter().find(|c| c.extendedGamepad().is_some()) else {
+                self.stop_all();
+                self.engines = None;
+                return;
+            };
+            let id = objc2::rc::Retained::as_ptr(&controller) as usize;
+            if self.engines.as_ref().is_none_or(|(c, _)| *c != id) && self.retry_at.is_none_or(|t| now >= t) {
+                self.stop_all();
+                let haptics = controller.haptics();
+                let engine = |locality: &GCHapticsLocality| {
+                    let engine = haptics.as_ref()?.createEngineWithLocality(locality)?;
+                    engine.startAndReturnError().ok()?;
+                    Some(engine)
+                };
+                let mut engines = [engine(GCHapticsLocalityLeftHandle), engine(GCHapticsLocalityRightHandle)];
+                if engines.iter().all(Option::is_none) {
+                    // One actuator (or none per handle): both motors on the default locality.
+                    let one = engine(GCHapticsLocalityDefault);
+                    engines = [one.clone(), one];
+                }
+                if engines.iter().any(Option::is_some) {
+                    log::info!("controller rumble: on");
+                }
+                self.engines = Some((id, engines));
+                self.started = None;
+            }
+            let Some((_, engines)) = self.engines.clone() else { return };
+            let mut failed = false;
+            let restart =
+                self.started.is_some_and(|t| now.duration_since(t).as_secs_f64() > RUMBLE_EVENT_SECONDS - 5.0);
+            for (motor, speed) in [speeds.0, speeds.1].into_iter().enumerate() {
+                let (playing, player) = &mut self.playing[motor];
+                if *playing == speed && !(restart && speed != 0) {
+                    continue;
+                }
+                if let Some(p) = player.take() {
+                    let _ = p.stopAtTime_error(CHHapticTimeImmediate);
+                }
+                *playing = speed;
+                let Some(engine) = &engines[motor] else { continue };
+                if speed == 0 {
+                    continue;
+                }
+                let param = |id: &CHHapticEventParameterID, v: f32| {
+                    CHHapticEventParameter::initWithParameterID_value(CHHapticEventParameter::alloc(), id, v)
+                };
+                // The left motor is the heavy, low-frequency one.
+                let sharpness = if motor == 0 { 0.2 } else { 0.7 };
+                let params = objc2_foundation::NSArray::from_retained_slice(&[
+                    param(CHHapticEventParameterIDHapticIntensity, f32::from(speed) / 65535.0),
+                    param(CHHapticEventParameterIDHapticSharpness, sharpness),
+                ]);
+                let event = CHHapticEvent::initWithEventType_parameters_relativeTime_duration(
+                    CHHapticEvent::alloc(),
+                    CHHapticEventTypeHapticContinuous,
+                    &params,
+                    0.0,
+                    RUMBLE_EVENT_SECONDS,
+                );
+                let events = objc2_foundation::NSArray::from_retained_slice(&[event]);
+                let none = objc2_foundation::NSArray::new();
+                let Ok(pattern) =
+                    CHHapticPattern::initWithEvents_parameters_error(CHHapticPattern::alloc(), &events, &none)
+                else {
+                    continue;
+                };
+                match engine.createPlayerWithPattern_error(&pattern) {
+                    Ok(p) if p.startAtTime_error(CHHapticTimeImmediate).is_ok() => *player = Some(p),
+                    _ => failed = true,
+                }
+            }
+            if failed {
+                // The system stops engines (in the background, say): new ones next time.
+                self.engines = None;
+                self.playing = Default::default();
+                self.started = None;
+                self.retry_at = Some(now + std::time::Duration::from_secs(2));
+                return;
+            }
+            if speeds != (0, 0) && (restart || self.started.is_none()) {
+                self.started = Some(now);
+            } else if speeds == (0, 0) {
+                self.started = None;
+            }
+        }
+    }
+
+    fn stop_all(&mut self) {
+        for (speed, player) in &mut self.playing {
+            if let Some(p) = player.take() {
+                // SAFETY: stopping a player on the main thread.
+                let _ = unsafe {
+                    objc2_core_haptics::CHHapticPatternPlayer::stopAtTime_error(
+                        &*p,
+                        objc2_core_haptics::CHHapticTimeImmediate,
+                    )
+                };
+            }
+            *speed = 0;
+        }
+    }
+}

@@ -70,6 +70,8 @@ struct State {
     status_seen: u64,
     /// A gamepad was connected at the last poll (the touch controls hide while one is).
     pad_connected: bool,
+    /// The title's rumble on the controller.
+    rumble: pads::Rumble,
     /// Thermal state and Low Power Mode at the last tick: either one makes iOS hold the
     /// display at 60 Hz, which the fps figures alone don't show.
     power_seen: Option<(isize, bool)>,
@@ -91,6 +93,7 @@ thread_local! {
         sent: None,
         status_seen: 0,
         pad_connected: false,
+        rumble: pads::Rumble::default(),
         power_seen: None,
     });
 }
@@ -163,7 +166,11 @@ define_class!(
         fn scene_will_resign_active(&self, _scene: &UIScene) {
             log::info!("app inactive; pausing the renderer");
             xenos_render::native::set_paused(true);
-            with_state(|s| s.touch.reset());
+            with_state(|s| {
+                s.touch.reset();
+                // Ticks stop until the app is back: so must the rumble.
+                s.rumble.update((0, 0), std::time::Instant::now());
+            });
         }
     }
 
@@ -436,6 +443,8 @@ fn poll_input(s: &mut State) {
     };
     let state = [pad, pads::keyboard()].into_iter().flatten().fold(touch, Reading::merge).gamepad();
     let Some(kernel) = KERNEL.get() else { return };
+    let speeds = if s.pad_connected { kernel.input.vibration(0).unwrap_or((0, 0)) } else { (0, 0) };
+    s.rumble.update(speeds, std::time::Instant::now());
     if s.sent.as_ref().is_none_or(|old| !same(old, &state)) {
         kernel.input.update(0, state);
         s.sent = Some(state);
