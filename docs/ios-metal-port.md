@@ -20,6 +20,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 8 | Renderer, command processor and dispatch CPU | Float constants packed per shader on unified memory (only the ones read are gathered and written: renderer busy 60 → 53%); range versions read write marks eight pages per word and sum 64-page groups; the command processor skips unchanged constants in its packet loops and keeps its batch capacity (thread 1630 → 1385 ms per 5 s); native indirect guest calls go through one function pointer table (dispatch 213 → 98 ms per 5 s) |
 | Nov 7 | Squares without the zero rule, NaN on the bits | mul/mad/dp3/dp4/muls of an operand with itself skip the SM3 zero-rule select (exact): Mac 71-72 → 73.4 fps. Relaxed math assumes no NaN after all (a Metal kernel's `select(p, 0, p != p)` returns NaN for 0 × inf under relaxed and fast math), so `xe_color_range` tests NaN on the bits |
 | Nov 7 | Background pipelines (stutter) | Walking through Riverwood hitched 35-235 ms per new shader (Metal compiling on the renderer thread). Compiled stages are cached per shader module (pipelines differing in render state shared none: load screen 506 → 10 ms of pipelines), shaders carry only the prelude helpers they use (WGSL 27 → 18 KB, naga parse 1.4 → 1 ms), and on Metal pipelines compile and WGSL parses on worker threads, draws skipped until ready like the web build (`--render-debug wait-pipelines` waits): walk worst frame 235 → 23 ms, first world frame 266 → ~93 ms. Slow frames (≥ 30 ms) are logged with the renderer's work; stall reports show what the command processor waits on |
 | Nov 7 | Relaxed shader math | Metal libraries compile with `MTLMathMode::Relaxed` (reassociation and FMA; it keeps Inf but not NaN, see above) instead of safe: Mac 65.6 → 71.5 fps, frames unchanged by eye; to check on the phone (woman by the fence, grass) |
@@ -94,6 +95,17 @@ rule; wrong for 0 × inf) +7% (77). No gain from: passes capped at 64 or 256 dra
 the command processor skipping waits satisfied by deferred fences (its 4 waits per frame are
 for the title's interrupt callback). GPU counters: ALU utilization ~45% but F32 only ~9%, so the
 ALU time is mostly integer/select work; bandwidth ~20%, texture limiters ~11%.
+
+Phone sustained frame rate is thermal (Nov 7 scripted runs, iPhone 18 Pro Max, 1×): 112-117 fps
+in Riverwood while the thermal state is nominal, ~95 at "fair" (reached after ~35 s) and 50-60 at
+"serious" (~55 s), the renderer then waiting on drawables 30-60% of the time (GPU-bound). The Mac
+walks 10 minutes at a steady ~76 fps with a flat texture cache (~50 MiB), so nothing accumulates;
+energy per frame is what decides the phone's frame rate. Per-pass `gpu-time` timestamps overstate
+(they include waiting: 35 ms "per frame" on the Mac against 13.7 real), use Metal System Trace.
+Also measured: passes capped at 512 draws 67 fps and uncapped 64 (128: 74); SM3 multiplies by a
+float constant without testing the other operand (needs constants finite; 0.4% of blocks aren't)
++2.4% at most; submitting when the renderer runs dry no gain; the mirror's page checks batched no
+gain (its cost is the uploads and page sets).
 
 Remaining ideas, largest first: render-to-texture shortcut (a resolve whose destination is
 sampled with the same format becomes a texture copy instead of resolve → guest memory → texture
