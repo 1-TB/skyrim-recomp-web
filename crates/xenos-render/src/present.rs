@@ -68,15 +68,36 @@ fn catmull_rom(uv: vec2<f32>) -> vec4<f32> {
     return max(c, vec4<f32>(0.0));
 }
 
+// Scaled down by `scale` frame texels per pixel (each at least 1): the average over the pixel's
+// footprint, from ceil(scale) bilinear taps per axis spread evenly across it (at most a texel
+// apart, so every texel under the pixel counts). One bilinear tap there would skip texels and
+// shimmer at 2x and 3x resolution on a smaller screen.
+fn area(uv: vec2<f32>, scale: vec2<f32>) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(frame));
+    let n = vec2<u32>(clamp(ceil(scale - 0.01), vec2<f32>(1.0), vec2<f32>(4.0)));
+    let step = scale / vec2<f32>(n) / size;
+    let first = uv - 0.5 * scale / size + 0.5 * step;
+    var c = vec4<f32>(0.0);
+    for (var y = 0u; y < n.y; y++) {
+        for (var x = 0u; x < n.x; x++) {
+            c += textureSampleLevel(frame, frame_sampler, first + vec2<f32>(f32(x), f32(y)) * step, 0.0);
+        }
+    }
+    return c / f32(n.x * n.y);
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-    // Scaled up (the viewport is larger than the frame): bicubic; otherwise bilinear.
+    // Scaled up (the viewport is larger than the frame): bicubic; about 1:1: bilinear; scaled
+    // down: the pixel's area.
     let scale = fwidth(in.uv) * vec2<f32>(textureDimensions(frame));
     var t: vec4<f32>;
     if (max(scale.x, scale.y) < 0.99) {
         t = catmull_rom(in.uv);
-    } else {
+    } else if (max(scale.x, scale.y) < 1.01) {
         t = textureSampleLevel(frame, frame_sampler, in.uv, 0.0);
+    } else {
+        t = area(in.uv, max(scale, vec2<f32>(1.0)));
     }
     return vec4<f32>(pick(t, swizzle.x), pick(t, swizzle.y), pick(t, swizzle.z), 1.0);
 }
