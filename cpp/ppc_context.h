@@ -998,6 +998,47 @@ inline simde__m128i simde_mm_vsr(simde__m128i a, simde__m128i b)
 }
 
 // Provided by the runtime (runtime-core/src/timebase.rs).
+// vslo: `a` shifted left (toward guest byte 0, host-higher bytes) by octets, the count
+// in bits 1-4 of `b`'s guest byte 15. Shuffle indices below zero select zero.
+static inline __attribute__((always_inline)) simde__m128i skyrt_vslo(const PPCVRegister& a, const PPCVRegister& b)
+{
+    const simde__m128i iota = simde_mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+    simde__m128i n = simde_mm_set1_epi8((char)((b.u8[0] >> 3) & 0xF));
+    return simde_mm_shuffle_epi8(simde_mm_load_si128((const simde__m128i*)a.u8), simde_mm_sub_epi8(iota, n));
+}
+
+// stvlx/stvrx: a vector's guest bytes stored from `ea` to the end of its 16-byte block
+// (stvlx), or the last `ea & 15` of them to the block before `ea` (stvrx). The bytes lie in
+// one aligned block, so in one page and one view: translated and marked once, and copied
+// at once (upstream stored them a byte at a time, each translated and marked).
+static inline __attribute__((always_inline)) void skyrt_vector_guest_bytes(const PPCVRegister& v, uint8_t* out)
+{
+    const simde__m128i reverse = simde_mm_setr_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+    simde_mm_storeu_si128((simde__m128i*)out, simde_mm_shuffle_epi8(simde_mm_load_si128((const simde__m128i*)v.u8), reverse));
+}
+
+static inline __attribute__((always_inline)) void skyrt_stvlx(uint8_t* base, uint32_t ea, const PPCVRegister& v)
+{
+    uint8_t bytes[16];
+    skyrt_vector_guest_bytes(v, bytes);
+    uint32_t n = 16 - (ea & 0xF);
+    SKYRT_CHECK_FRAMES(ea, n);
+    memcpy(PPC_EA(ea), bytes, n);
+    PPC_MARK_WRITTEN(ea, n);
+}
+
+static inline __attribute__((always_inline)) void skyrt_stvrx(uint8_t* base, uint32_t ea, const PPCVRegister& v)
+{
+    uint32_t n = ea & 0xF;
+    if (n == 0)
+        return;
+    uint8_t bytes[16];
+    skyrt_vector_guest_bytes(v, bytes);
+    SKYRT_CHECK_FRAMES(ea - n, n);
+    memcpy(PPC_EA(ea - n), bytes + 16 - n, n);
+    PPC_MARK_WRITTEN(ea - n, n);
+}
+
 extern "C" uint64_t skyrt_guest_timebase(void);
 #define __rdtsc() skyrt_guest_timebase()
 

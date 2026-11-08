@@ -32,11 +32,15 @@ skyrt changes to XenonRecomp (base: hedge-dev/XenonRecomp ddd128bcca99fe8bfbb99b
 - lwarx/ldarx/stwcx./stdcx. are emitted as PPC_LWARX/PPC_LDARX/PPC_STWCX/
   PPC_STDCX, which cpp/ppc_context.h implements with reservation versions (a
   plain compare-and-swap lets lock-free lists suffer ABA).
+- stvlx/stvrx (and the 128 forms) call skyrt_stvlx/skyrt_stvrx in
+  cpp/ppc_context.h, which translate, copy and mark the bytes once (upstream
+  stored them one byte at a time, each translated and marked); vslo is one
+  byte shuffle (skyrt_vslo).
 
 Applied by `cargo xtask setup-xenonrecomp`.
 
 diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
-index fa91527..2a1de2d 100644
+index fa91527..4814ed2 100644
 --- a/XenonRecomp/recompiler.cpp
 +++ b/XenonRecomp/recompiler.cpp
 @@ -1,4 +1,5 @@
@@ -60,7 +64,7 @@ index fa91527..2a1de2d 100644
                  println("\tif ({}.s64 != 0) ctx = {};", temp(), env());
                  println("\t{} = {};", r(3), temp());
              }
-@@ -525,6 +526,190 @@ bool Recompiler::Recompile(
+@@ -525,6 +526,188 @@ bool Recompiler::Recompile(
  
      switch (id)
      {
@@ -241,17 +245,15 @@ index fa91527..2a1de2d 100644
 +    case PPC_INST_VSLO128:
 +        // Shift left by octets (vB guest byte 15, bits 1-4). Guest-left is
 +        // toward host-higher bytes: d[i] = a[i - n].
-+        println("\t{}.u32 = ({}.u8[0] >> 3) & 0xF;", temp(), v(insn.operands[2]));
-+        for (size_t i = 0; i < 16; i++)
-+            println("\t{}.u8[{}] = {} >= {}.u32 ? {}.u8[{} - {}.u32] : 0;", vTemp(), i, i, temp(), v(insn.operands[1]), i, temp());
-+        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_load_si128((simde__m128i*){}.u8));", v(insn.operands[0]), vTemp());
++        // One byte shuffle (skyrt_vslo in cpp/ppc_context.h).
++        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, skyrt_vslo({}, {}));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
 +        break;
 +    // ---- End of skyrt additions --------------------------------------------
 +
      case PPC_INST_ADD:
          println("\t{}.u64 = {}.u64 + {}.u64;", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
          if (strchr(insn.opcode->name, '.'))
-@@ -607,7 +792,31 @@ bool Recompiler::Recompile(
+@@ -607,7 +790,31 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_BCTR:
@@ -284,7 +286,7 @@ index fa91527..2a1de2d 100644
          {
              println("\tswitch ({}.u64) {{", r(switchTable->second.r));
  
-@@ -647,26 +856,47 @@ bool Recompiler::Recompile(
+@@ -647,26 +854,47 @@ bool Recompiler::Recompile(
          csrState = CSRState::Unknown; // the call could change it
          break;
  
@@ -342,7 +344,7 @@ index fa91527..2a1de2d 100644
  
      case PPC_INST_BEQ:
          printConditionalBranch(false, "eq");
-@@ -712,7 +942,12 @@ bool Recompiler::Recompile(
+@@ -712,7 +940,12 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_BLRL:
@@ -356,7 +358,7 @@ index fa91527..2a1de2d 100644
          break;
  
      case PPC_INST_BLT:
-@@ -813,17 +1048,21 @@ bool Recompiler::Recompile(
+@@ -813,17 +1046,21 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_DCBZ:
@@ -382,7 +384,7 @@ index fa91527..2a1de2d 100644
          break;
  
      case PPC_INST_DIVD:
-@@ -849,7 +1088,8 @@ bool Recompiler::Recompile(
+@@ -849,7 +1086,8 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_EIEIO:
@@ -392,7 +394,7 @@ index fa91527..2a1de2d 100644
          break;
  
      case PPC_INST_EXTSB:
-@@ -1043,7 +1283,7 @@ bool Recompiler::Recompile(
+@@ -1043,7 +1281,7 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_LDARX:
@@ -401,7 +403,7 @@ index fa91527..2a1de2d 100644
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32);", r(insn.operands[2]));
-@@ -1133,13 +1373,14 @@ bool Recompiler::Recompile(
+@@ -1133,13 +1371,14 @@ bool Recompiler::Recompile(
          println("\t{}.s64 = {};", r(insn.operands[0]), int32_t(insn.operands[1] << 16));
          break;
  
@@ -417,7 +419,7 @@ index fa91527..2a1de2d 100644
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32) & ~0xF))), simde_mm_load_si128((simde__m128i*)VectorMaskL)));", r(insn.operands[2]));
-@@ -1151,7 +1392,7 @@ bool Recompiler::Recompile(
+@@ -1151,7 +1390,7 @@ bool Recompiler::Recompile(
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32;", r(insn.operands[2]));
@@ -426,7 +428,7 @@ index fa91527..2a1de2d 100644
          break;
  
      case PPC_INST_LVRX:
-@@ -1160,7 +1401,7 @@ bool Recompiler::Recompile(
+@@ -1160,7 +1399,7 @@ bool Recompiler::Recompile(
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32;", r(insn.operands[2]));
@@ -435,7 +437,7 @@ index fa91527..2a1de2d 100644
          break;
  
      case PPC_INST_LVSL:
-@@ -1187,7 +1428,7 @@ bool Recompiler::Recompile(
+@@ -1187,7 +1426,7 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_LWARX:
@@ -444,7 +446,7 @@ index fa91527..2a1de2d 100644
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
          println("{}.u32);", r(insn.operands[2]));
-@@ -1209,7 +1450,8 @@ bool Recompiler::Recompile(
+@@ -1209,7 +1448,8 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_LWSYNC:
@@ -454,7 +456,7 @@ index fa91527..2a1de2d 100644
          break;
  
      case PPC_INST_LWZ:
-@@ -1503,10 +1745,12 @@ bool Recompiler::Recompile(
+@@ -1503,10 +1743,12 @@ bool Recompiler::Recompile(
      case PPC_INST_STDCX:
          println("\t{}.lt = 0;", cr(0));
          println("\t{}.gt = 0;", cr(0));
@@ -469,7 +471,26 @@ index fa91527..2a1de2d 100644
          println("\t{}.so = {}.so;", cr(0), xer());
          break;
  
-@@ -1635,10 +1879,12 @@ bool Recompiler::Recompile(
+@@ -1616,8 +1858,8 @@ bool Recompiler::Recompile(
+             print("{}.u32 + ", r(insn.operands[1]));
+         println("{}.u32;", r(insn.operands[2]));
+ 
+-        println("\tfor (size_t i = 0; i < (16 - ({} & 0xF)); i++)", ea());
+-        println("\t\tPPC_STORE_U8({} + i, {}.u8[15 - i]);", ea(), v(insn.operands[0]));
++        // skyrt: one translation, copy and dirty mark for the block (cpp/ppc_context.h).
++        println("\tskyrt_stvlx(base, {}, {});", ea(), v(insn.operands[0]));
+         break;
+ 
+     case PPC_INST_STVRX:
+@@ -1629,16 +1871,18 @@ bool Recompiler::Recompile(
+             print("{}.u32 + ", r(insn.operands[1]));
+         println("{}.u32;", r(insn.operands[2]));
+ 
+-        println("\tfor (size_t i = 0; i < ({} & 0xF); i++)", ea());
+-        println("\t\tPPC_STORE_U8({} - i - 1, {}.u8[i]);", ea(), v(insn.operands[0]));
++        // skyrt: one translation, copy and dirty mark for the block (cpp/ppc_context.h).
++        println("\tskyrt_stvrx(base, {}, {});", ea(), v(insn.operands[0]));
+         break;
  
      case PPC_INST_STVX:
      case PPC_INST_STVX128:
@@ -484,7 +505,7 @@ index fa91527..2a1de2d 100644
          break;
  
      case PPC_INST_STW:
-@@ -1658,10 +1904,12 @@ bool Recompiler::Recompile(
+@@ -1658,10 +1902,12 @@ bool Recompiler::Recompile(
      case PPC_INST_STWCX:
          println("\t{}.lt = 0;", cr(0));
          println("\t{}.gt = 0;", cr(0));
@@ -499,7 +520,7 @@ index fa91527..2a1de2d 100644
          println("\t{}.so = {}.so;", cr(0), xer());
          break;
  
-@@ -1711,7 +1959,8 @@ bool Recompiler::Recompile(
+@@ -1711,7 +1957,8 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_SYNC:
@@ -509,7 +530,7 @@ index fa91527..2a1de2d 100644
          break;
  
      case PPC_INST_TDLGEI:
-@@ -1769,6 +2018,7 @@ bool Recompiler::Recompile(
+@@ -1769,6 +2016,7 @@ bool Recompiler::Recompile(
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
          break;
  
@@ -517,7 +538,7 @@ index fa91527..2a1de2d 100644
      case PPC_INST_VANDC128:
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
          break;
-@@ -2015,7 +2265,9 @@ bool Recompiler::Recompile(
+@@ -2015,7 +2263,9 @@ bool Recompiler::Recompile(
              break;
  
          case 5: // float16_4
@@ -528,7 +549,7 @@ index fa91527..2a1de2d 100644
                  fmt::println("Unexpected float16_4 pack instruction at {:X}", base);
  
              for (size_t i = 0; i < 4; i++)
-@@ -2036,6 +2288,15 @@ bool Recompiler::Recompile(
+@@ -2036,6 +2286,15 @@ bool Recompiler::Recompile(
              }
              break;
  
@@ -544,7 +565,7 @@ index fa91527..2a1de2d 100644
          default:
              println("\t__builtin_debugtrap();");
              break;
-@@ -2088,6 +2349,7 @@ bool Recompiler::Recompile(
+@@ -2088,6 +2347,7 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_VSEL:
@@ -552,7 +573,7 @@ index fa91527..2a1de2d 100644
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_or_si128(simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)), simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8))));", v(insn.operands[0]), v(insn.operands[3]), v(insn.operands[1]), v(insn.operands[3]), v(insn.operands[2]));
          break;
  
-@@ -2212,6 +2474,20 @@ bool Recompiler::Recompile(
+@@ -2212,6 +2472,20 @@ bool Recompiler::Recompile(
              println("\t{} = {};", v(insn.operands[0]), vTemp());
              break;
  
@@ -573,7 +594,7 @@ index fa91527..2a1de2d 100644
          default:
              println("\t__builtin_debugtrap();");
              break;
-@@ -2510,6 +2786,11 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
+@@ -2510,6 +2784,11 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
          println("#ifndef PPC_CONFIG_H_INCLUDED");
          println("#define PPC_CONFIG_H_INCLUDED\n");
  

@@ -20,6 +20,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 7 | Vector stores and vslo in one step | The recompiler emits stvlx/stvrx as one translated copy with one dirty mark (they stored a byte at a time, each translated and marked) and vslo as one byte shuffle; the hottest guest function (sub_823BB4D8, ~12% of the title's main thread) takes 55% less time. Mac 64.4 → 65.6 fps |
 | Nov 7 | Renderer CPU trims | The command processor drops register writes of the value already sent and sends one `Arc` per distinct microcode (the renderer knows shaders by pointer instead of hashing them per load); changed float constants are applied walking the mask bits. Renderer-bound benchmark (`--render-debug solid --vblank-hz 1000`): 114.6 → 117.8 fps |
 | Nov 7 | One mirror buffer on Apple GPUs | The guest memory mirror is one 128 MiB buffer on Apple targets (four 32 MiB ones elsewhere), so shader loads skip the switch over buffers: Mac 62.5 → 64.4 fps |
 | Nov 7 | Fewer submissions, cheaper vertex fetch | Vertex fetches look up their vertex's mirror slot once (vertex time 254 → 194 ms/s); a full constant set no longer submits (the batch moves to another set; submits 13 → 3 per frame, which left ~1.8 ms/frame of GPU idle at command buffer boundaries); render passes capped at 128 draws (1000-draw passes were ~25% slower); iOS presents with a 1/120 s minimum duration (ProMotion reaches 120 Hz), thermal state logged; encoders ended on drop (shutdown crash) |
