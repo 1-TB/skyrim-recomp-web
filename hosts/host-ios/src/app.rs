@@ -27,9 +27,10 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSRunLoop, NSRunLoopCommonModes, NSSet, NSString};
 use objc2_quartz_core::{CADisplayLink, CAFrameRateRange, CAMetalLayer};
 use objc2_ui_kit::{
-    NSTextAlignment, UIApplication, UIApplicationDelegate, UIColor, UIEvent, UIFont, UIInterfaceOrientationMask, UILabel,
-    UIRectEdge, UIResponder, UIScene, UISceneConnectionOptions, UISceneDelegate, UISceneSession, UITouch, UIView,
-    UIViewController, UIWindow, UIWindowScene, UIWindowSceneDelegate,
+    NSTextAlignment, UIApplication, UIApplicationDelegate, UIButton, UIButtonType, UIColor, UIControlEvents,
+    UIControlState, UIEvent, UIFont, UIInterfaceOrientationMask, UILabel, UIRectEdge, UIResponder, UIScene,
+    UISceneConnectionOptions, UISceneDelegate, UISceneSession, UITouch, UIView, UIViewController, UIWindow,
+    UIWindowScene, UIWindowSceneDelegate,
 };
 use xenos_render::native::{Window as RenderWindow, WindowHandles};
 
@@ -72,6 +73,13 @@ struct State {
     pad_connected: bool,
     /// The title's rumble on the controller.
     rumble: pads::Rumble,
+    /// The settings in effect, once playing (the panel opened in game starts from them).
+    current: Option<Settings>,
+    /// Opens the settings in game (hidden while a controller is connected: Back + Start).
+    gear: Option<Retained<UIButton>>,
+    /// Back + Start were held at the last poll; the settings open when they're pressed.
+    combo_held: bool,
+    open_requested: bool,
     /// Thermal state and Low Power Mode at the last tick: either one makes iOS hold the
     /// display at 60 Hz, which the fps figures alone don't show.
     power_seen: Option<(isize, bool)>,
@@ -94,6 +102,10 @@ thread_local! {
         status_seen: 0,
         pad_connected: false,
         rumble: pads::Rumble::default(),
+        current: None,
+        gear: None,
+        combo_held: false,
+        open_requested: false,
         power_seen: None,
     });
 }
@@ -158,6 +170,11 @@ define_class!(
 
         #[unsafe(method(sceneDidBecomeActive:))]
         fn scene_did_become_active(&self, _scene: &UIScene) {
+            // The settings opened in game keep it paused until Resume.
+            if with_state(|s| s.panel.is_some() && s.current.is_some()).unwrap_or(false) {
+                log::info!("app active; paused in the settings");
+                return;
+            }
             log::info!("app active; renderer running");
             xenos_render::native::set_paused(false);
         }
@@ -262,12 +279,22 @@ define_class!(
                 panel.remove();
                 // Touches on the panel reached the controls under it too.
                 s.touch.reset();
-                Some(settings)
+                Some((settings, s.current))
             })
             .flatten();
-            if let Some(settings) = settings {
+            if let Some((settings, Some(old))) = settings {
+                apply(self, old, settings);
+                return;
+            }
+            if let Some((settings, None)) = settings {
                 play(self, settings);
             }
+        }
+
+        /// The ⚙ button: the settings, in game.
+        #[unsafe(method(openSettings:))]
+        fn open_settings_action(&self, _sender: &AnyObject) {
+            open_settings(self);
         }
 
         #[unsafe(method(tick:))]
@@ -279,10 +306,17 @@ define_class!(
                 if let (Some(fps), Some(kernel)) = (&mut s.fps, KERNEL.get()) {
                     fps.update(kernel.gpu.swap_count());
                 }
+                let in_menu = s.panel.is_some();
                 if let Some(overlay) = &mut s.overlay {
-                    overlay.draw(&mut s.touch, !s.pad_connected);
+                    overlay.draw(&mut s.touch, !s.pad_connected && !in_menu);
+                }
+                if let Some(gear) = &s.gear {
+                    gear.setHidden(s.pad_connected || in_menu);
                 }
             });
+            if with_state(|s| std::mem::take(&mut s.open_requested)).unwrap_or(false) {
+                open_settings(self);
+            }
         }
     }
 );
@@ -339,7 +373,7 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
         play(&view, settings);
         return;
     }
-    with_state(|s| s.panel = Some(Panel::new(mtm, &view, &settings, &view)));
+    with_state(|s| s.panel = Some(Panel::new(mtm, &view, &settings, &view, false)));
     layout(&view);
 }
 
@@ -350,6 +384,8 @@ fn play(view: &SkyrtView, settings: Settings) {
         if settings.show_fps {
             s.fps = Some(FpsLabel::new(mtm, view));
         }
+        s.current = Some(settings);
+        s.gear = Some(gear_button(mtm, view));
         Some((s.boot.take()?, s.render_window.take()?))
     })
     .flatten();
@@ -386,6 +422,9 @@ fn layout(view: &SkyrtView) {
         }
         if let Some(fps) = &s.fps {
             fps.layout(area);
+        }
+        if let Some(gear) = &s.gear {
+            gear.setFrame(rect(area.origin.x + area.size.width / 2.0 - 20.0, area.origin.y + 6.0, 40.0, 40.0));
         }
         if let Some(status) = &s.status {
             let margin = area.size.width * 0.1;
@@ -441,7 +480,21 @@ fn poll_input(s: &mut State) {
         left: t.left,
         right: t.right,
     };
-    let state = [pad, pads::keyboard()].into_iter().flatten().fold(touch, Reading::merge).gamepad();
+    let mut state = [pad, pads::keyboard()].into_iter().flatten().fold(touch, Reading::merge).gamepad();
+    // Back + Start together open the settings (and don't reach the title).
+    let combo = pads::bits::BACK | pads::bits::START;
+    let held = pad.is_some_and(|p| p.buttons & combo == combo);
+    if held {
+        if !s.combo_held && s.current.is_some() && s.panel.is_none() {
+            s.open_requested = true;
+        }
+        state.buttons &= !combo;
+    }
+    s.combo_held = held;
+    // While the settings are open the title sees no input.
+    if s.panel.is_some() {
+        state = Gamepad::default();
+    }
     let Some(kernel) = KERNEL.get() else { return };
     let speeds = if s.pad_connected { kernel.input.vibration(0).unwrap_or((0, 0)) } else { (0, 0) };
     s.rumble.update(speeds, std::time::Instant::now());
@@ -509,4 +562,77 @@ fn start_audio_session() {
             log::warn!("audio session: {}", e.localizedDescription());
         }
     }
+}
+
+/// The ⚙ button that opens the settings in game.
+fn gear_button(mtm: MainThreadMarker, view: &SkyrtView) -> Retained<UIButton> {
+    let gear = UIButton::buttonWithType(UIButtonType::System, mtm);
+    gear.setTitle_forState(Some(&NSString::from_str("⚙︎")), UIControlState::Normal);
+    // SAFETY: colors, fonts and the target on the main thread; the view (the target) lives as
+    // long as the process and implements `openSettings:`.
+    unsafe {
+        gear.setTitleColor_forState(Some(&UIColor::colorWithWhite_alpha(1.0, 0.75)), UIControlState::Normal);
+        gear.setBackgroundColor(Some(&UIColor::colorWithWhite_alpha(0.0, 0.3)));
+        if let Some(l) = gear.titleLabel() {
+            l.setFont(Some(&UIFont::systemFontOfSize(22.0)));
+        }
+        gear.layer().setCornerRadius(20.0);
+        gear.addTarget_action_forControlEvents(Some(view), sel!(openSettings:), UIControlEvents::TouchUpInside);
+    }
+    view.addSubview(&gear);
+    gear
+}
+
+/// Shows the settings over the game, which pauses until Resume.
+fn open_settings(view: &SkyrtView) {
+    let mtm = view.mtm();
+    let opened = with_state(|s| {
+        let current = s.current?;
+        if s.panel.is_some() {
+            return None;
+        }
+        s.touch.reset();
+        s.panel = Some(Panel::new(mtm, view, &current, view, true));
+        Some(())
+    })
+    .flatten();
+    if opened.is_some() {
+        log::info!("settings opened in game; pausing the renderer");
+        xenos_render::native::set_paused(true);
+        layout(view);
+    }
+}
+
+/// Applies settings chosen in game: the presentation ones at once, resolution, anti-aliasing and
+/// texture filtering at the renderer's next frame (its surfaces are made again then).
+fn apply(view: &SkyrtView, old: Settings, new: Settings) {
+    log::info!("settings changed in game: {new:?}");
+    if let Ok(aspect) = new.aspect.parse() {
+        xenos_render::set_aspect(aspect);
+    }
+    xenos_render::set_metalfx(new.metalfx);
+    if let Some(kernel) = KERNEL.get() {
+        // The title presents every second vblank.
+        kernel.gpu.set_vblank_hz(new.fps_cap * 2);
+    }
+    if (new.resolution_scale, new.msaa, new.anisotropy) != (old.resolution_scale, old.msaa, old.anisotropy) {
+        if let Err(e) = xenos_render::set_resolution_scale(new.resolution_scale) {
+            log::warn!("settings: {e}");
+        }
+        xenos_render::set_single_sample(!new.msaa);
+        xenos_render::set_min_anisotropy(new.anisotropy);
+        xenos_render::reconfigure();
+    }
+    let mtm = view.mtm();
+    with_state(|s| {
+        s.current = Some(new);
+        match (new.show_fps, s.fps.take()) {
+            (true, None) => s.fps = Some(FpsLabel::new(mtm, view)),
+            (true, Some(fps)) => s.fps = Some(fps),
+            (false, Some(fps)) => fps.remove(),
+            (false, None) => {}
+        }
+    });
+    layout(view);
+    xenos_render::native::set_paused(false);
 }

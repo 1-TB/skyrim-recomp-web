@@ -156,8 +156,15 @@ fn segments(mtm: MainThreadMarker, titles: &[&str], selected: usize) -> Retained
 }
 
 impl Panel {
-    /// Builds the panel in `parent` showing `settings`; Play sends `settingsPlay:` to `target`.
-    pub fn new(mtm: MainThreadMarker, parent: &UIView, settings: &Settings, target: &AnyObject) -> Panel {
+    /// Builds the panel in `parent` showing `settings`; Play (Resume when `in_game`: opened
+    /// while playing) sends `settingsPlay:` to `target`.
+    pub fn new(
+        mtm: MainThreadMarker,
+        parent: &UIView,
+        settings: &Settings,
+        target: &AnyObject,
+        in_game: bool,
+    ) -> Panel {
         let root = UIView::new(mtm);
         root.setBackgroundColor(Some(&UIColor::colorWithWhite_alpha(0.08, 0.96)));
         let index = |list: &[u32], v: u32| list.iter().position(|&x| x == v).unwrap_or(0);
@@ -191,15 +198,16 @@ impl Panel {
         let note = label(
             mtm,
             "Higher resolutions are sharper but cost frame rate (the GPU draws 4 or 9 times the \
-             pixels). Fill zooms to the screen's shape, cropping the top and bottom \
-             (and some of the HUD). Close the app to change these again; args.txt in Documents still \
-             overrides them.",
+             pixels). Fill zooms to the screen's shape, cropping the top and bottom (and some of \
+             the HUD). In game, the ⚙ button at the top (or Back + Start on a controller) opens \
+             these again; args.txt in Documents overrides them at launch.",
             13.0,
             0.6,
         );
         note.setNumberOfLines(0);
         let play = UIButton::buttonWithType(UIButtonType::System, mtm);
-        play.setTitle_forState(Some(&NSString::from_str("Play")), UIControlState::Normal);
+        let action = if in_game { "Resume" } else { "Play" };
+        play.setTitle_forState(Some(&NSString::from_str(action)), UIControlState::Normal);
         // SAFETY: colors and fonts on the main thread; the target outlives the button (it is the
         // game view, which lives as long as the process) and implements `settingsPlay:`.
         unsafe {
@@ -288,6 +296,10 @@ impl FpsLabel {
 
     pub fn layout(&self, area: CGRect) {
         self.label.setFrame(rect(area.origin.x + 8.0, area.origin.y + 8.0, 84.0, 26.0));
+    }
+
+    pub fn remove(&self) {
+        self.label.removeFromSuperview();
     }
 
     /// Updates the text about twice a second from the title's swap count.
