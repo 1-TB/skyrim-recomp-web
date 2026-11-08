@@ -23,6 +23,7 @@ targets:
       - sdk: CoreGraphics.framework
       - sdk: CoreText.framework
       - sdk: GameController.framework
+      - sdk: CoreHaptics.framework
       - sdk: AVFAudio.framework
       - sdk: AudioToolbox.framework
       - sdk: CoreAudio.framework
