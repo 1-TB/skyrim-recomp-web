@@ -371,6 +371,7 @@ fn dispatch(recomp_out: &Path) -> String {
     // wasm-opt (it didn't finish in an hour) and for Safari's optimizing tier (over 100 KB).
     const GROUP: usize = 1024;
     let groups = functions.len().div_ceil(GROUP);
+    writeln!(cpp, "#ifdef __EMSCRIPTEN__").unwrap();
     for (group, chunk) in functions.chunks(GROUP).enumerate() {
         writeln!(
             cpp,
@@ -382,6 +383,15 @@ fn dispatch(recomp_out: &Path) -> String {
         }
         writeln!(cpp, "    }}\n}}\n").unwrap();
     }
+    writeln!(cpp, "#endif\n").unwrap();
+    // Natively, one table of function pointers: a single indirect call instead of two switches'
+    // jumps (indirect calls are a hot path of the title's threads). Wasm keeps the switches.
+    writeln!(cpp, "#ifndef __EMSCRIPTEN__\nstatic void (*const skyrt_func_table[{}])(PPCContext&, uint8_t*) = {{", functions.len()).unwrap();
+    for chunk in functions.chunks(4) {
+        let line: Vec<String> = chunk.iter().map(|(_, name)| name.to_string()).collect();
+        writeln!(cpp, "    {},", line.join(", ")).unwrap();
+    }
+    writeln!(cpp, "}};\n#endif\n").unwrap();
     writeln!(
         cpp,
         r#"extern "C" [[noreturn]] void skyrt_missing_function(uint32_t addr, const PPCContext* ctx);
@@ -393,6 +403,10 @@ extern "C" void skyrt_call_func(uint32_t addr, PPCContext& __restrict ctx, uint8
         uint64_t bit = 1ull << (index & 63);
         if (starts & bit) {{
             uint32_t id = skyrt_func_first[index >> 6] + (uint32_t)__builtin_popcountll(starts & (bit - 1));
+#ifndef __EMSCRIPTEN__
+            skyrt_func_table[id](ctx, base);
+            return;
+#else
             switch (id / {GROUP}) {{"#,
         limit = blocks * 64,
     )
@@ -400,7 +414,7 @@ extern "C" void skyrt_call_func(uint32_t addr, PPCContext& __restrict ctx, uint8
     for group in 0..groups {
         writeln!(cpp, "            case {group}: skyrt_call_group_{group}(id, ctx, base); return;").unwrap();
     }
-    writeln!(cpp, "            }}\n        }}\n    }}\n    skyrt_missing_function(addr, &ctx);\n}}").unwrap();
+    writeln!(cpp, "            }}\n#endif\n        }}\n    }}\n    skyrt_missing_function(addr, &ctx);\n}}").unwrap();
     cpp
 }
 
