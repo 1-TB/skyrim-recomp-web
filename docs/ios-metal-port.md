@@ -20,6 +20,7 @@ z-fighting from host float32 depth where the Xbox stores float24. Open work is p
 
 | When | Milestone | Key changes |
 | --- | --- | --- |
+| Nov 7 | Relaxed shader math | Metal libraries compile with `MTLMathMode::Relaxed` (reassociation and FMA, NaN/Inf honored) instead of safe: Mac 65.6 → 71.5 fps, frames unchanged by eye; to check on the phone (woman by the fence, grass) |
 | Nov 7 | Vector stores and vslo in one step | The recompiler emits stvlx/stvrx as one translated copy with one dirty mark (they stored a byte at a time, each translated and marked) and vslo as one byte shuffle; the hottest guest function (sub_823BB4D8, ~12% of the title's main thread) takes 55% less time. Mac 64.4 → 65.6 fps |
 | Nov 7 | Renderer CPU trims | The command processor drops register writes of the value already sent and sends one `Arc` per distinct microcode (the renderer knows shaders by pointer instead of hashing them per load); changed float constants are applied walking the mask bits. Renderer-bound benchmark (`--render-debug solid --vblank-hz 1000`): 114.6 → 117.8 fps |
 | Nov 7 | One mirror buffer on Apple GPUs | The guest memory mirror is one 128 MiB buffer on Apple targets (four 32 MiB ones elsewhere), so shader loads skip the switch over buffers: Mac 62.5 → 64.4 fps |
