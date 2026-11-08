@@ -607,7 +607,9 @@ fn open_settings(view: &SkyrtView) {
 /// texture filtering at the renderer's next frame (its surfaces are made again then).
 fn apply(view: &SkyrtView, old: Settings, new: Settings) {
     log::info!("settings changed in game: {new:?}");
-    if let Ok(aspect) = new.aspect.parse() {
+    // The game's own frame shape is chosen at boot: switching to or from widescreen shows the
+    // current frame fitted until the next launch.
+    if let Ok(aspect) = new.presentation().parse() {
         xenos_render::set_aspect(aspect);
     }
     xenos_render::set_metalfx(new.metalfx);

@@ -59,6 +59,9 @@ options:
   --aspect MODE            how the 16:9 frame fills a window or screen of another shape: fit
                            (whole frame, black bars; default), fill (zoom in, cropping the
                            edges) or stretch
+  --game-aspect W:H        draw the game itself wider than 16:9 (true widescreen: more of the
+                           world to the sides, menus laid out for the shape), e.g. 19.5:9 for
+                           a phone; 720 pixels high, 1280-1920 wide (default 16:9)
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
                            scissor (shade one pixel per draw), nodraw (record but skip draw calls),
                            frames=N (let the renderer run N frames ahead of the GPU; default 2),
@@ -100,6 +103,8 @@ pub struct Options {
     pub holds: Vec<(Held, f64, f64)>,
     /// `--gpu` as given; without it the D3D path is used when the hooks were built for the title.
     pub gpu: Option<String>,
+    /// `--game-aspect`: the width the title draws at (720 pixels high).
+    pub game_width: Option<u32>,
     /// Host-specific flags the shared parser doesn't know.
     pub extra: Vec<(String, String)>,
 }
@@ -181,6 +186,15 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
             }
             "--metalfx" => xenos_render::set_metalfx(true),
             "--aspect" => xenos_render::set_aspect(value()?.parse()?),
+            "--game-aspect" => {
+                let v = value()?;
+                let ratio = v
+                    .split_once(':')
+                    .and_then(|(w, h)| Some(w.parse::<f64>().ok()? / h.parse::<f64>().ok()?))
+                    .filter(|r| r.is_finite() && *r > 0.0)
+                    .ok_or(format!("--game-aspect {v}: not W:H"))?;
+                o.game_width = Some(game_width(ratio));
+            }
             "--no-msaa" => xenos_render::set_single_sample(true),
             "--anisotropy" => {
                 let n: u16 = value()?.parse().map_err(|e| format!("--anisotropy: {e}"))?;
@@ -343,6 +357,28 @@ fn spawn_input_script(kernel: &'static Kernel, taps: &[(u16, f64)], holds: &[(He
     }
 }
 
+/// Height of the title's frame.
+const GAME_HEIGHT: u32 = 720;
+
+/// The width a title frame `GAME_HEIGHT` high has at width:height `ratio`: a multiple of 8,
+/// 1280 (16:9; narrower screens show the 16:9 frame with bars) to 1920 (8:3).
+pub fn game_width(ratio: f64) -> u32 {
+    ((ratio * f64::from(GAME_HEIGHT) / 8.0).round() as u32 * 8).clamp(1280, 1920)
+}
+
+/// Skyrim's renderer takes its frame size from `iSize W`/`iSize H` in `[Display]` when
+/// `bIgnoreResolutionCheck` is set (otherwise 1280x720 on a widescreen console), the way the PC
+/// version reads them from its INI; the console title's Skyrim.ini has no such section, so the
+/// settings are added to what it reads. Its camera keeps the vertical field of view and widens
+/// the horizontal one, and its menus lay themselves out for the frame's shape.
+fn set_game_width(vfs: &Vfs, width: u32) {
+    let settings = format!("[Display]\r\nbIgnoreResolutionCheck=1\r\niSize W={width}\r\niSize H={GAME_HEIGHT}\r\n");
+    match vfs.append_on_read("game:\\Skyrim.ini", settings.as_bytes()) {
+        Ok(()) => log::info!("game frame {width}x{GAME_HEIGHT}"),
+        Err(e) => log::warn!("--game-aspect: {e}"),
+    }
+}
+
 /// Loads the title (`--xex`, else the game root's `default.xex`), boots its main thread and
 /// waits for it. Returns the exit code. `on_kernel` sees the kernel before any guest code runs.
 /// Content goes to `--content`, else `default_content`.
@@ -383,6 +419,9 @@ pub fn run(
     }
     for (name, device) in &o.links {
         vfs.add_symlink(name, device);
+    }
+    if let Some(width) = o.game_width.filter(|&w| w != 1280) {
+        set_game_width(&vfs, width);
     }
 
     let kernel = Kernel::new(rt, vfs, o.stubs.clone(), guest_sys::IMPORT_NAMES)?;

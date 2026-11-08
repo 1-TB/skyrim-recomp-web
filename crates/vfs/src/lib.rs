@@ -238,6 +238,8 @@ pub enum Node {
 enum FileImpl {
     Host(File),
     Remote { tree: Arc<remote::RemoteTree>, path: String, size: u64 },
+    /// A file read whole with [`Vfs::append_on_read`]'s text added.
+    Memory(Arc<[u8]>),
 }
 
 pub struct VfsFile {
@@ -282,6 +284,12 @@ impl VfsFile {
         let file = match &self.file {
             FileImpl::Host(f) => f,
             FileImpl::Remote { tree, path, size } => return tree.read_at(path, *size, offset, buf),
+            FileImpl::Memory(data) => {
+                let start = (offset as usize).min(data.len());
+                let n = buf.len().min(data.len() - start);
+                buf[..n].copy_from_slice(&data[start..start + n]);
+                return Ok(n);
+            }
         };
         let mut done = 0;
         while done < buf.len() {
@@ -305,7 +313,9 @@ impl VfsFile {
         }
         match &self.file {
             FileImpl::Host(f) => f.write_all_at(buf, offset)?,
-            FileImpl::Remote { .. } => return Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            FileImpl::Remote { .. } | FileImpl::Memory(_) => {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
         }
         Ok(buf.len())
     }
@@ -314,6 +324,7 @@ impl VfsFile {
         match &self.file {
             FileImpl::Host(f) => Ok(f.metadata()?.len()),
             FileImpl::Remote { size, .. } => Ok(*size),
+            FileImpl::Memory(data) => Ok(data.len() as u64),
         }
     }
 
@@ -327,7 +338,7 @@ impl VfsFile {
         }
         match &self.file {
             FileImpl::Host(f) => f.set_len(len),
-            FileImpl::Remote { .. } => Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            FileImpl::Remote { .. } | FileImpl::Memory(_) => Err(io::Error::from(io::ErrorKind::PermissionDenied)),
         }
     }
 
@@ -342,6 +353,7 @@ impl VfsFile {
         match &self.file {
             FileImpl::Host(f) => Ok(Metadata::from_fs(&f.metadata()?, self.read_only)),
             FileImpl::Remote { size, .. } => Ok(Metadata::remote(remote::RemoteKind::File { size: *size })),
+            FileImpl::Memory(data) => Ok(Metadata::remote(remote::RemoteKind::File { size: data.len() as u64 })),
         }
     }
 }
@@ -391,6 +403,9 @@ pub struct Vfs {
     devices: RwLock<Vec<Arc<Device>>>,
     /// Lower-cased link name (`game:`) -> target path (`\Device\Cdrom0`).
     links: RwLock<HashMap<String, String>>,
+    /// Lower-cased device path (`\device\cdrom0\skyrim.ini`) -> bytes added to the file
+    /// when it is opened for reading (see [`Vfs::append_on_read`]).
+    appends: RwLock<HashMap<String, Arc<[u8]>>>,
 }
 
 impl Vfs {
@@ -532,8 +547,36 @@ impl Vfs {
         Err(VfsError::NoSuchDevice(guest.to_string()))
     }
 
+    /// Files opened for reading at `guest` (a path any link resolves to) read as their contents
+    /// followed by `extra`, without changing the file: settings the host adds to a title's own
+    /// configuration file (a later line for the same setting wins there).
+    pub fn append_on_read(&self, guest: &str, extra: &[u8]) -> Result<()> {
+        let r = self.resolve(guest)?;
+        // On a line of its own even after a file without a final line break.
+        let extra: Vec<u8> = [b"\r\n", extra].concat();
+        self.appends.write().unwrap().insert(r.guest_path.to_ascii_lowercase(), extra.into());
+        Ok(())
+    }
+
+    fn appended(&self, r: &Resolved) -> Option<Arc<[u8]>> {
+        let appends = self.appends.read().unwrap();
+        if appends.is_empty() {
+            return None;
+        }
+        appends.get(&r.guest_path.to_ascii_lowercase()).cloned()
+    }
+
     pub fn metadata(&self, guest: &str) -> Result<Metadata> {
         let r = self.resolve(guest)?;
+        if let Some(extra) = self.appended(&r) {
+            let mut m = self.metadata_of(&r)?;
+            m.size += extra.len() as u64;
+            return Ok(m);
+        }
+        self.metadata_of(&r)
+    }
+
+    fn metadata_of(&self, r: &Resolved) -> Result<Metadata> {
         if let Some(tree) = &r.device.remote {
             let path = remote_path(&r.host_path);
             return match tree.lookup(&path) {
@@ -551,6 +594,24 @@ impl Vfs {
     /// NtCreateFile semantics.
     pub fn open(&self, guest: &str, req: OpenRequest) -> Result<(Node, CreateAction)> {
         let r = self.resolve(guest)?;
+        let reads = !req.write && matches!(req.disposition, Disposition::Open | Disposition::OpenIf);
+        if let Some(extra) = self.appended(&r).filter(|_| reads) {
+            let (node, action) = self.open_resolved(r, req)?;
+            let Node::File(mut f) = node else { return Ok((node, action)) };
+            let mut data = vec![0; f.len()? as usize];
+            let n = f.read_at(&mut data, 0)?;
+            data.truncate(n);
+            data.extend_from_slice(&extra);
+            if matches!(std::mem::replace(&mut f.file, FileImpl::Memory(data.into())), FileImpl::Host(_)) {
+                stats::OPEN_FILES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            f.read_only = true;
+            return Ok((Node::File(f), action));
+        }
+        self.open_resolved(r, req)
+    }
+
+    fn open_resolved(&self, r: Resolved, req: OpenRequest) -> Result<(Node, CreateAction)> {
         if let Some(tree) = r.device.remote.clone() {
             return open_remote(tree, r, req);
         }

@@ -31,20 +31,22 @@ pub struct Settings {
     pub metalfx: bool,
     /// The title's 4x multisample anti-aliasing (off: faster).
     pub msaa: bool,
-    /// How the 16:9 frame fills the wider screen (`--aspect`): fit, fill or stretch.
+    /// How the game fills the wider screen: wide (the game itself drawn at the screen's shape,
+    /// `--game-aspect`; from the next launch) or how a 16:9 frame does (`--aspect`): fit, fill
+    /// or stretch.
     pub aspect: &'static str,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true, aspect: "fit" }
+        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true, aspect: "wide" }
     }
 }
 
 const SCALES: [u32; 3] = [1, 2, 3];
 const ANISOTROPY: [u16; 4] = [1, 4, 8, 16];
 const FPS_CAPS: [u32; 3] = [30, 60, 120];
-const ASPECTS: [&str; 3] = ["fit", "fill", "stretch"];
+const ASPECTS: [&str; 4] = ["wide", "fit", "fill", "stretch"];
 
 impl Settings {
     /// Reads `path` (`key=value` lines); missing or unknown values keep their defaults.
@@ -94,19 +96,23 @@ impl Settings {
         }
     }
 
-    /// The command-line options for these settings.
-    pub fn args(&self) -> Vec<String> {
+    /// The command-line options for these settings on a `screen` (width, height) display.
+    pub fn args(&self, screen: (u32, u32)) -> Vec<String> {
         // The title presents every second vblank.
         let vblank = self.fps_cap * 2;
         let mut args: Vec<String> = [
             ("--resolution-scale", self.resolution_scale.to_string()),
             ("--anisotropy", self.anisotropy.to_string()),
             ("--vblank-hz", vblank.to_string()),
-            ("--aspect", self.aspect.to_string()),
+            ("--aspect", self.presentation().to_string()),
         ]
         .into_iter()
         .flat_map(|(flag, value)| [flag.to_string(), value])
         .collect();
+        if self.aspect == "wide" && screen.0 > 0 && screen.1 > 0 {
+            let (w, h) = (screen.0.max(screen.1), screen.0.min(screen.1));
+            args.extend(["--game-aspect".to_string(), format!("{w}:{h}")]);
+        }
         if self.metalfx {
             args.push("--metalfx".to_string());
         }
@@ -114,6 +120,13 @@ impl Settings {
             args.push("--no-msaa".to_string());
         }
         args
+    }
+}
+
+impl Settings {
+    /// `--aspect` for these settings: a frame the game draws at the screen's shape fits it.
+    pub fn presentation(&self) -> &'static str {
+        if self.aspect == "wide" { "fit" } else { self.aspect }
     }
 }
 
@@ -179,7 +192,7 @@ impl Panel {
         let msaa = segments(mtm, &["Off (faster)", "4× MSAA"], usize::from(settings.msaa));
         let aspect = segments(
             mtm,
-            &["Fit (16:9)", "Fill (crop)", "Stretch"],
+            &["Widescreen", "16:9", "Fill (crop)", "Stretch"],
             ASPECTS.iter().position(|&a| a == settings.aspect).unwrap_or(0),
         );
         let show_fps = UISwitch::new(mtm);
@@ -198,8 +211,9 @@ impl Panel {
         let note = label(
             mtm,
             "Higher resolutions are sharper but cost frame rate (the GPU draws 4 or 9 times the \
-             pixels). Fill zooms to the screen's shape, cropping the top and bottom (and some of \
-             the HUD). In game, the ⚙ button at the top (or Back + Start on a controller) opens \
+             pixels). Widescreen shows more of the world at the sides (about 20% more pixels to \
+             draw; changing it takes effect when the app next starts). Fill zooms a 16:9 frame to \
+             the screen, cropping the top and bottom. In game, the ⚙ button at the top (or Back + Start on a controller) opens \
              these again; args.txt in Documents overrides them at launch.",
             13.0,
             0.6,

@@ -70,7 +70,8 @@ pub extern "C" fn skyrt_ios_main() {
             "--content".to_string(),
             docs.join("content").display().to_string(),
         ];
-        args.extend(settings.args());
+        let size = window.size.load(std::sync::atomic::Ordering::Relaxed);
+        args.extend(settings.args(((size >> 32) as u32, size as u32)));
         args.extend(extra);
         let mut opts = match boot::parse(args.into_iter(), &["--dump-frames", "--dump-every"]) {
             Ok(o) => o,

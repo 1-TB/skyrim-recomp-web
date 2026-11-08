@@ -214,3 +214,23 @@ mod remote_game {
         assert_eq!(names, ["a.cfg"]);
     }
 }
+
+#[test]
+fn appended_settings_are_read_after_the_file() {
+    let root = fixture();
+    fs::write(root.join("Skyrim.ini"), b"[General]\r\nsLanguage=ENGLISH").unwrap();
+    let v = Vfs::with_game_root(&root);
+    v.append_on_read("game:\\Skyrim.ini", b"[Display]\r\niSize W=1560\r\n").unwrap();
+    let expected: &[u8] = b"[General]\r\nsLanguage=ENGLISH\r\n[Display]\r\niSize W=1560\r\n";
+    // Any spelling of the path, through any link.
+    let Ok((Node::File(f), _)) = v.open("D:\\SKYRIM.INI", OpenRequest::read()) else { panic!("not opened") };
+    assert_eq!(f.len().unwrap(), expected.len() as u64);
+    let mut buf = vec![0; 100];
+    let n = f.read_at(&mut buf, 0).unwrap();
+    assert_eq!(&buf[..n], expected);
+    assert_eq!(f.read_at(&mut buf, 30).unwrap(), expected.len() - 30);
+    assert_eq!(v.metadata("game:\\skyrim.ini").unwrap().size, expected.len() as u64);
+    assert!(f.write_at(b"x", 0).is_err());
+    // The file itself is unchanged.
+    assert_eq!(fs::read(root.join("Skyrim.ini")).unwrap(), b"[General]\r\nsLanguage=ENGLISH");
+}
