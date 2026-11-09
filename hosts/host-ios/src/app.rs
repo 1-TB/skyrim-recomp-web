@@ -83,6 +83,11 @@ struct State {
     /// Thermal state and Low Power Mode at the last tick: either one makes iOS hold the
     /// display at 60 Hz, which the fps figures alone don't show.
     power_seen: Option<(isize, bool)>,
+    /// Display link callbacks since `display_since` (link timestamp) and the sum of the
+    /// intervals the system asked for, for the refresh-rate log line.
+    display_ticks: u32,
+    display_since: Option<f64>,
+    display_asked: f64,
 }
 
 thread_local! {
@@ -107,6 +112,9 @@ thread_local! {
         combo_held: false,
         open_requested: false,
         power_seen: None,
+        display_ticks: 0,
+        display_since: None,
+        display_asked: 0.0,
     });
 }
 
@@ -298,11 +306,12 @@ define_class!(
         }
 
         #[unsafe(method(tick:))]
-        fn tick(&self, _link: &CADisplayLink) {
+        fn tick(&self, link: &CADisplayLink) {
             with_state(|s| {
                 poll_input(s);
                 update_status(s);
                 log_power_state(s);
+                log_display_rate(s, link);
                 if let (Some(fps), Some(kernel)) = (&mut s.fps, KERNEL.get()) {
                     fps.update(kernel.gpu.swap_count());
                 }
@@ -516,6 +525,33 @@ fn update_status(s: &mut State) {
     if let Some(text) = crate::status::take_change(&mut s.status_seen) {
         label.setHidden(text.is_none());
         label.setText(text.map(|t| NSString::from_str(&t)).as_deref());
+    }
+}
+
+/// Every 5 s: how often the display link actually fired (the screen's refresh rate while the
+/// game runs) and the frame interval the system scheduled, to tell a 60 Hz display from a
+/// slow GPU when the frame rate drops.
+fn log_display_rate(s: &mut State, link: &CADisplayLink) {
+    // SAFETY: plain property reads on the display link calling us.
+    let (now, target) = unsafe { (link.timestamp(), link.targetTimestamp()) };
+    let Some(since) = s.display_since else {
+        s.display_since = Some(now);
+        return;
+    };
+    s.display_ticks += 1;
+    s.display_asked += target - now;
+    let window = now - since;
+    if window >= 5.0 {
+        let ticks = s.display_ticks as f64;
+        log::info!(
+            "display: refresh {:.0} Hz ({:.0} callbacks/s), scheduled interval {:.2} ms",
+            ticks / s.display_asked.max(1e-9),
+            ticks / window,
+            1000.0 * s.display_asked / ticks
+        );
+        s.display_ticks = 0;
+        s.display_asked = 0.0;
+        s.display_since = Some(now);
     }
 }
 

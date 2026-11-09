@@ -266,6 +266,7 @@ fn run(
     let mut report_at = std::time::Instant::now();
     let mut report_calls = gpu_webgpu::counters::snapshot();
     let mut report_times = renderer.executor.times();
+    let mut report_gpu = gpu_webgpu::counters::gpu_busy();
     let mut report_draws = renderer.executor.stats.draws;
     // Per frame, for the slow-frame log: the renderer's work and GPU waits since the last frame.
     let mut frame_times = renderer.executor.times();
@@ -349,8 +350,19 @@ fn run(
             let frames = presents.len() as u64;
             let fps = frames as f64 / window.as_secs_f64();
             let draws = renderer.executor.stats.draws;
+            let gpu_now = gpu_webgpu::counters::gpu_busy();
+            let gpu = gpu_now - std::mem::replace(&mut report_gpu, gpu_now);
+            let gpu = if gpu.is_zero() {
+                String::new()
+            } else {
+                format!(
+                    ", GPU busy {:.0}% ({:.2} ms/frame)",
+                    100.0 * gpu.as_secs_f64() / window.as_secs_f64(),
+                    gpu.as_secs_f64() * 1000.0 / frames.max(1) as f64
+                )
+            };
             log::info!(
-                "perf: {fps:.1} fps, {} draws/frame; renderer busy {:.0}%, presenting {:.0}%; {}",
+                "perf: {fps:.1} fps, {} draws/frame; renderer busy {:.0}%, presenting {:.0}%{gpu}; {}",
                 (draws - report_draws) / frames.max(1),
                 100.0 * busy.as_secs_f64() / window.as_secs_f64(),
                 100.0 * present_time.as_secs_f64() / window.as_secs_f64(),

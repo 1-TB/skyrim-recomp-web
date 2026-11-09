@@ -79,6 +79,14 @@
 			</array>
 		</dict>
 	</dict>
+	<!-- A game: iOS turns on Game Mode while it runs full screen (background work throttled,
+	     lower controller and AirPods latency). -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.games</string>
+	<key>GCSupportsGameMode</key>
+	<true/>
+	<key>LSSupportsGameMode</key>
+	<true/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

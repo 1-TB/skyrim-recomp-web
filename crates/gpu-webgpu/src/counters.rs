@@ -110,3 +110,26 @@ pub fn take_written_by_label() -> Vec<(String, u64, u64)> {
     v.sort_by(|a, b| b.2.cmp(&a.2));
     v
 }
+
+/// Time the GPU spent executing our command buffers (overlaps counted once), where the backend
+/// can tell (Metal); stays zero elsewhere.
+static GPU_BUSY_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static GPU_LAST_END: std::sync::Mutex<f64> = std::sync::Mutex::new(0.0);
+
+/// Records that a command buffer ran on the GPU from `start` to `end` (seconds, one clock).
+pub fn gpu_ran(start: f64, end: f64) {
+    if !(end > start && start > 0.0) {
+        return;
+    }
+    let mut last = GPU_LAST_END.lock().unwrap_or_else(|e| e.into_inner());
+    let from = start.max(*last);
+    if end > from {
+        GPU_BUSY_NS.fetch_add(((end - from) * 1e9) as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+    *last = last.max(end);
+}
+
+/// Total GPU execution time recorded so far.
+pub fn gpu_busy() -> std::time::Duration {
+    std::time::Duration::from_nanos(GPU_BUSY_NS.load(std::sync::atomic::Ordering::Relaxed))
+}

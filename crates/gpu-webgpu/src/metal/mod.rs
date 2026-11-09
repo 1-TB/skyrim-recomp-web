@@ -603,6 +603,7 @@ impl Shared {
                     let message = cb.error().map(|e| e.to_string()).unwrap_or_else(|| "unknown".into());
                     tracker.errors.lock().unwrap().push(format!("command buffer failed: {message}"));
                 }
+                crate::counters::gpu_ran(cb.GPUStartTime(), cb.GPUEndTime());
                 tracker.completed.fetch_max(serial, Ordering::AcqRel);
             });
             unsafe { last.addCompletedHandler(block2::RcBlock::as_ptr(&block)) };
@@ -615,6 +616,7 @@ impl Shared {
                         let message = cb.error().map(|e| e.to_string()).unwrap_or_else(|| "unknown".into());
                         tracker.errors.lock().unwrap().push(format!("command buffer failed: {message}"));
                     }
+                    crate::counters::gpu_ran(cb.GPUStartTime(), cb.GPUEndTime());
                 });
                 unsafe { cb.addCompletedHandler(block2::RcBlock::as_ptr(&block)) };
             }
