@@ -65,14 +65,17 @@ fn main() {
     let shim = out_dir.join("skyrt_imports.cpp");
     let (mut cpp, rust) = generate(&imports, &module_of, &names, &declared);
     cpp.push_str(&title_overrides(xex.execution_info().map(|e| (e.title_id, e.version)), &declared));
-    fs::write(&shim, cpp).unwrap();
+    let shim_text = cpp;
+    fs::write(&shim, &shim_text).unwrap();
     fs::write(out_dir.join("imports.rs"), rust).unwrap();
 
     let simde = xenon_dir.join("thirdparty/simde");
     if !simde.join("x86/avx.h").exists() {
         fail(format!("{} has no simde headers; clone XenonRecomp with --recursive", xenon_dir.display()));
     }
-    let overlay = overlay_context_header(&recomp_out, &cpp_dir, &out_dir);
+    // Guest functions the shim defines itself (import thunks, title overrides, hooks).
+    let overridden: HashSet<&str> = cpp_text_definitions(&shim_text);
+    let overlay = overlay_context_header(&recomp_out, &cpp_dir, &out_dir, &declared, &overridden);
     let dispatch_cpp = out_dir.join("skyrt_dispatch.cpp");
     let text = dispatch(&recomp_out);
     if fs::read_to_string(&dispatch_cpp).ok().as_deref() != Some(text.as_str()) {
@@ -253,7 +256,13 @@ fn check_generated(dir: &Path) {
 /// it from there; building against the current file instead lets the header's helpers (memory
 /// access, view folding, dirty marking) change without recompiling the title, as long as the
 /// macros the generated code uses stay the same (`SKYRT_PPC_CONTEXT_FORK`, checked above).
-fn overlay_context_header(recomp_out: &Path, cpp_dir: &Path, out_dir: &Path) -> PathBuf {
+fn overlay_context_header(
+    recomp_out: &Path,
+    cpp_dir: &Path,
+    out_dir: &Path,
+    declared: &HashSet<String>,
+    overridden: &HashSet<&str>,
+) -> PathBuf {
     // Files are only replaced when they change, so unchanged sources aren't rebuilt.
     let overlay = out_dir.join("recomp-overlay");
     fs::create_dir_all(&overlay).unwrap_or_else(|e| fail(format!("{}: {e}", overlay.display())));
@@ -261,7 +270,7 @@ fn overlay_context_header(recomp_out: &Path, cpp_dir: &Path, out_dir: &Path) -> 
     for entry in entries {
         let entry = entry.unwrap_or_else(|e| fail(format!("{}: {e}", recomp_out.display())));
         let name = entry.file_name();
-        if name == "ppc_context.h" {
+        if name == "ppc_context.h" || name == "ppc_recomp_shared.h" {
             continue;
         }
         let target = recomp_out.join(&name).canonicalize().unwrap_or_else(|e| fail(format!("{name:?}: {e}")));
@@ -281,7 +290,108 @@ fn overlay_context_header(recomp_out: &Path, cpp_dir: &Path, out_dir: &Path) -> 
     if fs::read_to_string(&copy).ok().as_deref() != Some(text.as_str()) {
         fs::write(&copy, text).unwrap_or_else(|e| fail(format!("{}: {e}", copy.display())));
     }
+    let shared = recomp_out.join("ppc_recomp_shared.h");
+    let mut text = fs::read_to_string(&shared).unwrap_or_else(|e| fail(format!("{}: {e}", shared.display())));
+    text.push_str(&direct_calls(declared, overridden, &standard_gpr_helpers(recomp_out)));
+    let copy = overlay.join("ppc_recomp_shared.h");
+    if fs::read_to_string(&copy).ok().as_deref() != Some(text.as_str()) {
+        // Replaces the symlink earlier versions of this script made.
+        let _ = fs::remove_file(&copy);
+        fs::write(&copy, text).unwrap_or_else(|e| fail(format!("{}: {e}", copy.display())));
+    }
     overlay
+}
+
+/// Names of the functions `text` (the shim) defines with `PPC_FUNC(name) {`.
+fn cpp_text_definitions(text: &str) -> HashSet<&str> {
+    text.lines()
+        .filter_map(|l| l.strip_prefix("PPC_FUNC(")?.split_once(')'))
+        .filter(|(_, rest)| rest.trim_start().starts_with('{'))
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Appended to ppc_recomp_shared.h: makes calls between recompiled functions direct.
+///
+/// XenonRecomp emits each function as `__imp__sub_X` plus a weak `sub_X` that only calls it, and
+/// every call goes through the weak one so a host can replace a function by defining `sub_X`.
+/// That is a second jump on every guest call (2-4% of the process's CPU time in Skyrim), and it
+/// hides the callee from the compiler. The shim's replacements are known here, so every other
+/// name becomes its `__imp__` body outright and the weak wrappers are not emitted at all.
+///
+/// `gpr_helpers` (see [`standard_gpr_helpers`]) become cpp/ppc_context.h's one-pass versions
+/// instead, one shared copy each: inlining them at every call site measured the same and added
+/// 7 MB of code.
+fn direct_calls(declared: &HashSet<String>, overridden: &HashSet<&str>, gpr_helpers: &[(String, &str, u32)]) -> String {
+    let mut names: Vec<&str> = declared
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !n.starts_with("__imp__") && !overridden.contains(n))
+        .collect();
+    names.sort_unstable();
+    let mut text = String::from(
+        "\n// Added by crates/guest-sys/build.rs (fn direct_calls).\n#undef PPC_WEAK_FUNC\n#define PPC_WEAK_FUNC(x) [[maybe_unused]] static inline void skyrt_unused_##x(PPCContext& __restrict ctx, uint8_t* base)\n",
+    );
+    for name in names {
+        match gpr_helpers.iter().find(|(helper, ..)| helper == name) {
+            Some((_, function, first)) => writeln!(
+                text,
+                "[[gnu::noinline]] inline void {function}_{first}(PPCContext& __restrict ctx, uint8_t* base) {{ {function}(ctx, base, {first}); }}\n#define {name} {function}_{first}"
+            ),
+            None => writeln!(text, "extern \"C\" PPC_FUNC(__imp__{name});\n#define {name} __imp__{name}"),
+        }
+        .unwrap();
+    }
+    text
+}
+
+/// The `__savegprlr_N` / `__restgprlr_N` helpers (N = 14..=31) whose recompiled bodies are
+/// exactly the ABI's sequence, as (name, cpp/ppc_context.h's function for it, N): those are safe
+/// to replace with the header's versions, which do the same thing in one pass. A title whose
+/// helpers differ (or sit at misconfigured addresses) keeps its recompiled ones.
+fn standard_gpr_helpers(recomp_out: &Path) -> Vec<(String, &'static str, u32)> {
+    let slot = |reg: u32| 8 * (33 - reg);
+    let expected = |save: bool, first: u32| -> Vec<String> {
+        let mut lines = vec!["PPC_FUNC_PROLOGUE();".to_string()];
+        for reg in first..32 {
+            lines.push(if save {
+                format!("PPC_STORE_U64(ctx.r1.u32 + -{}, ctx.r{reg}.u64);", slot(reg))
+            } else {
+                format!("ctx.r{reg}.u64 = PPC_LOAD_U64(ctx.r1.u32 + -{});", slot(reg))
+            });
+        }
+        if save {
+            lines.push("PPC_STORE_U32(ctx.r1.u32 + -8, ctx.r12.u32);".to_string());
+        } else {
+            lines.push("ctx.r12.u64 = PPC_LOAD_U32(ctx.r1.u32 + -8);".to_string());
+            lines.push("ctx.lr = ctx.r12.u64;".to_string());
+        }
+        lines.push("return;".to_string());
+        lines
+    };
+    let mut found = Vec::new();
+    let entries = fs::read_dir(recomp_out).unwrap_or_else(|e| fail(format!("{}: {e}", recomp_out.display())));
+    for entry in entries {
+        let path = entry.unwrap_or_else(|e| fail(format!("{}: {e}", recomp_out.display()))).path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if !name.starts_with("ppc_recomp.") || !name.ends_with(".cpp") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+        for (save, prefix, function) in [(true, "__savegprlr_", "skyrt_savegprlr"), (false, "__restgprlr_", "skyrt_restgprlr")] {
+            let start = format!("PPC_FUNC_IMPL(__imp__{prefix}");
+            for (at, _) in text.match_indices(&start) {
+                let rest = &text[at + start.len()..];
+                let Some((number, body)) = rest.split_once(") {\n") else { continue };
+                let Ok(first @ 14..=31) = number.parse::<u32>() else { continue };
+                let body = body.lines().map(str::trim).take_while(|l| *l != "}").filter(|l| !l.starts_with("//"));
+                if body.eq(expected(save, first)) {
+                    found.push((format!("{prefix}{first}"), function, first));
+                }
+            }
+        }
+    }
+    found
 }
 
 fn declared_symbols(dir: &Path) -> HashSet<String> {

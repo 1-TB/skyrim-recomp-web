@@ -853,6 +853,95 @@ struct alignas(0x40) PPCContext
     PPCVRegister v127;
 };
 
+// The Xbox 360 ABI's register save/restore helpers (__savegprlr_N / __restgprlr_N): function
+// prologues and epilogues call them to keep r14..r31 and LR below the stack pointer. The
+// recompiled helpers go register by register, each store translating its address and marking
+// its page again, and that was 8% of the game threads' time in Skyrim. These do the same
+// loads and stores with one translation and one mark for the whole area; guest-sys's build
+// script points the generated names here once it has checked the recompiled helpers are the
+// standard ones (fn direct_calls).
+static_assert(sizeof(PPCRegister) == 8 &&
+              __builtin_offsetof(PPCContext, r31) == __builtin_offsetof(PPCContext, r14) + 17 * 8,
+              "skyrt_savegprlr and skyrt_restgprlr index r14..r31 as an array");
+
+static inline __attribute__((always_inline)) uint8_t* skyrt_gpr_fields(PPCContext& ctx, uint32_t first)
+{
+    return (uint8_t*)&ctx + __builtin_offsetof(PPCContext, r14) + 8 * (first - 14);
+}
+
+// The save area straddles two 1 MiB frames, which needn't be adjacent in linear memory: the
+// recompiled helper's own sequence.
+[[gnu::noinline]] inline void skyrt_savegprlr_split(PPCContext& __restrict ctx, uint8_t* base, uint32_t first)
+{
+    const uint8_t* fields = skyrt_gpr_fields(ctx, first);
+    for (uint32_t i = 0; i < 32 - first; i++)
+    {
+        uint64_t value;
+        __builtin_memcpy(&value, fields + 8 * i, 8);
+        PPC_STORE_U64(ctx.r1.u32 - 8 * (33 - first - i), value);
+    }
+    PPC_STORE_U32(ctx.r1.u32 - 8, ctx.r12.u32);
+}
+
+[[gnu::noinline]] inline void skyrt_restgprlr_split(PPCContext& __restrict ctx, uint8_t* base, uint32_t first)
+{
+    uint8_t* fields = skyrt_gpr_fields(ctx, first);
+    for (uint32_t i = 0; i < 32 - first; i++)
+    {
+        uint64_t value = PPC_LOAD_U64(ctx.r1.u32 - 8 * (33 - first - i));
+        __builtin_memcpy(fields + 8 * i, &value, 8);
+    }
+    ctx.r12.u64 = PPC_LOAD_U32(ctx.r1.u32 - 8);
+    ctx.lr = ctx.r12.u64;
+}
+
+// std rN..r31 at -8*(33-N)..-16(r1), then stw r12,-8(r1) (the caller moved LR to r12).
+static inline __attribute__((always_inline)) void skyrt_savegprlr(PPCContext& __restrict ctx, uint8_t* base, uint32_t first)
+{
+    const uint32_t count = 32 - first;
+    // First and last byte of the save area. In one frame also means it doesn't wrap around.
+    const uint32_t low = ctx.r1.u32 - 8 * (count + 1), high = ctx.r1.u32 - 5;
+    if (__builtin_expect((low >> 20) != (high >> 20), 0))
+    {
+        skyrt_savegprlr_split(ctx, base, first);
+        return;
+    }
+    // Read every register before the first store: the compiler can't tell that guest memory
+    // and the context don't overlap, and would otherwise go one register at a time.
+    uint64_t values[18];
+    __builtin_memcpy(values, skyrt_gpr_fields(ctx, first), 8 * count);
+    for (uint32_t i = 0; i < count; i++)
+        values[i] = skyrt_bswap64(values[i]);
+    const uint32_t link = __builtin_bswap32(ctx.r12.u32);
+    uint8_t* area = PPC_EA(low);
+    __builtin_memcpy(area, values, 8 * count);
+    __builtin_memcpy(area + 8 * count, &link, 4);
+    // The pages the separate stores would mark: the first byte's and the last byte's.
+    PPC_MARK_WRITTEN(low, high - low + 1);
+}
+
+// ld rN..r31 from the same slots, then lwz r12,-8(r1); mtlr r12.
+static inline __attribute__((always_inline)) void skyrt_restgprlr(PPCContext& __restrict ctx, uint8_t* base, uint32_t first)
+{
+    const uint32_t count = 32 - first;
+    const uint32_t low = ctx.r1.u32 - 8 * (count + 1), high = ctx.r1.u32 - 5;
+    if (__builtin_expect((low >> 20) != (high >> 20), 0))
+    {
+        skyrt_restgprlr_split(ctx, base, first);
+        return;
+    }
+    const uint8_t* area = PPC_EA(low);
+    uint64_t values[18];
+    uint32_t link;
+    __builtin_memcpy(values, area, 8 * count);
+    __builtin_memcpy(&link, area + 8 * count, 4);
+    for (uint32_t i = 0; i < count; i++)
+        values[i] = skyrt_bswap64(values[i]);
+    __builtin_memcpy(skyrt_gpr_fields(ctx, first), values, 8 * count);
+    ctx.r12.u64 = __builtin_bswap32(link);
+    ctx.lr = ctx.r12.u64;
+}
+
 inline uint8_t VectorMaskL[] =
 {
     0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00,
