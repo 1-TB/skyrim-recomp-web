@@ -535,6 +535,7 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         d3d_predicated: None,
         d3d_peek: false,
         d3d_scissor: None,
+        d3d_own_writes: false,
         d3d_draws: (0, 0),
     };
     let mut read_index = 0u32;
@@ -670,8 +671,13 @@ struct CommandProcessor<'a> {
     d3d_predicated: Option<u64>,
     /// `--gpu d3d`: a predicated-out packet is read only for the window scissor it writes.
     d3d_peek: bool,
-    /// `--gpu d3d`: the union of the per-tile window scissors written since the last group.
+    /// `--gpu d3d`: the union of the per-tile window scissors written since the last group, or
+    /// since the title last wrote the window scissor outside predicated packets (its own
+    /// whole-surface scissor, as for the shadow maps).
     d3d_scissor: Option<TileScissor>,
+    /// `--gpu d3d`: the window registers are being written by `d3d_whole_surface` or restored
+    /// after the draw, not by the title.
+    d3d_own_writes: bool,
     /// `--gpu d3d`: draw packets run and left out since the last report.
     d3d_draws: (u64, u64),
 }
@@ -1218,9 +1224,11 @@ impl CommandProcessor<'_> {
                 let whole = self.d3d_whole_surface();
                 self.draw(r, count, opcode == pm4::DRAW_INDX);
                 if let Some(saved) = whole {
+                    self.d3d_own_writes = true;
                     for (i, v) in saved.into_iter().enumerate() {
                         self.write_register(reg::PA_SC_WINDOW_OFFSET + i as u32, v);
                     }
+                    self.d3d_own_writes = false;
                 }
             }
             // A `--gpu d3d` marker (see crate::d3d).
@@ -1321,11 +1329,13 @@ impl CommandProcessor<'_> {
         // Not a tile's own writes (left out of the merge).
         self.d3d_predicated.take()?;
         let saved: [u32; 3] = std::array::from_fn(|i| self.read_register(reg::PA_SC_WINDOW_OFFSET + i as u32));
+        self.d3d_own_writes = true;
         self.write_register(reg::PA_SC_WINDOW_OFFSET, 0);
         if let Some(s) = self.d3d_scissor.filter(|s| s.tl_bins != 0 && s.br_bins != 0) {
             self.write_register(reg::PA_SC_WINDOW_SCISSOR_TL, s.tl);
             self.write_register(reg::PA_SC_WINDOW_SCISSOR_BR, s.br);
         }
+        self.d3d_own_writes = false;
         Some(saved)
     }
 
@@ -1414,6 +1424,16 @@ impl CommandProcessor<'_> {
             && crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3dVerify
         {
             return;
+        }
+        // The title's own scissor outside predicated packets replaces a merge of an earlier
+        // pass's tiles: applied to this pass's draws, that clipped the shadow maps (drawn to
+        // 1024 rows) to the screen's 720, so casters below popped in and out.
+        if self.d3d_predicated.is_none()
+            && !self.d3d_own_writes
+            && !self.d3d_peek
+            && matches!(index, reg::PA_SC_WINDOW_SCISSOR_TL | reg::PA_SC_WINDOW_SCISSOR_BR)
+        {
+            self.d3d_scissor = None;
         }
         if let Some(mask) = self.d3d_predicated
             && matches!(index, reg::PA_SC_WINDOW_SCISSOR_TL | reg::PA_SC_WINDOW_SCISSOR_BR)
