@@ -518,6 +518,7 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         zpd_samples: 0,
         backend: k.gpu.backend.get().cloned(),
         pending: Vec::new(),
+        pending_peak: 0,
         sent: vec![0; SENT_REGISTERS],
         shaders: Default::default(),
         deferred: std::collections::VecDeque::new(),
@@ -605,7 +606,11 @@ struct Reader {
 impl Reader {
     fn read(&mut self, mem: &GuestMemory) -> u32 {
         let v = mem.read_u32(self.base + self.pos * 4);
-        self.pos = (self.pos + 1) % self.capacity;
+        // `pos` stays below `capacity`: a wrap, not a division per dword.
+        self.pos += 1;
+        if self.pos >= self.capacity {
+            self.pos = 0;
+        }
         self.remaining -= 1;
         v
     }
@@ -633,6 +638,8 @@ struct CommandProcessor<'a> {
     backend: Option<Arc<dyn GpuBackend>>,
     /// Register writes not yet sent to the backend.
     pending: Vec<(u32, u32)>,
+    /// Capacity for the next `pending` (see `flush_registers`).
+    pending_peak: usize,
     /// The values sent to the backend so far (registers below [`SENT_REGISTERS`]; the backend
     /// starts with all zero): writes of the value already sent are dropped here, as the
     /// renderer would ignore them. Titles rewrite most constants before every draw with the
@@ -737,9 +744,11 @@ impl CommandProcessor<'_> {
         if let Some(b) = &self.backend
             && !self.pending.is_empty()
         {
-            // The next batch is about as long: grown once, not from empty every time.
-            let capacity = self.pending.len();
-            b.registers(std::mem::replace(&mut self.pending, Vec::with_capacity(capacity)));
+            // Sized for the longest recent batch (batch lengths vary a lot between draws, and
+            // growing the vector while writing registers was most of the command processor's
+            // allocation time), forgotten slowly.
+            self.pending_peak = self.pending.len().max(self.pending_peak - self.pending_peak / 16);
+            b.registers(std::mem::replace(&mut self.pending, Vec::with_capacity(self.pending_peak)));
         }
     }
 
@@ -1407,7 +1416,8 @@ impl CommandProcessor<'_> {
             if skip_unchanged && index >= MMIO_REGISTERS && self.sent.get(index as usize) == Some(&v) {
                 continue;
             }
-            self.write_register(index, v);
+            // The check `write_register` starts with was just made (or doesn't apply).
+            self.write_changed_register(index, v);
         }
     }
 
@@ -1425,6 +1435,11 @@ impl CommandProcessor<'_> {
         {
             return;
         }
+        self.write_changed_register(index, value);
+    }
+
+    /// [`CommandProcessor::write_register`] past its check for constants that didn't change.
+    fn write_changed_register(&mut self, index: u32, value: u32) {
         // The title's own scissor outside predicated packets replaces a merge of an earlier
         // pass's tiles: applied to this pass's draws, that clipped the shadow maps (drawn to
         // 1024 rows) to the screen's 720, so casters below popped in and out.

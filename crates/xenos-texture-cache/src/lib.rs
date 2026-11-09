@@ -1580,12 +1580,12 @@ enum GpuData<'a> {
 /// Identifies the current contents of `ranges`: their write versions if `memory` tracks writes,
 /// else a hash of the bytes.
 fn hash_ranges(memory: &dyn GuestMemory, ranges: &[GuestRange], scratch: &mut Vec<u8>, hashed: &mut u64) -> u64 {
-    let versions: Option<Vec<u64>> = ranges.iter().map(|r| memory.version(r.address, r.length)).collect();
-    if let Some(versions) = versions {
-        return versions
-            .iter()
-            .zip(ranges)
-            .fold(0u64, |h, (v, r)| hash::hash(h ^ u64::from(r.address), &v.to_le_bytes()));
+    // Without collecting the versions first (this runs for every bound texture once a frame).
+    let versions = ranges.iter().try_fold(0u64, |h, r| {
+        memory.version(r.address, r.length).map(|v| hash::hash(h ^ u64::from(r.address), &v.to_le_bytes()))
+    });
+    if let Some(h) = versions {
+        return h;
     }
     let mut h = 0u64;
     for r in ranges {

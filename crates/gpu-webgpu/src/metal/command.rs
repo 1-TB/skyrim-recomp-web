@@ -537,18 +537,24 @@ fn apply_groups(
         }
     }
     if let Some((slot, sized)) = &bindings.sizes {
-        let sizes: Vec<u32> = sized
-            .iter()
-            .map(|&(g, b)| match lookup(g, b) {
-                Some((Resource::Buffer { raw, offset, size, .. }, _)) => {
-                    // Never more than the allocation holds (a failed allocation is tiny).
-                    let real = raw.as_ref().map_or(0, |r| r.length() as u64).saturating_sub(*offset);
-                    (*size).min(real).min(u64::from(u32::MAX)) as u32
-                }
-                _ => 0,
-            })
-            .collect();
-        set_sizes(&sizes, *slot);
+        let size_of = |&(g, b): &(u32, u32)| match lookup(g, b) {
+            Some((Resource::Buffer { raw, offset, size, .. }, _)) => {
+                // Never more than the allocation holds (a failed allocation is tiny).
+                let real = raw.as_ref().map_or(0, |r| r.length() as u64).saturating_sub(*offset);
+                (*size).min(real).min(u64::from(u32::MAX)) as u32
+            }
+            _ => 0,
+        };
+        // On the stack for the usual few sized bindings (this runs for most draws).
+        let mut small = [0u32; 16];
+        if sized.len() <= small.len() {
+            for (d, s) in small.iter_mut().zip(sized) {
+                *d = size_of(s);
+            }
+            set_sizes(&small[..sized.len()], *slot);
+        } else {
+            set_sizes(&sized.iter().map(size_of).collect::<Vec<u32>>(), *slot);
+        }
         cache.buffers[*slot] = (usize::MAX, 0);
     }
 }
