@@ -268,6 +268,8 @@ fn run(
     let mut report_times = renderer.executor.times();
     let mut report_gpu = gpu_webgpu::counters::gpu_busy();
     let mut report_draws = renderer.executor.stats.draws;
+    #[cfg(target_vendor = "apple")]
+    let mut report_cpu = thread_cpu_time();
     // Per frame, for the slow-frame log: the renderer's work and GPU waits since the last frame.
     let mut frame_times = renderer.executor.times();
     let mut frame_calls = gpu_webgpu::counters::snapshot();
@@ -381,6 +383,15 @@ fn run(
                 ms(times.resolves, report_times.resolves),
                 ms(times.submits, report_times.submits),
             );
+            #[cfg(target_vendor = "apple")]
+            {
+                let cpu = thread_cpu_time();
+                log::info!(
+                    "perf: renderer thread on the CPU {:.0}% of the time, {}",
+                    100.0 * (cpu - std::mem::replace(&mut report_cpu, cpu)).as_secs_f64() / window.as_secs_f64(),
+                    core_speed()
+                );
+            }
             report_calls = calls;
             report_times = times;
             report_draws = draws;
@@ -390,6 +401,44 @@ fn run(
             report_at = std::time::Instant::now();
         }
     }
+}
+
+/// CPU time the calling thread has used.
+#[cfg(target_vendor = "apple")]
+fn thread_cpu_time() -> Duration {
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: writes the timespec it is given.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) };
+    Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
+}
+
+/// Which core the calling thread is on and how fast it is clocked right now, for the perf lines.
+///
+/// The phone's frame rate halves after ~40 s with the thermal state still nominal and the same
+/// work per frame; this tells a lower clock from a move to the efficiency cores. The speed is
+/// timed over a chain of dependent operations of known latency (xor 1 cycle, multiply 3, rotate
+/// 1 on Apple's cores of both kinds), best of a few short runs so a preemption doesn't count.
+#[cfg(target_vendor = "apple")]
+fn core_speed() -> String {
+    unsafe extern "C" {
+        fn pthread_cpu_number_np(cpu: *mut usize) -> i32;
+    }
+    const STEPS: u64 = 40_000;
+    const CYCLES_PER_STEP: f64 = 5.0;
+    let mut best = Duration::MAX;
+    let mut value = 0x9E37_79B9_7F4A_7C15u64;
+    for _ in 0..4 {
+        let started = std::time::Instant::now();
+        for step in 0..STEPS {
+            value = (value ^ std::hint::black_box(step)).wrapping_mul(0x0000_0100_0000_01B3).rotate_left(17);
+        }
+        best = best.min(started.elapsed());
+    }
+    std::hint::black_box(value);
+    let mut cpu = 0;
+    // SAFETY: writes the number of the CPU this thread is running on.
+    unsafe { pthread_cpu_number_np(&mut cpu) };
+    format!("now on core {cpu} at ~{:.1} GHz", STEPS as f64 * CYCLES_PER_STEP / best.as_secs_f64() / 1e9)
 }
 
 /// Frames shown this long after the previous one (and half again longer than it) are logged with
