@@ -1410,6 +1410,9 @@ impl CommandProcessor<'_> {
             && !self.d3d_peek
             && self.d3d_marker.is_none()
             && crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3dVerify;
+        if skip_unchanged && self.write_constants(r, first, count) {
+            return;
+        }
         for i in 0..count {
             let v = r.read(self.mem);
             let index = first + i;
@@ -1419,6 +1422,58 @@ impl CommandProcessor<'_> {
             // The check `write_register` starts with was just made (or doesn't apply).
             self.write_changed_register(index, v);
         }
+    }
+
+    /// [`CommandProcessor::write_run`] for a run of constant registers (at and above
+    /// [`MMIO_REGISTERS`], which have no side effects) that is contiguous in the ring and in
+    /// host memory: false if it isn't one, with nothing read. The title rewrites ~100k
+    /// constants a frame, nearly all with the values they have, so the run is compared eight
+    /// dwords at a time and only the groups that differ are gone through.
+    fn write_constants(&mut self, r: &mut Reader, first: u32, count: u32) -> bool {
+        let (start, end) = (first as usize, (first + count) as usize);
+        let high = MMIO_REGISTERS as usize;
+        let gpu = &self.k.gpu;
+        if start < high
+            || end > self.sent.len()
+            || end - high > gpu.high_registers.len()
+            || count > r.remaining
+            || r.pos + count > r.capacity
+        {
+            return false;
+        }
+        let mut words = None;
+        self.mem.runs(r.base + r.pos * 4, count * 4, |offset, ptr, len| {
+            if offset == 0 && len == count as usize * 4 {
+                words = Some(ptr.cast_const().cast::<[u8; 4]>());
+            }
+        });
+        let Some(words) = words else { return false };
+        // SAFETY: `runs` gave one piece of host memory for the whole run; byte arrays have no
+        // alignment, and the title changing them under the command processor is the same race
+        // as on the console.
+        let words = unsafe { std::slice::from_raw_parts(words, count as usize) };
+        let registers = &gpu.high_registers[start - high..end - high];
+        let groups = words.chunks(8).zip(self.sent[start..end].chunks_mut(8)).zip(registers.chunks(8));
+        for (group, ((words, sent), registers)) in groups.enumerate() {
+            let differing = words.iter().zip(sent.iter()).fold(0, |d, (w, s)| d | (u32::from_be_bytes(*w) ^ *s));
+            if differing == 0 {
+                continue;
+            }
+            for (i, ((word, sent), register)) in words.iter().zip(sent).zip(registers).enumerate() {
+                let value = u32::from_be_bytes(*word);
+                if *sent != value {
+                    *sent = value;
+                    self.pending.push((first + (group * 8 + i) as u32, value));
+                    register.store(value, Ordering::Relaxed);
+                }
+            }
+        }
+        r.pos += count;
+        if r.pos >= r.capacity {
+            r.pos = 0;
+        }
+        r.remaining -= count;
+        true
     }
 
     fn write_register(&mut self, index: u32, value: u32) {
