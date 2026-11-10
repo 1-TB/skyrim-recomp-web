@@ -31,10 +31,6 @@ const GUEST_PAGES: usize = 1 << (32 - PAGE_SHIFT);
 #[unsafe(no_mangle)]
 pub static skyrt_written: [AtomicU8; GUEST_PAGES] = [const { AtomicU8::new(0) }; GUEST_PAGES];
 
-// Native recompiled code only marks stores from 0x80000000 up (skyrt_mark_written in
-// cpp/ppc_context.h): every alias below must lie there.
-const _: () = assert!(XEX_BASE >= 0x8000_0000 && PHYSICAL_BASE >= 0x8000_0000);
-
 /// The guest pages physical page `page` is visible at. The 4 KiB view is a page ahead of
 /// physical memory (`0xE0000000 + x` is physical `x + 0x1000`), so physical page 0 has no address
 /// there.

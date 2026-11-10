@@ -138,37 +138,12 @@ extern "C" uint8_t skyrt_written[];
 
 static inline __attribute__((always_inline)) void skyrt_mark_written(uint32_t ea, uint32_t size)
 {
-#if !defined(__wasm__)
-    // Natively a predicted branch is cheaper than the stores: the pages the renderer asks about
-    // are the image's and physical memory's, all from 0x80000000 up (runtime-core's
-    // dirty::aliases), and most stores go to the heaps and stacks below, where two byte stores
-    // each also spread the mark table over the data cache.
-    if ((int32_t)(ea + size - 1) >= 0)
-        return;
-#endif
     ((volatile uint8_t*)skyrt_written)[ea >> 12] = 0;
     if (size > 1)
         ((volatile uint8_t*)skyrt_written)[(ea + size - 1) >> 12] = 0;
 }
 
 #define PPC_MARK_WRITTEN(x, size) skyrt_mark_written((uint32_t)(x), (size))
-
-// The mark of a scalar store whose address the recompiler wrote as `text`. Stores through the
-// stack pointer (`ctx.r1.u32 + displacement or index`, over a third of all stores) need none:
-// a thread's stack is not memory the renderer reads.
-constexpr bool skyrt_stack_relative(const char* text)
-{
-    for (const char* prefix = "ctx.r1.u32 + "; *prefix; prefix++, text++)
-    {
-        if (*text != *prefix)
-            return false;
-    }
-    return true;
-}
-
-#define PPC_MARK_STORE(text, x, size) \
-    do { constexpr bool skyrt_stack_store = skyrt_stack_relative(text); \
-         if (!skyrt_stack_store) PPC_MARK_WRITTEN(x, size); } while (0)
 
 // Memory barriers. The guest's lock-free code relies on them: a lock is released or an object
 // published by "lwsync; stw", and without the barrier an ARM core may make that store visible
@@ -380,28 +355,28 @@ static inline __attribute__((always_inline)) uint64_t skyrt_bswap64(uint64_t x)
 #ifndef PPC_STORE_U8
 #define PPC_STORE_U8(x, y) \
     do { uint32_t skyrt_store_ea = (uint32_t)(x); *(volatile uint8_t*)PPC_EA(skyrt_store_ea) = (y); \
-         PPC_MARK_STORE(#x, skyrt_store_ea, 1); } while (0)
+         PPC_MARK_WRITTEN(skyrt_store_ea, 1); } while (0)
 #endif
 
 #ifndef PPC_STORE_U16
 #define PPC_STORE_U16(x, y) \
     do { uint32_t skyrt_store_ea = (uint32_t)(x); SKYRT_CHECK_FRAMES(skyrt_store_ea, 2); \
          *(volatile uint16_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap16(y); \
-         PPC_MARK_STORE(#x, skyrt_store_ea, 2); } while (0)
+         PPC_MARK_WRITTEN(skyrt_store_ea, 2); } while (0)
 #endif
 
 #ifndef PPC_STORE_U32
 #define PPC_STORE_U32(x, y) \
     do { uint32_t skyrt_store_ea = (uint32_t)(x); SKYRT_CHECK_FRAMES(skyrt_store_ea, 4); \
          *(volatile uint32_t*)PPC_EA(skyrt_store_ea) = __builtin_bswap32(y); \
-         PPC_MARK_STORE(#x, skyrt_store_ea, 4); } while (0)
+         PPC_MARK_WRITTEN(skyrt_store_ea, 4); } while (0)
 #endif
 
 #ifndef PPC_STORE_U64
 #define PPC_STORE_U64(x, y) \
     do { uint32_t skyrt_store_ea = (uint32_t)(x); SKYRT_CHECK_FRAMES(skyrt_store_ea, 8); \
          *(volatile uint64_t*)PPC_EA(skyrt_store_ea) = skyrt_bswap64(y); \
-         PPC_MARK_STORE(#x, skyrt_store_ea, 8); } while (0)
+         PPC_MARK_WRITTEN(skyrt_store_ea, 8); } while (0)
 #endif
 
 // MMIO Store handling is completely reliant on being preeceded by eieio.
@@ -955,7 +930,8 @@ static inline __attribute__((always_inline)) void skyrt_savegprlr(PPCContext& __
     uint8_t* area = PPC_EA(low);
     __builtin_memcpy(area, values, 8 * count);
     __builtin_memcpy(area + 8 * count, &link, 4);
-    // No write marks, as for any store through the stack pointer (PPC_MARK_STORE).
+    // The pages the separate stores would mark: the first byte's and the last byte's.
+    PPC_MARK_WRITTEN(low, high - low + 1);
 }
 
 // ld rN..r31 from the same slots, then lwz r12,-8(r1); mtlr r12.
