@@ -89,6 +89,12 @@
 #define PPC_EXTERN_FUNC(x) extern PPC_FUNC(x)
 #define PPC_WEAK_FUNC(x) __attribute__((weak,noinline)) PPC_FUNC(x)
 
+// 1: switch the host between flush-to-zero (vector instructions) and IEEE denormals (scalar
+// ones) like the console (see PPCFPSCRRegister::enableFlushMode).
+#ifndef SKYRT_FLUSH_MODE
+#define SKYRT_FLUSH_MODE 0
+#endif
+
 #define PPC_FUNC_PROLOGUE() __builtin_assume(((size_t)base & 0x1F) == 0)
 
 // Offset from `base` for guest effective address `ea`. Physical memory is
@@ -609,10 +615,17 @@ struct PPCFPSCRRegister
         setcsr(csr);
     }
 
-#if defined(__wasm__)
+#if defined(__wasm__) || !SKYRT_FLUSH_MODE
     // Wasm always keeps denormals and nothing reads the flush bits back (loadFromHost returns
     // the rounding mode only), so switching modes, which the recompiler emits around most
     // float instructions, does nothing.
+    //
+    // Native builds do the same unless built with SKYRT_FLUSH_MODE (guest-sys's build script):
+    // the console's vector unit flushes denormals to zero and its scalar one keeps them, and
+    // following that means writing FPCR whenever code goes from one kind of float instruction
+    // to the other. An Apple core stalls on every such write: it was 6-7% of the whole
+    // process's CPU time in Skyrim, whose culling code alternates on every object. Without it
+    // vector results below 1.2e-38 stay denormal instead of becoming zero.
     inline void enableFlushModeUnconditional() noexcept {}
     inline void disableFlushModeUnconditional() noexcept {}
     inline void enableFlushMode() noexcept {}

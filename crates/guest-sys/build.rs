@@ -7,6 +7,9 @@
 //!   SKYRT_GUEST_BUILD_TYPE  CMake build type for the guest code (default Release)
 //!   SKYRT_CHECK_FRAMES      1: report scalar guest accesses straddling non-adjacent linear
 //!                           frames (debugging the compact memory layout; native only)
+//!   SKYRT_FLUSH_MODE        1: native builds switch the host's flush-to-zero mode between vector
+//!                           and scalar float instructions like the console (exact denormals,
+//!                           6-7% more CPU on Apple cores; see cpp/ppc_context.h)
 //!   EMSDK             Emscripten SDK root (wasm32-unknown-emscripten builds)
 //!
 //! Generates `skyrt_imports.cpp`, which defines every import thunk as a call
@@ -35,7 +38,7 @@ fn env_path(name: &str, what: &str) -> PathBuf {
 }
 
 fn main() {
-    for v in ["XENON_RECOMP_OUT", "XENON_RECOMP_DIR", "SKYRIM_XEX", "SKYRT_GUEST_BUILD_TYPE", "SKYRT_CHECK_FRAMES", "EMSDK", "CXX"] {
+    for v in ["XENON_RECOMP_OUT", "XENON_RECOMP_DIR", "SKYRIM_XEX", "SKYRT_GUEST_BUILD_TYPE", "SKYRT_CHECK_FRAMES", "SKYRT_FLUSH_MODE", "EMSDK", "CXX"] {
         println!("cargo:rerun-if-env-changed={v}");
     }
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -688,7 +691,9 @@ fn build_cmake(cpp_dir: &Path, out_dir: &Path, recomp_out: &Path, simde: &Path, 
         .arg(format!(
             "-DSKYRT_CHECK_FRAMES={}",
             if env::var("SKYRT_CHECK_FRAMES").as_deref() == Ok("1") && !target.contains("emscripten") { "ON" } else { "OFF" }
-        ));
+        ))
+        // Always passed: the build directory's cache would otherwise keep the previous setting.
+        .arg(format!("-DSKYRT_FLUSH_MODE={}", if env::var("SKYRT_FLUSH_MODE").as_deref() == Ok("1") { "ON" } else { "OFF" }));
     if target.contains("emscripten") {
         let emsdk = env_path("EMSDK", "the Emscripten SDK (source emsdk_env.sh)");
         let toolchain = emsdk.join("upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake");
