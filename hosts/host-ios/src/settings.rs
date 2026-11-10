@@ -24,7 +24,7 @@ pub struct Settings {
     pub resolution_scale: u32,
     /// Least anisotropic filtering (1 = the title's own).
     pub anisotropy: u16,
-    /// Frame rate cap (30, 60 or 120).
+    /// Frame rate cap: 30, 60, 120 or [`FPS_AUTO`].
     pub fps_cap: u32,
     pub show_fps: bool,
     /// Scale frames up to the screen with MetalFX rather than bicubic filtering.
@@ -50,7 +50,64 @@ impl Default for Settings {
 
 const SCALES: [u32; 3] = [1, 2, 3];
 const ANISOTROPY: [u16; 4] = [1, 4, 8, 16];
-const FPS_CAPS: [u32; 3] = [30, 60, 120];
+const FPS_CAPS: [u32; 4] = [30, 60, 120, FPS_AUTO];
+
+/// `fps_cap` for Auto: 120 while the phone is cool, less as it warms ([`AutoLimit`]).
+pub const FPS_AUTO: u32 = 0;
+
+/// The frame rate limit of the Auto setting.
+///
+/// At 120 fps the phone heats until iOS switches its performance cores off (about a minute in
+/// a town: thermal state fair, then serious), and the efficiency cores alone manage 50-70 fps
+/// unevenly. Auto gives up frame rate before that, so that the rate it shows is one the phone
+/// keeps: a limit per thermal state, lowered at once and raised a step at a time after the
+/// state has been better for a while. The limits are rates the display itself can run at.
+pub struct AutoLimit {
+    limit: u32,
+    /// Since when the thermal state has allowed more than `limit`.
+    better_since: Option<std::time::Instant>,
+}
+
+impl AutoLimit {
+    /// Limits from most to least limited.
+    const STEPS: [u32; 4] = [30, 60, 80, 120];
+    /// How long the thermal state must allow more before the limit goes up a step.
+    const RAISE_AFTER: std::time::Duration = std::time::Duration::from_secs(20);
+
+    pub fn new() -> AutoLimit {
+        AutoLimit { limit: 120, better_since: None }
+    }
+
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+
+    /// Takes `NSProcessInfo`'s thermal state (0 nominal, 1 fair, 2 serious, 3 critical);
+    /// returns the new limit when it changes.
+    pub fn update(&mut self, thermal: isize, now: std::time::Instant) -> Option<u32> {
+        let allowed = match thermal {
+            ..=0 => 120,
+            1 => 80,
+            2 => 60,
+            _ => 30,
+        };
+        if allowed <= self.limit {
+            self.better_since = None;
+            if allowed == self.limit {
+                return None;
+            }
+            self.limit = allowed;
+            return Some(allowed);
+        }
+        let since = *self.better_since.get_or_insert(now);
+        if now.duration_since(since) < Self::RAISE_AFTER {
+            return None;
+        }
+        self.better_since = None;
+        self.limit = Self::STEPS.into_iter().find(|&step| step > self.limit).unwrap_or(120);
+        Some(self.limit)
+    }
+}
 const ASPECTS: [&str; 4] = ["wide", "fit", "fill", "stretch"];
 const TOUCH: [&str; 4] = ["off", "small", "normal", "large"];
 /// Shadow choices and the game's `fShadowDistance` for each (None: its default, 2500).
@@ -76,7 +133,9 @@ impl Settings {
                     }
                 }
                 "fps_cap" => {
-                    if let Some(v) = value.parse().ok().filter(|v| FPS_CAPS.contains(v)) {
+                    if value == "auto" {
+                        s.fps_cap = FPS_AUTO;
+                    } else if let Some(v) = value.parse().ok().filter(|v| FPS_CAPS.contains(v)) {
                         s.fps_cap = v;
                     }
                 }
@@ -109,7 +168,7 @@ impl Settings {
             "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\nmsaa={}\naspect={}\ntouch={}\nshadows={}\n",
             self.resolution_scale,
             self.anisotropy,
-            self.fps_cap,
+            if self.fps_cap == FPS_AUTO { "auto".to_string() } else { self.fps_cap.to_string() },
             self.show_fps,
             self.metalfx,
             self.msaa,
@@ -124,8 +183,8 @@ impl Settings {
 
     /// The command-line options for these settings on a `screen` (width, height) display.
     pub fn args(&self, screen: (u32, u32)) -> Vec<String> {
-        // The title presents every second vblank.
-        let vblank = self.fps_cap * 2;
+        // The title presents every second vblank. Auto starts at 120.
+        let vblank = if self.fps_cap == FPS_AUTO { 240 } else { self.fps_cap * 2 };
         let mut args: Vec<String> = [
             ("--resolution-scale", self.resolution_scale.to_string()),
             ("--anisotropy", self.anisotropy.to_string()),
@@ -228,7 +287,7 @@ impl Panel {
             &["Game default", "4×", "8×", "16×"],
             ANISOTROPY.iter().position(|&x| x == settings.anisotropy).unwrap_or(0),
         );
-        let fps_cap = segments(mtm, &["30", "60", "120"], index(&FPS_CAPS, settings.fps_cap));
+        let fps_cap = segments(mtm, &["30", "60", "120", "Auto"], index(&FPS_CAPS, settings.fps_cap));
         let upscaling = segments(mtm, &["Bicubic", "MetalFX"], usize::from(settings.metalfx));
         let msaa = segments(mtm, &["Off (faster)", "4× MSAA"], usize::from(settings.msaa));
         let aspect = segments(
@@ -265,7 +324,8 @@ impl Panel {
             mtm,
             "Higher resolutions cost frame rate (4 or 9 times the pixels). Widescreen shows more at \
              the sides (about 20% more to draw). Shadows are about 40% of what the game draws in a \
-             town. Widescreen and Shadows apply from the next start. The ⚙ button (or Back + Start) \
+             town. Widescreen and Shadows apply from the next start. Auto lowers the frame rate as the \
+             phone warms, to one it can keep. The ⚙ button (or Back + Start) \
              opens this in game; args.txt in Documents overrides it.",
             13.0,
             0.6,
@@ -382,5 +442,34 @@ impl FpsLabel {
             Some(_) => {}
             None => self.last = Some((now, swaps)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn auto_limit_drops_at_once_and_climbs_slowly() {
+        let start = Instant::now();
+        let at = |seconds: u64| start + Duration::from_secs(seconds);
+        let mut auto = AutoLimit::new();
+        assert_eq!(auto.update(0, at(0)), None);
+        assert_eq!(auto.update(1, at(50)), Some(80));
+        assert_eq!(auto.update(2, at(70)), Some(60));
+        // Fair again: back up one step, but only after it has held.
+        assert_eq!(auto.update(1, at(100)), None);
+        assert_eq!(auto.update(1, at(119)), None);
+        assert_eq!(auto.update(1, at(120)), Some(80));
+        assert_eq!(auto.update(1, at(200)), None);
+        // A relapse restarts the wait.
+        assert_eq!(auto.update(0, at(210)), None);
+        assert_eq!(auto.update(1, at(220)), None);
+        assert_eq!(auto.update(0, at(225)), None);
+        assert_eq!(auto.update(0, at(244)), None);
+        assert_eq!(auto.update(0, at(245)), Some(120));
+        assert_eq!(auto.update(3, at(300)), Some(30));
+        assert_eq!(auto.limit(), 30);
     }
 }

@@ -35,7 +35,7 @@ use objc2_ui_kit::{
 use xenos_render::native::{Window as RenderWindow, WindowHandles};
 
 use crate::pads::{self, Reading};
-use crate::settings::{FpsLabel, Panel, Settings};
+use crate::settings::{AutoLimit, FPS_AUTO, FpsLabel, Panel, Settings};
 use crate::touch::{Overlay, Touchpad};
 
 /// The kernel, once the title has booted (input goes nowhere before that).
@@ -83,6 +83,8 @@ struct State {
     /// Thermal state and Low Power Mode at the last tick: either one makes iOS hold the
     /// display at 60 Hz, which the fps figures alone don't show.
     power_seen: Option<(isize, bool)>,
+    /// The frame rate limit while the setting is Auto.
+    auto_limit: AutoLimit,
     /// Display link callbacks since `display_since` (link timestamp) and the sum of the
     /// intervals the system asked for, for the refresh-rate log line.
     display_ticks: u32,
@@ -112,6 +114,7 @@ thread_local! {
         combo_held: false,
         open_requested: false,
         power_seen: None,
+        auto_limit: AutoLimit::new(),
         display_ticks: 0,
         display_since: None,
         display_asked: 0.0,
@@ -310,7 +313,15 @@ define_class!(
             with_state(|s| {
                 poll_input(s);
                 update_status(s);
-                log_power_state(s);
+                let thermal = log_power_state(s);
+                if s.current.is_some_and(|c| c.fps_cap == FPS_AUTO)
+                    && let Some(limit) = s.auto_limit.update(thermal, std::time::Instant::now())
+                    && let Some(kernel) = KERNEL.get()
+                {
+                    log::info!("auto frame rate limit: {limit} fps");
+                    // The title presents every second vblank.
+                    kernel.gpu.set_vblank_hz(limit * 2);
+                }
                 log_display_rate(s, link);
                 if let (Some(fps), Some(kernel)) = (&mut s.fps, KERNEL.get()) {
                     fps.update(kernel.gpu.swap_count());
@@ -555,7 +566,8 @@ fn log_display_rate(s: &mut State, link: &CADisplayLink) {
     }
 }
 
-fn log_power_state(s: &mut State) {
+/// Logs the thermal state and Low Power Mode when they change; returns the thermal state.
+fn log_power_state(s: &mut State) -> isize {
     // SAFETY: NSProcessInfo's thermalState (NSInteger) and isLowPowerModeEnabled (BOOL).
     let state: (isize, bool) = unsafe {
         let info: Retained<AnyObject> = msg_send![AnyClass::get(c"NSProcessInfo").unwrap(), processInfo];
@@ -567,6 +579,7 @@ fn log_power_state(s: &mut State) {
         log::info!("power: thermal state {thermal}, low power mode {}", if state.1 { "on" } else { "off" });
         s.power_seen = Some(state);
     }
+    state.0
 }
 
 fn status_label(mtm: MainThreadMarker, parent: &UIView) -> Retained<UILabel> {
@@ -653,7 +666,8 @@ fn apply(view: &SkyrtView, old: Settings, new: Settings) {
     xenos_render::set_metalfx(new.metalfx);
     if let Some(kernel) = KERNEL.get() {
         // The title presents every second vblank.
-        kernel.gpu.set_vblank_hz(new.fps_cap * 2);
+        let limit = if new.fps_cap == FPS_AUTO { with_state(|s| s.auto_limit.limit()).unwrap_or(120) } else { new.fps_cap };
+        kernel.gpu.set_vblank_hz(limit * 2);
     }
     if (new.resolution_scale, new.msaa, new.anisotropy) != (old.resolution_scale, old.msaa, old.anisotropy) {
         if let Err(e) = xenos_render::set_resolution_scale(new.resolution_scale) {
