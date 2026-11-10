@@ -296,6 +296,9 @@ impl Kernel {
                 w.site
             );
         }
+        for line in self.objects.history(400) {
+            log::info!("  {line}");
+        }
     }
 
     pub fn log_import_summary(&self) {

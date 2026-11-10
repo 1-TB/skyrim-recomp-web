@@ -216,6 +216,35 @@ PPC_FUNC({f}) {{
         )
         .unwrap();
     }
+    // Skyrim, disc version: the end of a frame's job list. The list (a table of functions) is
+    // run by two worker threads, each taking the next entry by an atomic index, and a third
+    // thread helps when it has time; entries that must run alone are preceded by wait entries
+    // for the other runners, and barriers count the runners inside the list. This function
+    // waits for the two workers' done events only; the title then resets the list's events and
+    // index for the next frame. On the console the helper is out of the list by then, a few
+    // instructions behind the workers. Here it can be preempted on its way out: it then takes
+    // entries of the next frame as a third runner before the part meant for two, a barrier
+    // never fills, and every thread waits (the freeze seen once in a few minutes of play). So
+    // once the list is stopped, wait until its count of runners is zero.
+    const SKYRIM_JOBS_STOP: &str = "sub_824048B8";
+    const SKYRIM_JOBS_STATE: u32 = 0x8383_32AC;
+    const SKYRIM_JOBS_RUNNERS: u32 = 0x8383_32C0;
+    if skyrim && declared.contains(SKYRIM_JOBS_STOP) {
+        writeln!(
+            cpp,
+            r#"
+extern "C" void skyrt_wait_until_zero(uint32_t address, uint32_t timeout_us);
+extern "C" PPC_FUNC(__imp__{f});
+PPC_FUNC({f}) {{
+    __imp__{f}(ctx, base);
+    if (PPC_LOAD_U32({state:#X}u) == 0) skyrt_wait_until_zero({runners:#X}u, 100000);
+}}"#,
+            f = SKYRIM_JOBS_STOP,
+            state = SKYRIM_JOBS_STATE,
+            runners = SKYRIM_JOBS_RUNNERS
+        )
+        .unwrap();
+    }
     cpp
 }
 

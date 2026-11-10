@@ -196,6 +196,19 @@ impl Participant {
     }
 }
 
+/// Operations kept in the dispatcher's history.
+const HISTORY: usize = 1 << 16;
+
+/// One entry of the history: thread `tid`, called from `lr`, did `what` to object `id`.
+struct Operation {
+    at: Instant,
+    tid: u32,
+    lr: u32,
+    what: &'static str,
+    id: ObjId,
+    detail: i64,
+}
+
 /// Where a blocked thread sleeps; set by whoever satisfies (or alerts) it.
 struct WaitSlot {
     result: AtomicU64,
@@ -291,9 +304,21 @@ struct DispState {
     /// [`ObjectManager::wait`] on barriers.
     event_sets: HashMap<ObjId, u64>,
     polls: HashMap<u32, (ObjId, u64, u64)>,
+    /// The latest operations on waitable objects, for the report of a title that stopped
+    /// (see [`ObjectManager::history`]).
+    history: VecDeque<Operation>,
 }
 
 impl DispState {
+    /// Remembers an operation of the calling thread on object `id`.
+    fn record(&mut self, what: &'static str, id: ObjId, detail: i64) {
+        let (tid, lr) = crate::thread::current_caller();
+        if self.history.len() == HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back(Operation { at: Instant::now(), tid, lr, what, id, detail });
+    }
+
     fn note_signal(&mut self, id: ObjId) {
         if crate::dispatch::SLOW_CALL_MS.load(Ordering::Relaxed) != 0 {
             let (tid, lr) = crate::thread::current_caller();
@@ -345,6 +370,9 @@ impl DispState {
             match r {
                 Some(r) => {
                     let w = self.waiters.remove(i);
+                    if let Some(&first) = w.objects.first() {
+                        self.record("releases the wait of thread", first, i64::from(w.tid));
+                    }
                     self.note_released(&w, r);
                     w.slot.post_result(r);
                     woke = true;
@@ -685,6 +713,7 @@ impl ObjectManager {
     fn update<R>(&self, mem: &GuestMemory, obj: &KObject, f: impl FnOnce(&mut SyncState) -> R) -> Option<R> {
         let mut d = self.lock();
         let r = f(d.sync.get_mut(&obj.id)?);
+        d.record("signals", obj.id, 0);
         d.note_signal(obj.id);
         d.mirror(mem, obj.id);
         d.wake_waiters(mem);
@@ -700,6 +729,7 @@ impl ObjectManager {
             _ => 0,
         };
         *d.event_sets.entry(obj.id).or_default() += 1;
+        d.record("sets", obj.id, i64::from(prev));
         d.note_signal(obj.id);
         d.mirror(mem, obj.id);
         if d.wake_waiters(mem) {
@@ -747,6 +777,7 @@ impl ObjectManager {
             SyncState::Event { signaled, .. } => std::mem::replace(signaled, false) as i32,
             _ => 0,
         };
+        d.record("resets", obj.id, i64::from(prev));
         d.mirror(mem, obj.id);
         Some(prev)
     }
@@ -874,6 +905,7 @@ impl ObjectManager {
             && let Some(r) = d.try_satisfy(mem, tid, objects, wait_all)
         {
             d.polls.remove(&tid);
+            d.record("waits, satisfied at once", objects[0], i64::from(r));
             return WaitOutcome::Satisfied(r);
         }
         // Barriers: Skyrim's job threads poll a manual-reset event (timeout 0), count themselves
@@ -895,6 +927,7 @@ impl ObjectManager {
                 && matches!(d.sync.get(obj), Some(SyncState::Event { manual_reset: true, .. }));
             d.polls.remove(&tid);
             if missed {
+                d.record("waits, released for a set it missed after polling", *obj, 0);
                 return WaitOutcome::Satisfied(0);
             }
         } else {
@@ -911,7 +944,13 @@ impl ObjectManager {
                 let sets = d.event_sets.get(obj).copied().unwrap_or(0);
                 d.polls.insert(tid, (*obj, sets, calls));
             }
+            if let Some(&first) = objects.first() {
+                d.record("polls, not signaled", first, 0);
+            }
             return WaitOutcome::Timeout;
+        }
+        if let Some(&first) = objects.first() {
+            d.record(if deadline.is_some() { "waits (timed), blocks" } else { "waits, blocks" }, first, objects.len() as i64);
         }
         let id = d.next_wait;
         d.next_wait += 1;
@@ -966,6 +1005,50 @@ impl ObjectManager {
     }
 
     /// Threads currently blocked in a wait (for hang diagnostics).
+    /// The latest operations (oldest first) on the objects that threads are blocked on without a
+    /// timeout, as text: what led to a title that stopped. `limit` entries at most.
+    pub fn history(&self, limit: usize) -> Vec<String> {
+        let d = self.lock();
+        let blocked: std::collections::HashSet<ObjId> =
+            d.waiters.iter().filter(|w| !w.timed).flat_map(|w| w.objects.iter().copied()).collect();
+        // Objects still in use (the audio threads' keep going whatever happens) aren't what
+        // stopped the title.
+        let now = Instant::now();
+        let active: std::collections::HashSet<ObjId> = d
+            .history
+            .iter()
+            .rev()
+            .take_while(|o| now.duration_since(o.at) < Duration::from_secs(1))
+            .map(|o| o.id)
+            .collect();
+        let stuck = |o: &&Operation| blocked.contains(&o.id) && !active.contains(&o.id);
+        let Some(last) = d.history.iter().rev().find(stuck).map(|o| o.at) else { return Vec::new() };
+        // Everything in the last moments before it stopped, and further back what touched the
+        // objects it stopped on.
+        let recent = Duration::from_millis(40);
+        let mut lines: Vec<String> = d
+            .history
+            .iter()
+            .rev()
+            .filter(|o| !active.contains(&o.id) && o.at <= last)
+            .filter(|o| blocked.contains(&o.id) || last.duration_since(o.at) < recent)
+            .take(limit)
+            .map(|o| {
+                format!(
+                    "{:9.3} ms before the last: thread {:#X} (from {:08X}) {} {:#010X} ({})",
+                    last.duration_since(o.at).as_secs_f64() * 1000.0,
+                    o.tid,
+                    o.lr,
+                    o.what,
+                    d.headers.get(&o.id).copied().unwrap_or(0),
+                    o.detail
+                )
+            })
+            .collect();
+        lines.reverse();
+        lines
+    }
+
     pub fn waiters(&self) -> Vec<WaiterInfo> {
         let d = self.lock();
         d.waiters

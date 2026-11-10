@@ -1683,6 +1683,29 @@ pub extern "C" fn skyrt_gpu_progress() -> u32 {
     Kernel::try_global().map_or(0, |k| k.gpu.progress.load(Ordering::SeqCst))
 }
 
+/// Yields until the guest dword at `address` reads zero, at most `timeout_us` microseconds
+/// (then says so, once in a while). For title overrides that must wait for other guest threads
+/// to leave a section the console's timing kept them out of.
+#[unsafe(no_mangle)]
+pub extern "C" fn skyrt_wait_until_zero(address: u32, timeout_us: u32) {
+    let Some(k) = Kernel::try_global() else { return };
+    let mem = k.rt.mem();
+    if mem.atomic_load_u32(address) == 0 {
+        return;
+    }
+    let started = Instant::now();
+    while mem.atomic_load_u32(address) != 0 {
+        if started.elapsed() >= Duration::from_micros(u64::from(timeout_us)) {
+            static REPORTED: AtomicU32 = AtomicU32::new(0);
+            if REPORTED.fetch_add(1, Ordering::Relaxed) % 256 == 0 {
+                log::warn!("guest dword {address:#010X} still nonzero after {timeout_us} us; going on");
+            }
+            return;
+        }
+        std::thread::yield_now();
+    }
+}
+
 /// Sleeps until the command processor's progress counter differs from `seen`, at most
 /// `timeout_us` microseconds.
 #[unsafe(no_mangle)]
