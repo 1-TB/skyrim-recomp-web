@@ -17,6 +17,7 @@
 //! ~/tools/XenonRecomp) and XENON_RECOMP_BIN (default <dir>/build/XenonRecomp/XenonRecomp).
 
 mod ios;
+mod locals;
 mod ppc;
 mod scan;
 mod serve;
@@ -184,7 +185,64 @@ fn recompile(config: &Path) -> Result<Recompiled> {
     if !out_dir.join("ppc_recomp_shared.h").exists() {
         return Err(format!("XenonRecomp produced no output in {}", out_dir.display()));
     }
+    if toml_string(&text, "registers_as_locals").as_deref() == Some("true") {
+        registers_as_locals(&config, &text, &out_dir, &header)?;
+    }
     Ok(Recompiled { out_dir, xex })
+}
+
+/// `registers_as_locals = true`: recompiles a second time with XenonRecomp's
+/// `non_argument_as_local` and `non_volatile_as_local` on and gives every function that can
+/// have them the body with locals (see [`locals`]). `out_dir` holds the first run's output.
+fn registers_as_locals(config: &Path, text: &str, out_dir: &Path, header: &Path) -> Result<()> {
+    const OPTIONS: [&str; 2] = ["non_argument_as_local", "non_volatile_as_local"];
+    if OPTIONS.iter().any(|o| toml_string(text, o).as_deref() == Some("true")) {
+        return Err(format!("registers_as_locals needs {} and {} false in {}", OPTIONS[0], OPTIONS[1], config.display()));
+    }
+    let out = toml_string(text, "out_directory_path").unwrap();
+    let locals_out = format!("{}-locals", out.trim_end_matches('/'));
+    let locals_dir = config.parent().unwrap().join(&locals_out);
+    // The same config with the two options on and its own output directory, next to the
+    // original (paths in it are relative to the file).
+    let mut main = false;
+    let locals_text: String = text
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                main = trimmed == "[main]";
+            }
+            let key = trimmed.split_once('=').map(|(k, _)| k.trim());
+            match key {
+                Some(k) if main && OPTIONS.contains(&k) => format!("{k} = true\n"),
+                Some("out_directory_path") if main => format!("out_directory_path = \"{locals_out}\"\n"),
+                _ => format!("{line}\n"),
+            }
+        })
+        .collect();
+    let locals_config = config.with_extension("locals.toml");
+    fs::write(&locals_config, locals_text).map_err(|e| format!("{}: {e}", locals_config.display()))?;
+    fs::create_dir_all(&locals_dir).map_err(|e| format!("{}: {e}", locals_dir.display()))?;
+    println!("running {} {} (registers as locals)", xenon_bin().display(), locals_config.display());
+    let status = Command::new(xenon_bin()).arg(&locals_config).arg(header).status().map_err(|e| e.to_string());
+    let _ = fs::remove_file(&locals_config);
+    if !status?.success() {
+        return Err("XenonRecomp failed on the run with registers as locals".into());
+    }
+    let context = locals::context_functions(out_dir)?;
+    let names: std::collections::HashSet<&str> = context.keys().map(String::as_str).collect();
+    let converted = locals::mix(out_dir, &locals_dir, &names)?;
+    fs::remove_dir_all(&locals_dir).map_err(|e| format!("{}: {e}", locals_dir.display()))?;
+    // For whoever wonders why a function still uses the context.
+    let report: String = context.iter().map(|(name, why)| format!("{name}: {}\n", why.join("; "))).collect();
+    let report_path = out_dir.join("context_functions.txt");
+    fs::write(&report_path, report).map_err(|e| format!("{}: {e}", report_path.display()))?;
+    println!(
+        "registers as locals in {converted} functions; {} keep the context ({})",
+        context.len(),
+        report_path.display()
+    );
+    Ok(())
 }
 
 fn guest_env(cmd: &mut Command, r: &Recompiled) {
