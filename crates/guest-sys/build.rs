@@ -234,14 +234,40 @@ PPC_FUNC({f}) {{
             cpp,
             r#"
 extern "C" void skyrt_wait_until_zero(uint32_t address, uint32_t timeout_us);
+extern "C" uint8_t skyrt_cheats_pending;
+extern "C" void skyrt_cheats_tick(PPCContext* ctx);
 extern "C" PPC_FUNC(__imp__{f});
 PPC_FUNC({f}) {{
     __imp__{f}(ctx, base);
     if (PPC_LOAD_U32({state:#X}u) == 0) skyrt_wait_until_zero({runners:#X}u, 100000);
+    // No job thread is running game code here: where kernel-hle's cheats are carried out.
+    if (skyrt_cheats_pending) skyrt_cheats_tick(&ctx);
 }}"#,
             f = SKYRIM_JOBS_STOP,
             state = SKYRIM_JOBS_STATE,
             runners = SKYRIM_JOBS_RUNNERS
+        )
+        .unwrap();
+    }
+    // Actor::ModActorValue(actor, modifier, value id, amount in f1): every change of an actor's
+    // health, magicka and stamina goes through it (modifier 2 is damage, negative amounts
+    // losses). kernel-hle's god mode cheat drops the player's.
+    const SKYRIM_MOD_ACTOR_VALUE: &str = "sub_82425E88";
+    if title == Some(kernel_hle::cheats::TITLE) && declared.contains(SKYRIM_MOD_ACTOR_VALUE) {
+        writeln!(
+            cpp,
+            r#"
+extern "C" uint8_t skyrt_cheat_god;
+extern "C" PPC_FUNC(__imp__{f});
+PPC_FUNC({f}) {{
+    if (skyrt_cheat_god && ctx.r4.u32 == 2 && ctx.f1.f64 < 0.0 && ctx.r5.u32 - {health}u < 3u
+        && ctx.r3.u32 == PPC_LOAD_U32({player:#X}u))
+        return;
+    __imp__{f}(ctx, base);
+}}"#,
+            f = SKYRIM_MOD_ACTOR_VALUE,
+            health = kernel_hle::cheats::HEALTH,
+            player = kernel_hle::cheats::PLAYER
         )
         .unwrap();
     }

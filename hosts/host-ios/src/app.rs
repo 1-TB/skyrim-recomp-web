@@ -55,6 +55,8 @@ struct State {
     settings_path: std::path::PathBuf,
     /// The settings panel, until Play is tapped.
     panel: Option<Panel>,
+    /// The cheats panel, over the in-game settings panel until Done is tapped.
+    cheats: Option<crate::cheats::Panel>,
     /// Start with the saved settings, without showing the panel (`--autoplay` in args.txt).
     autoplay: bool,
     /// The renderer's window, handed to `boot` on Play.
@@ -97,6 +99,7 @@ thread_local! {
         boot: None,
         settings_path: std::path::PathBuf::new(),
         panel: None,
+        cheats: None,
         autoplay: false,
         render_window: None,
         fps: None,
@@ -308,6 +311,61 @@ define_class!(
             open_settings(self);
         }
 
+        /// The in-game settings' Cheats button: the cheats panel over them.
+        #[unsafe(method(openCheats:))]
+        fn open_cheats(&self, _sender: &AnyObject) {
+            let mtm = self.mtm();
+            let opened = with_state(|s| {
+                if s.panel.is_none() || s.cheats.is_some() {
+                    return false;
+                }
+                s.cheats = Some(crate::cheats::Panel::new(mtm, self, self));
+                true
+            });
+            if opened == Some(true) {
+                layout(self);
+            }
+        }
+
+        #[unsafe(method(cheatGod:))]
+        fn cheat_god(&self, _sender: &AnyObject) {
+            with_state(|s| {
+                if let Some(cheats) = &s.cheats {
+                    cheats.god_changed();
+                }
+            });
+        }
+
+        #[unsafe(method(cheatSpeed:))]
+        fn cheat_speed(&self, _sender: &AnyObject) {
+            with_state(|s| {
+                if let Some(cheats) = &s.cheats {
+                    cheats.speed_changed();
+                }
+            });
+        }
+
+        /// A cheat button: its tag is its index in the panel.
+        #[unsafe(method(cheatTapped:))]
+        fn cheat_tapped(&self, sender: &UIView) {
+            let index = sender.tag().max(0) as usize;
+            with_state(|s| {
+                if let Some(cheats) = &mut s.cheats {
+                    cheats.tapped(index);
+                }
+            });
+        }
+
+        /// The cheats panel's Done button: back to the settings panel.
+        #[unsafe(method(cheatsDone:))]
+        fn cheats_done(&self, _sender: &AnyObject) {
+            with_state(|s| {
+                if let Some(cheats) = s.cheats.take() {
+                    cheats.remove();
+                }
+            });
+        }
+
         #[unsafe(method(tick:))]
         fn tick(&self, link: &CADisplayLink) {
             with_state(|s| {
@@ -441,6 +499,9 @@ fn layout(view: &SkyrtView) {
         }
         if let Some(panel) = &s.panel {
             panel.layout(bounds, area);
+        }
+        if let Some(cheats) = &s.cheats {
+            cheats.layout(bounds, area);
         }
         if let Some(fps) = &s.fps {
             fps.layout(area);

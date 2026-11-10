@@ -34,6 +34,9 @@ options:
                            (A B X Y START BACK LB RB LS RS UP DOWN LEFT RIGHT; repeatable)
   --rescale-at SECONDS:N   (testing) change the resolution scale to N while running, SECONDS
                            after start (repeatable)
+  --cheat CHEAT@SECONDS    (Skyrim) a cheat at that time after boot: god, god=off, gold=N,
+                           lockpicks=N, heal, carry=N (more carry weight), perks=N (perk
+                           points), skills=N (every skill up N levels), speed=PERCENT (repeatable)
   --hold CONTROL[=VALUE]@START+DURATION
                            hold a port-1 control from START for DURATION seconds: a button,
                            LS=X,Y or RS=X,Y (sticks, -1..1, up positive) or LT=V / RT=V
@@ -103,6 +106,8 @@ pub struct Options {
     pub vblank_hz: Option<u32>,
     /// Scripted presses: (button mask, seconds after boot).
     pub taps: Vec<(u16, f64)>,
+    /// `--cheat`: (a kernel-hle cheat by name, seconds after boot).
+    pub cheats: Vec<(String, f64)>,
     pub holds: Vec<(Held, f64, f64)>,
     /// `--gpu` as given; without it the D3D path is used when the hooks were built for the title.
     pub gpu: Option<String>,
@@ -159,6 +164,12 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
                 kernel_hle::dispatch::SLOW_CALL_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
             }
             "--tap" => o.taps.push(parse_tap(&value()?)?),
+            "--cheat" => {
+                let v = value()?;
+                let (cheat, at) = v.split_once('@').ok_or(format!("--cheat {v}: not CHEAT@SECONDS"))?;
+                let at: f64 = at.parse().map_err(|e| format!("--cheat {v}: {e}"))?;
+                o.cheats.push((cheat.to_string(), at));
+            }
             "--hold" => o.holds.push(parse_hold(&value()?)?),
             "--rescale-at" => {
                 let v = value()?;
@@ -299,6 +310,24 @@ fn parse_hold(spec: &str) -> Result<(Held, f64, f64), String> {
     let start: f64 = start.parse().map_err(|e| format!("--hold {spec}: {e}"))?;
     let duration: f64 = duration.parse().map_err(|e| format!("--hold {spec}: {e}"))?;
     Ok((held, start, duration.max(0.0)))
+}
+
+/// Asks for the `--cheat`s as they come due, from a host thread.
+fn spawn_cheat_script(cheats: &[(String, f64)]) {
+    if cheats.is_empty() {
+        return;
+    }
+    let mut cheats = cheats.to_vec();
+    cheats.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let start = std::time::Instant::now();
+    std::thread::spawn(move || {
+        for (cheat, at) in cheats {
+            std::thread::sleep(Duration::from_secs_f64(at).saturating_sub(start.elapsed()));
+            if let Err(e) = kernel_hle::cheats::request_named(&cheat) {
+                log::warn!("--cheat: {e}");
+            }
+        }
+    });
 }
 
 /// Plays `--tap` presses and `--hold`s on port 1 from a host thread: each change of the
@@ -475,6 +504,7 @@ pub fn run(
     }
     on_kernel(kernel);
     spawn_input_script(kernel, &o.taps, &o.holds);
+    spawn_cheat_script(&o.cheats);
     kernel.start_main_thread().map_err(|s| format!("starting main thread: {s:#010X}"))?;
 
     let Some(code) = wait_for_title(kernel, o.run_for) else {

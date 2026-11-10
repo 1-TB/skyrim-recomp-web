@@ -9,6 +9,7 @@ macro_rules! export {
 }
 
 pub mod audio;
+pub mod cheats;
 pub mod d3d;
 pub mod dbgprint;
 pub mod dispatch;

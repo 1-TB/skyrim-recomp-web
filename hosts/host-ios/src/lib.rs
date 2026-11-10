@@ -21,6 +21,7 @@ mod app;
 mod audio_out;
 #[path = "../../common/boot.rs"]
 mod boot;
+mod cheats;
 #[path = "../../host-native/src/crash.rs"]
 mod crash;
 #[path = "../../common/gpu.rs"]

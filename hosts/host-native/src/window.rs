@@ -5,7 +5,8 @@
 //! Keys: WASD left stick, arrows right stick, Space A, Escape/Tab B, R X, F Y, Q/E bumpers,
 //! Z/C triggers, Enter Start, Backspace Back, X/V stick clicks, 1-4 d-pad. Clicking the window
 //! captures the mouse: moving it turns the camera (right stick), the left/right buttons are the
-//! right/left triggers, and Escape releases it. F11 toggles fullscreen.
+//! right/left triggers, and Escape releases it. F11 toggles fullscreen; F1-F8 are
+//! Skyrim's cheats (see `cheat_key`).
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,6 +38,35 @@ const DPAD_UP: u16 = 0x0001;
 const DPAD_DOWN: u16 = 0x0002;
 const DPAD_LEFT: u16 = 0x0004;
 const DPAD_RIGHT: u16 = 0x0008;
+
+/// Skyrim's cheats (kernel-hle's cheats module) on F1-F8: god mode on/off, 1,000 gold, 10
+/// lockpicks, health restored, 500 more carry weight, a perk point, every skill up a level,
+/// run speed 100% -> 150% -> 200%. Whether `code` was one of them.
+fn cheat_key(code: KeyCode) -> bool {
+    use kernel_hle::cheats::{self, Cheat};
+    match code {
+        KeyCode::F1 => {
+            let on = !cheats::god_mode();
+            cheats::set_god_mode(on);
+            if on {
+                cheats::request(Cheat::Heal);
+            }
+        }
+        KeyCode::F2 => cheats::request(Cheat::Gold(1000)),
+        KeyCode::F3 => cheats::request(Cheat::Lockpicks(10)),
+        KeyCode::F4 => cheats::request(Cheat::Heal),
+        KeyCode::F5 => cheats::request(Cheat::CarryWeight(500.0)),
+        KeyCode::F6 => cheats::request(Cheat::PerkPoints(1)),
+        KeyCode::F7 => cheats::request(Cheat::SkillLevels(1)),
+        KeyCode::F8 => cheats::request(Cheat::RunSpeed(match cheats::run_speed() {
+            100 => 150.0,
+            150 => 200.0,
+            _ => 100.0,
+        })),
+        _ => return false,
+    }
+    true
+}
 
 const KEY_BUTTONS: [(KeyCode, u16); 16] = [
     (KeyCode::Space, A),
@@ -308,6 +338,9 @@ impl ApplicationHandler for App {
                         let full = w.fullscreen().is_some();
                         w.set_fullscreen(if full { None } else { Some(Fullscreen::Borderless(None)) });
                     }
+                    return;
+                }
+                if pressed && !event.repeat && cheat_key(code) {
                     return;
                 }
                 // Escape first releases a captured mouse, as in the browser.

@@ -236,6 +236,8 @@ pub struct Panel {
     rows: Vec<(Retained<UILabel>, Retained<UIView>, bool)>,
     note: Retained<UILabel>,
     play: Retained<UIButton>,
+    /// Opens the cheats panel (in game only).
+    cheats: Option<Retained<UIButton>>,
     scale: Retained<UISegmentedControl>,
     anisotropy: Retained<UISegmentedControl>,
     fps_cap: Retained<UISegmentedControl>,
@@ -247,7 +249,7 @@ pub struct Panel {
     show_fps: Retained<UISwitch>,
 }
 
-fn label(mtm: MainThreadMarker, text: &str, size: f64, alpha: f64) -> Retained<UILabel> {
+pub(crate) fn label(mtm: MainThreadMarker, text: &str, size: f64, alpha: f64) -> Retained<UILabel> {
     let label = UILabel::new(mtm);
     label.setText(Some(&NSString::from_str(text)));
     // SAFETY: a color and a system font, on the main thread.
@@ -258,7 +260,7 @@ fn label(mtm: MainThreadMarker, text: &str, size: f64, alpha: f64) -> Retained<U
     label
 }
 
-fn segments(mtm: MainThreadMarker, titles: &[&str], selected: usize) -> Retained<UISegmentedControl> {
+pub(crate) fn segments(mtm: MainThreadMarker, titles: &[&str], selected: usize) -> Retained<UISegmentedControl> {
     let items: Vec<Retained<AnyObject>> =
         titles.iter().map(|t| Retained::into_super(Retained::into_super(NSString::from_str(t)))).collect();
     let array = NSArray::from_retained_slice(&items);
@@ -270,7 +272,8 @@ fn segments(mtm: MainThreadMarker, titles: &[&str], selected: usize) -> Retained
 
 impl Panel {
     /// Builds the panel in `parent` showing `settings`; Play (Resume when `in_game`: opened
-    /// while playing) sends `settingsPlay:` to `target`.
+    /// while playing) sends `settingsPlay:` to `target`, and in game a Cheats button sends
+    /// `openCheats:`.
     pub fn new(
         mtm: MainThreadMarker,
         parent: &UIView,
@@ -352,9 +355,45 @@ impl Panel {
         }
         root.addSubview(&note);
         root.addSubview(&play);
+        let cheats = in_game.then(|| {
+            let cheats = UIButton::buttonWithType(UIButtonType::System, mtm);
+            cheats.setTitle_forState(Some(&NSString::from_str("Cheats")), UIControlState::Normal);
+            // SAFETY: as for Play above; the target implements `openCheats:`.
+            unsafe {
+                cheats.setBackgroundColor(Some(&UIColor::colorWithWhite_alpha(1.0, 0.14)));
+                cheats.setTitleColor_forState(Some(&UIColor::whiteColor()), UIControlState::Normal);
+                if let Some(l) = cheats.titleLabel() {
+                    l.setFont(Some(&UIFont::systemFontOfSize(18.0)));
+                }
+                cheats.layer().setCornerRadius(12.0);
+                cheats.addTarget_action_forControlEvents(
+                    Some(target),
+                    sel!(openCheats:),
+                    UIControlEvents::TouchUpInside,
+                );
+            }
+            root.addSubview(&cheats);
+            cheats
+        });
         title.setTextAlignment(NSTextAlignment::Left);
         parent.addSubview(&root);
-        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, msaa, aspect, touch, shadows, show_fps }
+        Panel {
+            root,
+            title,
+            rows,
+            note,
+            play,
+            cheats,
+            scale,
+            anisotropy,
+            fps_cap,
+            upscaling,
+            msaa,
+            aspect,
+            touch,
+            shadows,
+            show_fps,
+        }
     }
 
     /// Covers the whole view, with the content laid out in `area` (the safe area).
@@ -379,6 +418,9 @@ impl Panel {
         self.note.setFrame(rect(x, y, width, 40.0));
         y += 40.0 + gap;
         self.play.setFrame(rect(x + width * 0.3, y, width * 0.4, 56.0));
+        if let Some(cheats) = &self.cheats {
+            cheats.setFrame(rect(x, y + 6.0, width * 0.22, 44.0));
+        }
     }
 
     /// The settings the controls show.
