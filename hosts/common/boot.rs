@@ -62,6 +62,9 @@ options:
   --game-aspect W:H        draw the game itself wider than 16:9 (true widescreen: more of the
                            world to the sides, menus laid out for the shape), e.g. 19.5:9 for
                            a phone; 720 pixels high, 1280-1920 wide (default 16:9)
+  --game-setting SECTION:NAME=VALUE
+                           set one of the game's own settings, as its Skyrim.ini would (e.g.
+                           Display:bDrawShadows=0; repeatable)
   --render-debug MODE      renderer experiments for finding bottlenecks (repeatable):
                            scissor (shade one pixel per draw), nodraw (record but skip draw calls),
                            frames=N (let the renderer run N frames ahead of the GPU; default 2),
@@ -105,6 +108,9 @@ pub struct Options {
     pub gpu: Option<String>,
     /// `--game-aspect`: the width the title draws at (720 pixels high).
     pub game_width: Option<u32>,
+    /// `--game-setting`: (section, `name=value`) lines added to what the title reads as its
+    /// Skyrim.ini.
+    pub game_settings: Vec<(String, String)>,
     /// Host-specific flags the shared parser doesn't know.
     pub extra: Vec<(String, String)>,
 }
@@ -194,6 +200,14 @@ pub fn parse(mut args: impl Iterator<Item = String>, extra_flags: &[&str]) -> Re
                     .filter(|r| r.is_finite() && *r > 0.0)
                     .ok_or(format!("--game-aspect {v}: not W:H"))?;
                 o.game_width = Some(game_width(ratio));
+            }
+            "--game-setting" => {
+                let v = value()?;
+                let (section, setting) = v
+                    .split_once(':')
+                    .filter(|(section, setting)| !section.is_empty() && setting.contains('='))
+                    .ok_or(format!("--game-setting {v}: not SECTION:NAME=VALUE"))?;
+                o.game_settings.push((section.to_string(), setting.to_string()));
             }
             "--no-msaa" => xenos_render::set_single_sample(true),
             "--anisotropy" => {
@@ -366,19 +380,36 @@ pub fn game_width(ratio: f64) -> u32 {
     ((ratio * f64::from(GAME_HEIGHT) / 8.0).round() as u32 * 8).clamp(1280, 1920)
 }
 
-/// Skyrim's renderer takes its frame size from `iSize W`/`iSize H` in `[Display]` when
-/// `bIgnoreResolutionCheck` is set (otherwise 1280x720 on a widescreen console), the way the PC
-/// version reads them from its INI; the console title's Skyrim.ini has no such section, so the
-/// settings are added to what it reads. Its camera keeps the vertical field of view and widens
-/// the horizontal one, and its menus lay themselves out for the frame's shape.
-fn set_game_width(vfs: &Vfs, width: u32) {
-    let settings = format!("[Display]\r\nbIgnoreResolutionCheck=1\r\niSize W={width}\r\niSize H={GAME_HEIGHT}\r\n");
-    match vfs.append_on_read("game:\\Skyrim.ini", settings.as_bytes()) {
+/// Adds settings to what the title reads as its Skyrim.ini (the console title's file has only a
+/// few; the others take built-in defaults, and a line in the file overrides one the way the PC
+/// version's INI does).
+///
+/// `width`: Skyrim's renderer takes its frame size from `iSize W`/`iSize H` in `[Display]` when
+/// `bIgnoreResolutionCheck` is set (otherwise 1280x720 on a widescreen console). Its camera keeps
+/// the vertical field of view and widens the horizontal one, and its menus lay themselves out
+/// for the frame's shape.
+fn set_game_settings(vfs: &Vfs, width: Option<u32>, settings: &[(String, String)]) {
+    let mut text = String::new();
+    if let Some(width) = width {
+        text += &format!("[Display]\r\nbIgnoreResolutionCheck=1\r\niSize W={width}\r\niSize H={GAME_HEIGHT}\r\n");
+    }
+    for (section, setting) in settings {
+        text += &format!("[{section}]\r\n{setting}\r\n");
+    }
+    if text.is_empty() {
+        return;
+    }
+    match vfs.append_on_read("game:\\Skyrim.ini", text.as_bytes()) {
         Ok(()) => {
-            log::info!("game frame {width}x{GAME_HEIGHT}");
-            kernel_hle::menus::set_wide_frame(true);
+            if let Some(width) = width {
+                log::info!("game frame {width}x{GAME_HEIGHT}");
+                kernel_hle::menus::set_wide_frame(true);
+            }
+            for (section, setting) in settings {
+                log::info!("game setting [{section}] {setting}");
+            }
         }
-        Err(e) => log::warn!("--game-aspect: {e}"),
+        Err(e) => log::warn!("--game-aspect / --game-setting: {e}"),
     }
 }
 
@@ -423,9 +454,7 @@ pub fn run(
     for (name, device) in &o.links {
         vfs.add_symlink(name, device);
     }
-    if let Some(width) = o.game_width.filter(|&w| w != 1280) {
-        set_game_width(&vfs, width);
-    }
+    set_game_settings(&vfs, o.game_width.filter(|&w| w != 1280), &o.game_settings);
 
     let kernel = Kernel::new(rt, vfs, o.stubs.clone(), guest_sys::IMPORT_NAMES)?;
     kernel.install_global();

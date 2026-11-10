@@ -37,11 +37,14 @@ pub struct Settings {
     pub aspect: &'static str,
     /// The on-screen controls: off, or their size (small, normal, large).
     pub touch: &'static str,
+    /// The game's sun shadows: full (its own distance), near or off (`--game-setting`, from the
+    /// next launch). Drawing them is about 40% of the game's draws in a town.
+    pub shadows: &'static str,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true, aspect: "wide", touch: "normal" }
+        Settings { resolution_scale: 1, anisotropy: 1, fps_cap: 120, show_fps: false, metalfx: true, msaa: true, aspect: "wide", touch: "normal", shadows: "full" }
     }
 }
 
@@ -50,6 +53,8 @@ const ANISOTROPY: [u16; 4] = [1, 4, 8, 16];
 const FPS_CAPS: [u32; 3] = [30, 60, 120];
 const ASPECTS: [&str; 4] = ["wide", "fit", "fill", "stretch"];
 const TOUCH: [&str; 4] = ["off", "small", "normal", "large"];
+/// Shadow choices and the game's `fShadowDistance` for each (None: its default, 2500).
+const SHADOWS: [(&str, Option<u32>); 3] = [("off", Some(1)), ("near", Some(1000)), ("full", None)];
 
 impl Settings {
     /// Reads `path` (`key=value` lines); missing or unknown values keep their defaults.
@@ -88,6 +93,11 @@ impl Settings {
                         s.touch = t;
                     }
                 }
+                "shadows" => {
+                    if let Some((name, _)) = SHADOWS.iter().find(|(name, _)| *name == value) {
+                        s.shadows = name;
+                    }
+                }
                 _ => {}
             }
         }
@@ -96,7 +106,7 @@ impl Settings {
 
     pub fn save(&self, path: &Path) {
         let text = format!(
-            "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\nmsaa={}\naspect={}\ntouch={}\n",
+            "resolution_scale={}\nanisotropy={}\nfps_cap={}\nshow_fps={}\nmetalfx={}\nmsaa={}\naspect={}\ntouch={}\nshadows={}\n",
             self.resolution_scale,
             self.anisotropy,
             self.fps_cap,
@@ -104,7 +114,8 @@ impl Settings {
             self.metalfx,
             self.msaa,
             self.aspect,
-            self.touch
+            self.touch,
+            self.shadows
         );
         if let Err(e) = std::fs::write(path, text) {
             log::warn!("saving {}: {e}", path.display());
@@ -133,6 +144,9 @@ impl Settings {
         }
         if !self.msaa {
             args.push("--no-msaa".to_string());
+        }
+        if let Some((_, Some(distance))) = SHADOWS.iter().find(|(name, _)| *name == self.shadows) {
+            args.extend(["--game-setting".to_string(), format!("Display:fShadowDistance={distance}")]);
         }
         args
     }
@@ -170,6 +184,7 @@ pub struct Panel {
     msaa: Retained<UISegmentedControl>,
     aspect: Retained<UISegmentedControl>,
     touch: Retained<UISegmentedControl>,
+    shadows: Retained<UISegmentedControl>,
     show_fps: Retained<UISwitch>,
 }
 
@@ -226,6 +241,11 @@ impl Panel {
             &["Off", "Small", "Normal", "Large"],
             TOUCH.iter().position(|&t| t == settings.touch).unwrap_or(2),
         );
+        let shadows = segments(
+            mtm,
+            &["Off (fastest)", "Near", "Full"],
+            SHADOWS.iter().position(|(name, _)| *name == settings.shadows).unwrap_or(2),
+        );
         let show_fps = UISwitch::new(mtm);
         show_fps.setOn(settings.show_fps);
         let control = |c: Retained<UISegmentedControl>| Retained::into_super(Retained::into_super(c));
@@ -235,6 +255,7 @@ impl Panel {
             (label(mtm, "Frame rate limit", 17.0, 0.9), control(fps_cap.clone()), false),
             (label(mtm, "Upscaling", 17.0, 0.9), control(upscaling.clone()), false),
             (label(mtm, "Anti-aliasing", 17.0, 0.9), control(msaa.clone()), false),
+            (label(mtm, "Shadows", 17.0, 0.9), control(shadows.clone()), false),
             (label(mtm, "Aspect ratio", 17.0, 0.9), control(aspect.clone()), false),
             (label(mtm, "Touch controls", 17.0, 0.9), control(touch.clone()), false),
             (label(mtm, "Show FPS", 17.0, 0.9), Retained::into_super(Retained::into_super(show_fps.clone())), true),
@@ -242,11 +263,10 @@ impl Panel {
         let title = label(mtm, "Settings", 28.0, 1.0);
         let note = label(
             mtm,
-            "Higher resolutions are sharper but cost frame rate (the GPU draws 4 or 9 times the \
-             pixels). Widescreen shows more of the world at the sides (about 20% more pixels to \
-             draw; changing it takes effect when the app next starts). Fill zooms a 16:9 frame to \
-             the screen, cropping the top and bottom. In game, the ⚙ button at the top (or Back + Start on a controller) opens \
-             these again; args.txt in Documents overrides them at launch.",
+            "Higher resolutions cost frame rate (4 or 9 times the pixels). Widescreen shows more at \
+             the sides (about 20% more to draw). Shadows are about 40% of what the game draws in a \
+             town. Widescreen and Shadows apply from the next start. The ⚙ button (or Back + Start) \
+             opens this in game; args.txt in Documents overrides it.",
             13.0,
             0.6,
         );
@@ -274,7 +294,7 @@ impl Panel {
         root.addSubview(&play);
         title.setTextAlignment(NSTextAlignment::Left);
         parent.addSubview(&root);
-        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, msaa, aspect, touch, show_fps }
+        Panel { root, title, rows, note, play, scale, anisotropy, fps_cap, upscaling, msaa, aspect, touch, shadows, show_fps }
     }
 
     /// Covers the whole view, with the content laid out in `area` (the safe area).
@@ -284,7 +304,7 @@ impl Panel {
         let x = area.origin.x + (area.size.width - width) / 2.0;
         let rows = self.rows.len() as f64;
         // Rows shrink to fit a phone held sideways (about 400 points high).
-        let row = ((area.size.height - 40.0 - 40.0 - 56.0 - 4.0 * (rows + 3.0)) / rows).clamp(32.0, 44.0);
+        let row = ((area.size.height - 40.0 - 40.0 - 56.0 - 4.0 * (rows + 3.0)) / rows).clamp(28.0, 44.0);
         let gap = ((area.size.height - 40.0 - row * rows - 40.0 - 56.0) / (rows + 3.0)).clamp(2.0, 18.0);
         let mut y = area.origin.y + gap;
         self.title.setFrame(rect(x, y, width, 40.0));
@@ -313,6 +333,7 @@ impl Panel {
             msaa: self.msaa.selectedSegmentIndex() == 1,
             aspect: ASPECTS[pick(&self.aspect).min(ASPECTS.len() - 1)],
             touch: TOUCH[pick(&self.touch).min(TOUCH.len() - 1)],
+            shadows: SHADOWS[pick(&self.shadows).min(SHADOWS.len() - 1)].0,
         }
     }
 

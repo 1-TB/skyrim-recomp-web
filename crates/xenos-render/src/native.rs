@@ -270,6 +270,8 @@ fn run(
     let mut report_draws = renderer.executor.stats.draws;
     #[cfg(target_vendor = "apple")]
     let mut report_cpu = thread_cpu_time();
+    #[cfg(target_vendor = "apple")]
+    let mut report_usage = ProcessUsage::now();
     // Per frame, for the slow-frame log: the renderer's work and GPU waits since the last frame.
     let mut frame_times = renderer.executor.times();
     let mut frame_calls = gpu_webgpu::counters::snapshot();
@@ -391,6 +393,8 @@ fn run(
                     100.0 * (cpu - std::mem::replace(&mut report_cpu, cpu)).as_secs_f64() / window.as_secs_f64(),
                     core_speed()
                 );
+                let usage = ProcessUsage::now();
+                log::info!("perf: {}", usage.since(&std::mem::replace(&mut report_usage, usage), frames, window));
             }
             report_calls = calls;
             report_times = times;
@@ -410,6 +414,75 @@ fn thread_cpu_time() -> Duration {
     // SAFETY: writes the timespec it is given.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) };
     Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
+}
+
+/// What the whole process has used so far, from the kernel's accounting (`proc_pid_rusage`):
+/// the phone's frame rate is bound by the processor work per frame once iOS limits its power,
+/// and cycles and instructions per frame vary far less between runs than CPU time does.
+#[cfg(target_vendor = "apple")]
+#[derive(Clone, Copy)]
+struct ProcessUsage {
+    /// CPU time in Mach time units.
+    cpu: u64,
+    /// Time threads were running or ready to run (Mach time units).
+    runnable: u64,
+    instructions: u64,
+    cycles: u64,
+    /// Cycles on the performance cores.
+    fast_cycles: u64,
+    /// Energy the kernel attributes to the process's CPU use (nJ).
+    energy: u64,
+}
+
+#[cfg(target_vendor = "apple")]
+impl ProcessUsage {
+    fn now() -> Self {
+        /// `rusage_info_v6`: a UUID, then 64-bit counters (room for all of them).
+        #[repr(C)]
+        struct Info {
+            uuid: [u8; 16],
+            counters: [u64; 64],
+        }
+        unsafe extern "C" {
+            fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut Info) -> i32;
+        }
+        const RUSAGE_INFO_V6: i32 = 6;
+        let mut info = Info { uuid: [0; 16], counters: [0; 64] };
+        // SAFETY: the kernel writes a rusage_info_v6, which the buffer is larger than.
+        unsafe { proc_pid_rusage(libc::getpid(), RUSAGE_INFO_V6, &mut info) };
+        // ri_user_time + ri_system_time, ri_runnable_time, ri_instructions, ri_cycles,
+        // ri_pcycles, ri_energy_nj.
+        let c = &info.counters;
+        ProcessUsage { cpu: c[0] + c[1], runnable: c[34], instructions: c[29], cycles: c[30], fast_cycles: c[39], energy: c[40] }
+    }
+
+    /// The perf line for the `frames` shown over `window` since `earlier`.
+    fn since(&self, earlier: &ProcessUsage, frames: u64, window: Duration) -> String {
+        unsafe extern "C" {
+            fn mach_timebase_info(info: *mut [u32; 2]) -> i32;
+        }
+        // Nanoseconds per Mach time unit as numerator, denominator.
+        let mut timebase = [1u32; 2];
+        // SAFETY: writes the two 32-bit fields of the mach_timebase_info it is given.
+        unsafe { mach_timebase_info(&mut timebase) };
+        let seconds = |units: u64| units as f64 * f64::from(timebase[0]) / f64::from(timebase[1].max(1)) / 1e9;
+        let per_frame = |n: u64| n as f64 / frames.max(1) as f64;
+        let cpu = seconds(self.cpu - earlier.cpu);
+        let cycles = self.cycles - earlier.cycles;
+        let energy = (self.energy - earlier.energy) as f64 / 1e9;
+        format!(
+            "process per frame: {:.2} ms of CPU, {:.1} M cycles, {:.1} M instructions, {:.1} mJ; CPU {:.2} cores, {:.2} W, \
+             {:.0}% of cycles on performance cores, threads waiting for a core {:.0}% as long as running",
+            1000.0 * per_frame(1) * cpu,
+            per_frame(cycles) / 1e6,
+            per_frame(self.instructions - earlier.instructions) / 1e6,
+            1000.0 * per_frame(1) * energy,
+            cpu / window.as_secs_f64(),
+            energy / window.as_secs_f64(),
+            100.0 * (self.fast_cycles - earlier.fast_cycles) as f64 / cycles.max(1) as f64,
+            100.0 * (seconds(self.runnable - earlier.runnable) - cpu).max(0.0) / cpu.max(1e-9),
+        )
+    }
 }
 
 /// Which core the calling thread is on and how fast it is clocked right now, for the perf lines.
