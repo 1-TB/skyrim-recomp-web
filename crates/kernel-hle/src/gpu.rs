@@ -538,6 +538,10 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         d3d_scissor: None,
         d3d_own_writes: false,
         d3d_draws: (0, 0),
+        tile_segments: Default::default(),
+        tile_recording: None,
+        tile_pass: ALL_BINS,
+        tile_replays: 0,
     };
     let mut read_index = 0u32;
     let mut generation = 0u32;
@@ -687,6 +691,101 @@ struct CommandProcessor<'a> {
     d3d_own_writes: bool,
     /// `--gpu d3d`: draw packets run and left out since the last report.
     d3d_draws: (u64, u64),
+    /// `--gpu d3d`: the indirect buffers of the tiled scene at hand, by address: what each did
+    /// when it ran for the scene's first tile. The other tiles' replays of a buffer run none
+    /// of its draws (each ran in the first), so they only apply that.
+    tile_segments: rustc_hash::FxHashMap<u32, TileSegment>,
+    /// The indirect buffer being run for a scene's first tile.
+    tile_recording: Option<TileRecording>,
+    /// `bin_select` of the tile pass the last indirect buffer of a tiled scene belonged to.
+    tile_pass: u64,
+    /// Tile replays applied instead of run since the last report.
+    tile_replays: u64,
+}
+
+/// `bin_select` outside predicated tiling: every bin.
+const ALL_BINS: u64 = 0xFFFF_FFFF;
+
+/// `--gpu d3d`: what an indirect buffer of a tiled scene did when it ran for one tile, for the
+/// other tiles' replays of it. The title's draws run once, in the first tile they aren't
+/// predicated out of, so a replay with none left to run only changes state: Skyrim's scene is
+/// replayed for two more tiles, which was half of the command processor's work and of the
+/// register writes sent to the renderer.
+struct TileSegment {
+    length: u32,
+    /// The tile pass it was recorded in (that pass comes again with the next scene).
+    select: u64,
+    /// [`runtime_core::dirty::range_version`] of the buffer when the next tile's pass began
+    /// (running the pass writes to its buffers: the extents of EVENT_WRITE_EXT): unchanged as
+    /// long as the title hasn't written it since.
+    version: u64,
+    /// The registers only written outside predicated packets, with the values they ended with.
+    writes: Vec<(u32, u32)>,
+    /// The predicated packets that write state (not draws), which depend on the tile. A replay
+    /// runs them as they are.
+    predicated: Vec<PredicatedPacket>,
+    /// The registers written both by predicated packets and outside them (Skyrim: the first
+    /// pixel shader constants), which end with whichever wrote last in the tile at hand: the
+    /// register, the offset of the last packet outside predication that wrote it, and what it
+    /// wrote.
+    mixed: Vec<(u32, u32, Written)>,
+    /// The bin mask at the end.
+    bin_mask: u64,
+    /// The last microcode loaded for each stage (vertex, pixel).
+    shaders: [Option<Arc<[u32]>>; 2],
+    /// The last `--gpu d3d` marker (kind, value): its draw may follow the buffer.
+    marker: Option<(u32, u32)>,
+}
+
+/// A predicated packet of a [`TileSegment`].
+struct PredicatedPacket {
+    /// Its offset in dwords.
+    offset: u32,
+    /// The bin mask in effect: it runs in the tiles of these bins.
+    mask: u64,
+    /// The registers it writes (first, count).
+    registers: (u32, u32),
+}
+
+/// A run of registers written by a packet outside predication.
+struct WrittenRun {
+    first: u32,
+    count: u32,
+    /// The packet's offset in dwords.
+    offset: u32,
+    /// What it wrote to `first` (the next dwords to the registers after it).
+    values: Written,
+}
+
+/// Where the value a packet wrote to a register is.
+#[derive(Clone, Copy)]
+enum Written {
+    /// The dword at this offset of the buffer.
+    Dword(u32),
+    Value(u32),
+    /// Not in the packet (LOAD_ALU_CONSTANT reads it from memory).
+    Elsewhere,
+}
+
+impl Written {
+    /// For the register `i` after the run's first.
+    fn at(self, i: u32) -> Option<Written> {
+        match self {
+            Written::Dword(offset) => Some(Written::Dword(offset + i)),
+            Written::Value(_) if i == 0 => Some(self),
+            _ => None,
+        }
+    }
+}
+
+/// A [`TileSegment`] in the making.
+struct TileRecording {
+    ptr: u32,
+    segment: TileSegment,
+    /// What packets outside predication wrote, in order.
+    runs: Vec<WrittenRun>,
+    /// Nothing ran that a replay would have to run again (see `note_tile_packet`).
+    skippable: bool,
 }
 
 /// A `--gpu d3d` draw marker reached.
@@ -919,7 +1018,11 @@ impl CommandProcessor<'_> {
     fn load_shader(&mut self, pixel: bool, code: Vec<u32>) {
         self.flush_registers();
         if let Some(b) = self.backend.clone() {
-            b.shader(pixel, self.shared_code(code));
+            let code = self.shared_code(code);
+            if let Some(recording) = &mut self.tile_recording {
+                recording.segment.shaders[usize::from(pixel)] = Some(code.clone());
+            }
+            b.shader(pixel, code);
         }
     }
 
@@ -964,6 +1067,9 @@ impl CommandProcessor<'_> {
             1 => (0x101, start),
             _ => ((packet >> 8) & 0x7F, start),
         };
+        if self.tile_recording.is_some() {
+            self.note_tile_packet(r, packet);
+        }
         match packet >> 30 {
             0 => {
                 let count = ((packet >> 16) & 0x3FFF) + 1;
@@ -1052,10 +1158,14 @@ impl CommandProcessor<'_> {
                 self.flush_registers();
                 if crate::d3d::gpu_mode() == crate::d3d::GpuMode::D3d {
                     self.d3d_ran.clear();
+                    self.tile_segments.clear();
                     let n = self.k.gpu.swaps.load(Ordering::Relaxed) + 1;
                     if n.is_multiple_of(600) {
                         let (run, left) = std::mem::take(&mut self.d3d_draws);
-                        log::info!("GPU: d3d: {run} draw packets run, {left} left out over 600 swaps");
+                        let replays = std::mem::take(&mut self.tile_replays);
+                        log::info!(
+                            "GPU: d3d: {run} draw packets run, {left} left out, {replays} tile replays not run over 600 swaps"
+                        );
                     }
                 }
                 if let Some(b) = &self.backend {
@@ -1076,9 +1186,14 @@ impl CommandProcessor<'_> {
                 log::trace!("indirect buffer {ptr:#010X}, {length} dwords");
                 if length != 0 {
                     match self.k.rt.space.translate_physical(ptr) {
+                        Some(base) if self.replay_tile_segment(ptr, base, length) => {}
                         Some(base) => {
+                            let recording = self.begin_tile_recording(ptr, length);
                             let mut ib = Reader { base, capacity: length, pos: 0, remaining: length };
                             self.execute(&mut ib);
+                            if recording {
+                                self.end_tile_recording();
+                            }
                         }
                         None => log::error!("GPU: indirect buffer at unmapped {ptr:#010X}"),
                     }
@@ -1328,6 +1443,271 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// `--gpu d3d`: starts recording what the indirect buffer about to run does, if it belongs
+    /// to a tiled scene; whether it did.
+    fn begin_tile_recording(&mut self, ptr: u32, length: u32) -> bool {
+        if crate::d3d::gpu_mode() != crate::d3d::GpuMode::D3d || self.backend.is_none() {
+            return false;
+        }
+        if self.bin_select == ALL_BINS {
+            // Outside tiling: the scene whose buffers were recorded is over.
+            self.tile_segments.clear();
+            self.tile_pass = ALL_BINS;
+            return false;
+        }
+        if let Some(outer) = &mut self.tile_recording {
+            outer.skippable = false;
+            return false;
+        }
+        let segment = TileSegment {
+            length,
+            select: self.bin_select,
+            version: 0,
+            writes: Vec::new(),
+            predicated: Vec::new(),
+            mixed: Vec::new(),
+            bin_mask: 0,
+            shaders: [None, None],
+            marker: None,
+        };
+        self.tile_recording = Some(TileRecording { ptr, segment, runs: Vec::new(), skippable: true });
+        true
+    }
+
+    /// Notes what the packet with header `packet` (just read from `r`) will do, for the
+    /// recording: the registers it writes, or that a replay couldn't leave it out (anything
+    /// with an effect beyond registers, shaders and bin masks; a draw another tile may run).
+    fn note_tile_packet(&mut self, r: &Reader, packet: u32) {
+        let (mem, bin_mask) = (self.mem, self.bin_mask);
+        let predicated_out = (self.bin_select & bin_mask) == 0;
+        let resolve_draw = self.d3d_draw_next.is_some_and(|d| d.resolve);
+        let unrun_draw = self.d3d_draw_next.is_some_and(|d| d.runs);
+        let Some(recording) = &mut self.tile_recording else { return };
+        // An indirect buffer's reader doesn't wrap.
+        let offset = r.capacity.wrapping_sub(r.remaining).wrapping_sub(1);
+        match packet >> 30 {
+            0 => {
+                let count = ((packet >> 16) & 0x3FFF) + 1;
+                let first = packet & 0x7FFF;
+                recording.runs.push(if packet & 0x8000 != 0 {
+                    // Every dword to the one register: the last stays.
+                    WrittenRun { first, count: 1, offset, values: Written::Dword(offset + count) }
+                } else {
+                    WrittenRun { first, count, offset, values: Written::Dword(offset + 1) }
+                });
+            }
+            1 => {
+                recording.runs.push(WrittenRun {
+                    first: packet & 0x7FF,
+                    count: 1,
+                    offset,
+                    values: Written::Dword(offset + 1),
+                });
+                recording.runs.push(WrittenRun {
+                    first: (packet >> 11) & 0x7FF,
+                    count: 1,
+                    offset,
+                    values: Written::Dword(offset + 2),
+                });
+            }
+            2 => {}
+            _ => {
+                let opcode = (packet >> 8) & 0x7F;
+                let count = ((packet >> 16) & 0x3FFF) + 1;
+                let predicated = packet & 1 != 0;
+                if count > r.remaining {
+                    recording.skippable = false;
+                    return;
+                }
+                let payload = |i: u32| if i < count { mem.read_u32(r.base + (offset + 1 + i) * 4) } else { 0 };
+                match opcode {
+                    // A resolve's draw runs in each tile; a title draw left out here that hasn't
+                    // run may in another.
+                    pm4::DRAW_INDX | pm4::DRAW_INDX_2 => {
+                        if resolve_draw || (predicated && predicated_out && unrun_draw) {
+                            recording.skippable = false;
+                        }
+                    }
+                    pm4::SET_CONSTANT
+                    | pm4::SET_CONSTANT2
+                    | pm4::SET_SHADER_CONSTANTS
+                    | pm4::LOAD_ALU_CONSTANT
+                    | pm4::EVENT_WRITE
+                    | pm4::EVENT_WRITE_EXT => {
+                        // (first register, count, the values).
+                        let in_packet = Written::Dword(offset + 2);
+                        let written = match opcode {
+                            pm4::SET_CONSTANT => constant_base((payload(0) >> 16) & 0xFF)
+                                .map(|base| (base + (payload(0) & 0x7FF), count - 1, in_packet)),
+                            pm4::LOAD_ALU_CONSTANT => constant_base((payload(1) >> 16) & 0xFF)
+                                .map(|base| (base + (payload(1) & 0x7FF), payload(2) & 0xFFF, Written::Elsewhere)),
+                            pm4::EVENT_WRITE | pm4::EVENT_WRITE_EXT => {
+                                Some((reg::VGT_EVENT_INITIATOR, 1, Written::Value(payload(0) & 0x3F)))
+                            }
+                            _ => Some((payload(0) & 0xFFFF, count - 1, in_packet)),
+                        };
+                        let (first, count, values) = written.unwrap_or((0, 0, Written::Elsewhere));
+                        if predicated {
+                            recording.segment.predicated.push(PredicatedPacket {
+                                offset,
+                                mask: bin_mask,
+                                registers: (first, count),
+                            });
+                        } else if count > 0 {
+                            recording.runs.push(WrittenRun { first, count, offset, values });
+                        }
+                    }
+                    // Noted where they take effect (`load_shader`, `d3d_marker_reached`, the bin
+                    // mask at the end), which a predicated-out one wouldn't reach.
+                    pm4::IM_LOAD
+                    | pm4::IM_LOAD_IMMEDIATE
+                    | pm4::NOP
+                    | pm4::SET_BIN_MASK
+                    | pm4::SET_BIN_MASK_LO
+                    | pm4::SET_BIN_MASK_HI => {
+                        if predicated {
+                            recording.skippable = false;
+                        }
+                    }
+                    // Nothing emulated (see `type3`), or a wait for something that has happened
+                    // by the time of a replay.
+                    pm4::ME_INIT
+                    | pm4::WAIT_REG_MEM
+                    | pm4::WAIT_FOR_IDLE
+                    | pm4::WAIT_IB_PFD_COMPLETE
+                    | pm4::WAIT_UNTIL_READ
+                    | pm4::CONTEXT_UPDATE
+                    | pm4::DRAW_INDX_BIN
+                    | pm4::DRAW_INDX_2_BIN
+                    | pm4::VIZ_QUERY
+                    | pm4::SET_STATE
+                    | pm4::LOAD_CONSTANT_CONTEXT
+                    | pm4::IM_STORE
+                    | pm4::INVALIDATE_STATE
+                    | pm4::SET_SHADER_BASES
+                    | pm4::SET_BIN_BASE_OFFSET
+                    | pm4::EVENT_WRITE_CFL
+                    | pm4::COND_EXEC
+                    | pm4::MEM_WRITE_CNTR
+                    | pm4::WAIT_REG_EQ
+                    | pm4::WAIT_REG_GTE => {}
+                    _ => recording.skippable = false,
+                }
+            }
+        }
+    }
+
+    /// Keeps the recording of the indirect buffer that just ran, if a replay can stand in for
+    /// running it again.
+    fn end_tile_recording(&mut self) {
+        let Some(mut recording) = self.tile_recording.take() else { return };
+        self.tile_segments.remove(&recording.ptr);
+        if !recording.skippable || self.bin_select != recording.segment.select {
+            return;
+        }
+        // Each register once: with the value it has now, or where its last value is if
+        // predicated packets write it too.
+        const UNSEEN: u32 = u32::MAX;
+        const PREDICATED: u32 = u32::MAX - 1;
+        let mut seen = vec![UNSEEN; REGISTER_COUNT as usize];
+        let segment = &mut recording.segment;
+        for packet in &segment.predicated {
+            let (first, count) = packet.registers;
+            for index in first..first.saturating_add(count).min(REGISTER_COUNT) {
+                seen[index as usize] = PREDICATED;
+            }
+        }
+        for run in &recording.runs {
+            for index in run.first..run.first.saturating_add(run.count).min(REGISTER_COUNT) {
+                match seen[index as usize] {
+                    UNSEEN => {
+                        seen[index as usize] = segment.writes.len() as u32;
+                        segment.writes.push((index, self.k.gpu.read_register(self.mem, index)));
+                    }
+                    PREDICATED => {
+                        // Its last value has to be known without running the packet again.
+                        let Some(written) = run.values.at(index - run.first) else { return };
+                        seen[index as usize] = (segment.writes.len() + segment.mixed.len()) as u32;
+                        segment.mixed.push((index, run.offset, written));
+                    }
+                    _ => {
+                        if let Some(m) = segment.mixed.iter_mut().rev().find(|m| m.0 == index) {
+                            let Some(written) = run.values.at(index - run.first) else { return };
+                            (m.1, m.2) = (run.offset, written);
+                        }
+                    }
+                }
+            }
+        }
+        segment.bin_mask = self.bin_mask;
+        self.tile_segments.insert(recording.ptr, recording.segment);
+    }
+
+    /// `--gpu d3d`: stands in for running the indirect buffer at `ptr` when it ran for another
+    /// tile of the scene and hasn't changed: none of its draws would run, so the registers,
+    /// shaders, bin mask and draw marker are left as running it would leave them. False if it
+    /// has to run.
+    fn replay_tile_segment(&mut self, ptr: u32, base: u32, length: u32) -> bool {
+        if self.bin_select == ALL_BINS || self.tile_recording.is_some() {
+            return false;
+        }
+        if self.tile_pass != self.bin_select {
+            // The next tile's pass: the buffers that ran for the last one are as it left them
+            // (the command processor's own writes to them included).
+            for (&ptr, segment) in &mut self.tile_segments {
+                if segment.select == self.tile_pass {
+                    segment.version = runtime_core::dirty::range_version(ptr, segment.length * 4);
+                }
+            }
+            self.tile_pass = self.bin_select;
+        }
+        let usable = self.tile_segments.get(&ptr).is_some_and(|s| {
+            s.length == length
+                && s.select != self.bin_select
+                && s.version == runtime_core::dirty::range_version(ptr, length * 4)
+        });
+        if !usable {
+            return false;
+        }
+        let Some(segment) = self.tile_segments.remove(&ptr) else { return false };
+        for packet in &segment.predicated {
+            self.bin_mask = packet.mask;
+            let mut r = Reader { base, capacity: length, pos: packet.offset, remaining: length - packet.offset };
+            self.packet(&mut r);
+        }
+        // A register predicated packets write too has the value of the last of them that ran
+        // in this tile, unless a packet outside predication wrote it after that.
+        for &(index, offset, written) in &segment.mixed {
+            let later = segment.predicated.iter().rev().take_while(|p| p.offset > offset).any(|p| {
+                (self.bin_select & p.mask) != 0 && (p.registers.0..p.registers.0 + p.registers.1).contains(&index)
+            });
+            let value = match written {
+                Written::Dword(at) => self.mem.read_u32(base + at * 4),
+                Written::Value(value) => value,
+                Written::Elsewhere => continue,
+            };
+            if !later {
+                self.write_register(index, value);
+            }
+        }
+        for &(index, value) in &segment.writes {
+            self.write_register(index, value);
+        }
+        self.bin_mask = segment.bin_mask;
+        for (stage, code) in segment.shaders.iter().enumerate() {
+            if let (Some(code), Some(b)) = (code, self.backend.clone()) {
+                self.flush_registers();
+                b.shader(stage == 1, code.clone());
+            }
+        }
+        if let Some((kind, value)) = segment.marker {
+            self.d3d_marker_reached(kind, value);
+        }
+        self.tile_replays += 1;
+        self.tile_segments.insert(ptr, segment);
+        true
+    }
+
     /// `--gpu d3d`: before a title draw in a predicated tile, makes its window offset and
     /// scissor the whole surface's instead of the tile's (the D3D surfaces aren't tiled);
     /// returns the registers to restore after the draw.
@@ -1349,6 +1729,9 @@ impl CommandProcessor<'_> {
     }
 
     fn d3d_marker_reached(&mut self, kind: u32, value: u32) {
+        if let Some(recording) = &mut self.tile_recording {
+            recording.segment.marker = Some((kind, value));
+        }
         match kind {
             crate::d3d::MARKER_DRAW => {
                 // Tile replays bring the draws back: each runs once.
