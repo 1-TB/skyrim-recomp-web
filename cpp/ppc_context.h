@@ -103,9 +103,23 @@
 // memory anywhere in linear memory, 1 MiB at a time.
 extern "C" const int32_t skyrt_ea_offset[4096];
 
+//
+// On Apple hosts guest memory is stored at its own addresses instead (runtime-core's
+// memory::DIRECT, which this must match: guest-sys checks), the 16 MiB view mapped a second
+// time, and there is nothing to look up.
+#if defined(__APPLE__)
+#define SKYRT_DIRECT_EA 1
+#else
+#define SKYRT_DIRECT_EA 0
+#endif
+
 static inline __attribute__((always_inline)) uint32_t skyrt_ea(uint32_t ea)
 {
+#if SKYRT_DIRECT_EA
+    return ea;
+#else
     return ea + (uint32_t)skyrt_ea_offset[ea >> 20];
+#endif
 }
 
 #define PPC_EA(x) (base + skyrt_ea((uint32_t)(x)))

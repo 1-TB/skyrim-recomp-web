@@ -660,6 +660,7 @@ extern "C" void skyrt_ppc_config(uint64_t* out) {
     out[1] = PPC_IMAGE_SIZE;
     out[2] = PPC_CODE_BASE;
     out[3] = PPC_CODE_SIZE;
+    out[4] = SKYRT_DIRECT_EA;
 }
 "#,
     );

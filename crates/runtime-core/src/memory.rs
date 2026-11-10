@@ -177,12 +177,98 @@ impl GuestMemory {
             if ptr == libc::MAP_FAILED {
                 return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
             }
-            Ok(GuestMemory { base: (ptr as *mut u8).expose_provenance() })
+            let memory = GuestMemory { base: (ptr as *mut u8).expose_provenance() };
+            #[cfg(target_vendor = "apple")]
+            {
+                memory.alias_16m_view(map::PHYSICAL_BASE, map::PHYSICAL_SIZE as usize)?;
+                // SAFETY: inside the reservation, which nothing uses yet.
+                let failed = unsafe {
+                    libc::mprotect(
+                        memory.linear_ptr(map::PHYS_VIEW_4K).cast(),
+                        (GUEST_SPACE_SIZE - u64::from(map::PHYS_VIEW_4K)) as usize,
+                        libc::PROT_NONE,
+                    )
+                } != 0;
+                if failed {
+                    return Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
+                }
+            }
+            Ok(memory)
         }
         #[cfg(target_os = "emscripten")]
         {
             Ok(GuestMemory { base: 0 })
         }
+    }
+
+    /// [`discard`] of `len` bytes at linear offset `lin`, keeping the 16 MiB view of physical
+    /// memory showing the same pages.
+    ///
+    /// # Safety
+    /// As [`discard`].
+    #[cfg(not(target_os = "emscripten"))]
+    unsafe fn discard(&self, lin: u32, len: usize) -> std::io::Result<()> {
+        // SAFETY: the caller's.
+        unsafe { discard(self.linear_ptr(lin), len)? };
+        #[cfg(target_vendor = "apple")]
+        {
+            // Discarding swapped fresh pages in under the whole host pages of the range (see
+            // `discard`); the other view still shows the old ones.
+            let page = host_page_size() as u64;
+            let start = u64::from(lin).next_multiple_of(page).max(u64::from(map::PHYSICAL_BASE));
+            let end = ((u64::from(lin) + len as u64) & !(page - 1)).min(u64::from(map::PHYS_VIEW_16M));
+            if start < end {
+                self.alias_16m_view(start as u32, (end - start) as usize).map_err(|e| std::io::Error::other(e.to_string()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Maps the pages of `[addr, addr + len)` (whole host pages of physical memory in the
+    /// 64 KiB view) at their addresses in the 16 MiB view as well, replacing what was there.
+    #[cfg(target_vendor = "apple")]
+    fn alias_16m_view(&self, addr: u32, len: usize) -> Result<(), MemoryError> {
+        unsafe extern "C" {
+            static mach_task_self_: u32;
+            fn vm_remap(
+                target_task: u32,
+                target_address: *mut usize,
+                size: usize,
+                mask: usize,
+                flags: i32,
+                src_task: u32,
+                src_address: usize,
+                copy: i32,
+                cur_protection: *mut i32,
+                max_protection: *mut i32,
+                inheritance: u32,
+            ) -> i32;
+        }
+        const VM_FLAGS_FIXED_OVERWRITE: i32 = 0x4000;
+        const VM_INHERIT_COPY: u32 = 1;
+        let mut target = self.linear_ptr(addr - map::PHYSICAL_BASE + map::PHYS_VIEW_16M).addr();
+        let (mut current, mut max) = (0, 0);
+        // SAFETY: both ranges lie inside the reservation; sharing (not copying) makes them
+        // the same memory, which is what the two views are.
+        let status = unsafe {
+            vm_remap(
+                mach_task_self_,
+                &mut target,
+                len,
+                0,
+                VM_FLAGS_FIXED_OVERWRITE,
+                mach_task_self_,
+                self.linear_ptr(addr).addr(),
+                0,
+                &mut current,
+                &mut max,
+                VM_INHERIT_COPY,
+            )
+        };
+        if status != 0 {
+            return Err(MemoryError::Os(format!("vm_remap of the 16 MiB view at {addr:#010X}: error {status}")));
+        }
+        Ok(())
     }
 
     /// Host pointer that recompiled code receives as `base`.
@@ -249,7 +335,7 @@ impl GuestMemory {
         let mut result = Ok(());
         linear_runs(start, end - u64::from(start), |_, lin, n| {
             // SAFETY: inside our reservation.
-            if let Err(e) = unsafe { discard(self.linear_ptr(lin), n as usize) }
+            if let Err(e) = unsafe { self.discard(lin, n as usize) }
                 && result.is_ok()
             {
                 result = Err(MemoryError::Os(e.to_string()));
@@ -299,7 +385,7 @@ impl GuestMemory {
             // SAFETY: inside our reservation; discarding returns the memory to the host and
             // leaves the range accessible.
             linear_runs(start, end - u64::from(start), |_, lin, n| unsafe {
-                let _ = discard(self.linear_ptr(lin), n as usize);
+                let _ = self.discard(lin, n as usize);
             });
             crate::dirty::mark(start, (end - start as u64) as u32);
         }
@@ -323,7 +409,7 @@ impl GuestMemory {
             let size = (end - start as u64) as usize;
             // SAFETY: inside our reservation; the pages then read back as zero.
             linear_runs(start, end - u64::from(start), |_, lin, n| unsafe {
-                let _ = discard(self.linear_ptr(lin), n as usize);
+                let _ = self.discard(lin, n as usize);
             });
             crate::dirty::mark(start, size as u32);
         }
@@ -731,6 +817,18 @@ pub fn host_heap_guard() -> Result<(), MemoryError> {
 // Frames adjacent in the guest needn't be adjacent in linear memory, so the runtime processes
 // ranges in runs of linearly contiguous frames ([`GuestMemory::runs`]).
 
+// On Apple hosts ([`DIRECT`]) none of that applies and the layout is the guest's own: every
+// address below the 4 KiB view is stored at itself, so recompiled code adds `base` and nothing
+// else (the table lookup was a fifth of its instructions). The 16 MiB view is a second mapping
+// of physical memory. The 4 KiB view is one 4 KiB page ahead of its physical address, which
+// 16 KiB host pages can't map: it is never handed out there (physical allocations come from the
+// 64 KiB view whatever their page size) and faults if recompiled code reaches it anyway; the
+// runtime's own accesses still fold it through the table.
+
+/// Guest memory is stored at its own addresses, and `skyrt_ea` in cpp/ppc_context.h (which
+/// tests `__APPLE__` to match) is the identity.
+pub const DIRECT: bool = cfg!(target_vendor = "apple");
+
 pub const FRAME_SHIFT: u32 = 20;
 pub const FRAME_SIZE: u32 = 1 << FRAME_SHIFT;
 pub const FRAMES: usize = 1 << (32 - FRAME_SHIFT);
@@ -749,7 +847,9 @@ pub mod linear_map {
     /// Physical memory, stored once.
     pub const PHYSICAL: u32 = POOL_BASE + POOL_FRAMES * FRAME_SIZE;
     /// Everything, plus a page for the 4 KiB view's last page (one page past physical memory).
-    pub const SIZE: u64 = PHYSICAL as u64 + map::PHYSICAL_SIZE as u64 + 0x1_0000;
+    /// The whole guest address space with [`super::DIRECT`].
+    pub const SIZE: u64 =
+        if super::DIRECT { super::GUEST_SPACE_SIZE } else { PHYSICAL as u64 + map::PHYSICAL_SIZE as u64 + 0x1_0000 };
 }
 
 /// Linear offset of each guest frame. A load and an add per access measured ~25% fewer cycles
@@ -763,7 +863,9 @@ pub static skyrt_ea_offset: [AtomicI32; FRAMES] = {
     while i < FRAMES {
         let ea = (i as u32) << FRAME_SHIFT;
         let folded = fold_view(ea);
-        let lin = if folded >= map::PHYSICAL_BASE && folded < map::PHYS_VIEW_16M {
+        let lin = if DIRECT {
+            if ea < map::PHYS_VIEW_4K { ea } else { folded }
+        } else if folded >= map::PHYSICAL_BASE && folded < map::PHYS_VIEW_16M {
             linear_map::PHYSICAL + (folded - map::PHYSICAL_BASE)
         } else {
             linear_map::SCRATCH
@@ -867,6 +969,9 @@ fn pool_index(f: usize) -> Option<u32> {
 /// commit, it is split over the largest free runs: only scalar accesses straddling a frame
 /// boundary need neighbouring frames to be adjacent, which inside one big buffer is rare.
 fn map_frames(first: usize, last: usize) -> Result<(), MemoryError> {
+    if DIRECT {
+        return Ok(());
+    }
     let mut pool = POOL.lock().unwrap();
     let mut f = first;
     while f <= last {
@@ -963,7 +1068,64 @@ pub fn linear_runs(addr: u32, len: u64, mut f: impl FnMut(u64, u32, u64)) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_vendor = "apple"))]
+mod direct_tests {
+    use super::*;
+
+    #[test]
+    fn memory_is_stored_at_its_own_address() {
+        for addr in [0u32, 0x4000_0000, 0x7000_1234, map::XEX_BASE + 0x1F_FFFC, map::PHYSICAL_BASE + 0x123_4567] {
+            assert_eq!(linear(addr), addr);
+        }
+        // The 16 MiB view is mapped; the 4 KiB one is folded for the runtime's own accesses.
+        assert_eq!(linear(map::PHYS_VIEW_16M + 0x80_0000), map::PHYS_VIEW_16M + 0x80_0000);
+        assert_eq!(linear(map::PHYS_VIEW_4K + 0x80_0000), map::PHYSICAL_BASE + 0x80_1000);
+    }
+
+    #[test]
+    fn the_16m_view_shows_physical_memory_through_commits_and_releases() {
+        let mem = GuestMemory::reserve().unwrap();
+        let (a, c) = (map::PHYSICAL_BASE + 0x40_0000, map::PHYS_VIEW_16M + 0x40_0000);
+        let at = |addr: u32| mem.base_ptr().wrapping_add(addr as usize).cast::<u32>();
+        // SAFETY (all accesses): inside the reservation, which is readable and writable.
+        unsafe {
+            at(a).write(0x1122_3344);
+            assert_eq!(at(c).read(), 0x1122_3344);
+            at(c + 0x9_0000).write(8);
+            assert_eq!(at(a + 0x9_0000).read(), 8);
+        }
+        // A commit and a release each swap fresh pages in; both views must still agree after.
+        mem.commit(a, 0x10_0000).unwrap();
+        unsafe {
+            assert_eq!(at(a).read(), 0);
+            assert_eq!(at(c).read(), 0);
+            at(a + 0x8000).write(0xAABB);
+            assert_eq!(at(c + 0x8000).read(), 0xAABB);
+            at(c + 0x4_0000).write(0xCCDD);
+            assert_eq!(at(a + 0x4_0000).read(), 0xCCDD);
+            at(a + 0x9_0000).write(7);
+        }
+        // Guest pages are 4 KiB and host pages 16 KiB: a release that starts and ends inside
+        // host pages zeroes those in place.
+        mem.release(a + 0x7000, 0x3A000).unwrap();
+        unsafe {
+            assert_eq!(at(c + 0x8000).read(), 0);
+            assert_eq!(at(a + 0x4_0000).read(), 0);
+            at(c + 0x2_0000).write(5);
+            assert_eq!(at(a + 0x2_0000).read(), 5);
+            at(a + 0x7000).write(6);
+            assert_eq!(at(c + 0x7000).read(), 6);
+            // Outside the release: untouched.
+            assert_eq!(at(c + 0x9_0000).read(), 7);
+        }
+        // Memory outside the physical range is unaffected by any of it.
+        mem.commit(0x4000_0000, 0x2_0000).unwrap();
+        mem.write_u32(0x4000_0010, 0xDEAD_BEEF);
+        assert_eq!(unsafe { at(0x4000_0010).read() }, 0xDEAD_BEEFu32.swap_bytes());
+    }
+}
+
+#[cfg(all(test, not(target_vendor = "apple")))]
 mod translation_tests {
     use super::*;
 

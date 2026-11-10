@@ -27,15 +27,17 @@ static KEEP_MISSING_FUNCTION: extern "C" fn(u32, *const u8) -> ! = runtime_core:
 
 /// Descriptor of the recompiled code for runtime-core.
 pub fn module() -> GuestModule {
-    let mut config = [0u64; 4];
+    let mut config = [0u64; 5];
     let mut count = 0usize;
-    // SAFETY: the shim fills exactly four values; the dispatch returns its static array of
+    // SAFETY: the shim fills exactly five values; the dispatch returns its static array of
     // function addresses and their count.
     let functions = unsafe {
         skyrt_ppc_config(config.as_mut_ptr());
         let ptr = skyrt_func_addrs(&mut count);
         std::slice::from_raw_parts(ptr, count)
     };
+    // The recompiled code and the runtime must agree on where guest memory is stored.
+    assert_eq!(config[4] != 0, runtime_core::memory::DIRECT, "guest code built for another memory layout");
     GuestModule {
         image_base: config[0] as u32,
         image_size: config[1] as u32,

@@ -82,7 +82,8 @@ pub fn physical_view_offset(view: u32) -> u32 {
 
 /// Physical view used for a given page size (MmAllocatePhysicalMemoryEx).
 pub fn physical_view_for_page_size(page_size: u32) -> u32 {
-    if page_size <= PAGE_4K {
+    // The 4 KiB view can't be mapped where memory is stored at its own addresses.
+    if page_size <= PAGE_4K && !crate::memory::DIRECT {
         map::PHYS_VIEW_4K
     } else if page_size <= PAGE_64K {
         map::PHYS_VIEW_64K
@@ -310,11 +311,14 @@ impl AddressSpace {
         let view = physical_view_for_page_size(page_size);
         let size = size.div_ceil(page_size) * page_size;
         let align = align.div_ceil(page_size).max(1) * page_size;
-        // Physical addresses the view can show.
+        // Physical addresses the page size's view can show on hardware (small pages get the
+        // same physical addresses whichever view they are handed out in).
+        let hardware_view = if page_size == PAGE_4K { map::PHYS_VIEW_4K } else { view };
+        let hardware_shift = physical_view_offset(hardware_view);
+        let view_size = if hardware_view == map::PHYS_VIEW_4K { map::PHYS_VIEW_4K_SIZE } else { map::PHYSICAL_SIZE };
+        let min = min_phys.max(hardware_shift);
+        let max = max_phys.min(map::PHYSICAL_SIZE - 1).min(view_size - 1 + hardware_shift);
         let shift = physical_view_offset(view);
-        let view_size = if view == map::PHYS_VIEW_4K { map::PHYS_VIEW_4K_SIZE } else { map::PHYSICAL_SIZE };
-        let min = min_phys.max(shift);
-        let max = max_phys.min(map::PHYSICAL_SIZE - 1).min(view_size - 1 + shift);
         // Bottom-up (hardware and Xenia go top-down), so linear memory only grows as far as
         // physical memory is used (see memory::linear_map).
         let a = self.physical.lock().unwrap().alloc_range(min, max, size, align, true, protect, false)?;

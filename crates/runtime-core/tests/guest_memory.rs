@@ -165,8 +165,15 @@ fn physical_views_show_one_memory() {
     let small = s.alloc_physical(0x3000, PAGE_4K, 0, u32::MAX, 0, protect::READWRITE).unwrap();
     let mid = s.alloc_physical(0x10000, PAGE_64K, 0, u32::MAX, 0, protect::READWRITE).unwrap();
     let big = s.alloc_physical(0x10, PAGE_16M, 0, u32::MAX, 0, protect::READWRITE).unwrap();
-    assert!(small >= map::PHYS_VIEW_4K);
-    assert!(small + 0x3000 <= map::PHYS_VIEW_4K + map::PHYS_VIEW_4K_SIZE, "4 KiB view ends at 0xFFD00000");
+    // Where memory is stored at its own addresses the 4 KiB view can't be mapped (it is a
+    // 4 KiB page ahead of physical memory), so small pages come from the 64 KiB view too.
+    let small_view = if runtime_core::memory::DIRECT { map::PHYS_VIEW_64K } else { map::PHYS_VIEW_4K };
+    if runtime_core::memory::DIRECT {
+        assert!((map::PHYS_VIEW_64K..map::PHYS_VIEW_16M).contains(&small));
+    } else {
+        assert!(small >= map::PHYS_VIEW_4K);
+        assert!(small + 0x3000 <= map::PHYS_VIEW_4K + map::PHYS_VIEW_4K_SIZE, "4 KiB view ends at 0xFFD00000");
+    }
     assert!((map::PHYS_VIEW_64K..map::PHYS_VIEW_16M).contains(&mid));
     assert!((map::PHYS_VIEW_16M..map::PHYS_VIEW_4K).contains(&big));
     assert_eq!(mid % PAGE_64K, 0);
@@ -176,7 +183,7 @@ fn physical_views_show_one_memory() {
     let pm = s.physical_address(mid).unwrap();
     let pb = s.physical_address(big).unwrap();
     // The 4 KiB view is one page ahead of its physical addresses, as on hardware.
-    assert_eq!(ps, small - map::PHYS_VIEW_4K + PAGE_4K);
+    assert_eq!(ps, small - small_view + runtime_core::address_space::physical_view_offset(small_view));
     assert_eq!(pm, mid - map::PHYS_VIEW_64K);
     let ranges = [(ps, 0x3000), (pm, 0x10000), (pb, PAGE_16M)];
     for (i, &(a, al)) in ranges.iter().enumerate() {

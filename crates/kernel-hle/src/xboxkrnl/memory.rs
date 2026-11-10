@@ -366,5 +366,9 @@ fn ExFreePool(c: &mut Call) -> u64 {
 /// pointer XMACreateContext returned), which recompiled code can dereference.
 fn MmMapIoSpace(c: &mut Call) -> u64 {
     let phys = c.arg(1) & (map::PHYSICAL_SIZE - 1);
-    if phys >= PAGE_4K { (map::PHYS_VIEW_4K + phys - PAGE_4K) as u64 } else { (map::PHYS_VIEW_64K + phys) as u64 }
+    if phys >= PAGE_4K && !runtime_core::memory::DIRECT {
+        (map::PHYS_VIEW_4K + phys - PAGE_4K) as u64
+    } else {
+        (map::PHYS_VIEW_64K + phys) as u64
+    }
 }
