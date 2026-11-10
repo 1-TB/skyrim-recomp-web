@@ -28,6 +28,8 @@ pub struct KThread {
     pub priority: AtomicI32,
     /// Kernel calls this thread has made (see [`note_kernel_call`]).
     kernel_calls: Arc<AtomicU64>,
+    /// The last one: module id, ordinal and the guest return address (16, 16 and 32 bits).
+    last_call: AtomicU64,
     pub is_main: bool,
     /// Set by the title through the MSVC thread-naming exception.
     pub name: Mutex<Option<String>>,
@@ -70,11 +72,13 @@ pub fn current() -> Option<Arc<KThread>> {
     CURRENT.with(|c| c.borrow().clone())
 }
 
-/// Counts a kernel call made by the calling guest thread.
-pub(crate) fn note_kernel_call() {
+/// Counts a kernel call made by the calling guest thread, and keeps which it was (for stall
+/// and crash reports).
+pub(crate) fn note_kernel_call(module: u32, ordinal: u16, lr: u32) {
     CURRENT.with(|c| {
         if let Some(t) = &*c.borrow() {
             t.kernel_calls.fetch_add(1, Ordering::Release);
+            t.last_call.store(u64::from(module) << 48 | u64::from(ordinal) << 32 | u64::from(lr), Ordering::Relaxed);
         }
     })
 }
@@ -156,6 +160,7 @@ impl Kernel {
             resumed: Condvar::new(),
             priority: AtomicI32::new(base_priority),
             kernel_calls: Arc::new(AtomicU64::new(0)),
+            last_call: AtomicU64::new(0),
             is_main,
             name: Mutex::new(None),
             context: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
@@ -404,6 +409,39 @@ impl Kernel {
                 if t.is_main { " (main)" } else { "" },
                 if name.is_empty() { String::new() } else { format!(" \"{name}\"") },
                 (now - entry.2).as_secs_f64(),
+                self.stack_return_addresses(t, sp, 12)
+            );
+        }
+    }
+
+    /// Logs where every guest thread is: what it waits on, or its last kernel call (it may be
+    /// in it still, or back in the title's code), and its return addresses. Stall and crash
+    /// reports end with this: the thread at fault is often not the one that noticed.
+    pub fn log_threads(&self) {
+        let mut threads: Vec<Arc<KThread>> = self.threads.lock().unwrap().values().cloned().collect();
+        threads.sort_by_key(|t| t.tid());
+        let waiters = self.objects.waiters();
+        for t in &threads {
+            let ctx = t.context.load(Ordering::Acquire);
+            if ctx.is_null() {
+                continue;
+            }
+            // SAFETY: the context outlives the thread's run (cleared before it is freed); the
+            // values may be torn, which only affects this report.
+            let (lr, sp) = unsafe { ((*ctx).lr as u32, (*ctx).gpr32(1)) };
+            let name = t.name.lock().unwrap().clone().unwrap_or_default();
+            let last = t.last_call.load(Ordering::Relaxed);
+            let state = match waiters.iter().find(|w| w.tid == t.tid()) {
+                Some(w) => format!("waiting on {:08X?}", w.objects.iter().map(|(p, _)| *p).collect::<Vec<_>>()),
+                None => "not waiting".to_string(),
+            };
+            log::info!(
+                "thread {:#X}{}: {state}; {} kernel calls, the last {} from {:08X}; lr {lr:08X}, stack {:08X?}",
+                t.tid(),
+                if name.is_empty() { String::new() } else { format!(" \"{name}\"") },
+                t.kernel_calls.load(Ordering::Relaxed),
+                self.import_name(crate::ModuleId((last >> 48) as u32), (last >> 32) as u16),
+                last as u32,
                 self.stack_return_addresses(t, sp, 12)
             );
         }

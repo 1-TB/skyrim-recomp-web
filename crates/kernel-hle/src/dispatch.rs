@@ -188,7 +188,7 @@ impl Kernel {
 
     /// Runs one import call. The return value goes to r3.
     pub fn dispatch(&'static self, module: ModuleId, ordinal: u16, ctx: &mut PPCContext) {
-        crate::thread::note_kernel_call();
+        crate::thread::note_kernel_call(module.0, ordinal, ctx.lr as u32);
         let export = self.exports.get(&(module, ordinal)).copied();
         let counter = self.stats.read().unwrap().get(&(module, ordinal)).cloned();
         let counter =

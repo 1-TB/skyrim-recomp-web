@@ -289,6 +289,7 @@ fn report_missing_function(addr: u32, ctx: *const u8) {
     let Some(k) = Kernel::try_global() else { return };
     log::error!("bad guest call to {addr:#010X}");
     k.log_guest_state(ctx);
+    k.log_threads();
 }
 
 impl Kernel {
