@@ -16,6 +16,12 @@ pub trait GpuSource {
     /// Whether the GPU copy is the up-to-date version of all of `ranges` (and guest memory may
     /// be stale there), so the texture must be loaded from it.
     fn covers(&mut self, ranges: &[GuestRange]) -> bool;
+    /// Whether the GPU copy is the up-to-date version of some of `ranges` (a texture a resolve
+    /// wrote part of): such a texture can't wait for a later frame, as what a resolve wrote is
+    /// what the draws after it are meant to read.
+    fn covers_some(&mut self, ranges: &[GuestRange]) -> bool {
+        self.covers(ranges)
+    }
     /// Brings the GPU copy of `ranges` up to date with guest memory, so the texture can be
     /// loaded from it (only what changed since it was last brought up to date is uploaded,
     /// rather than the whole texture). `false` if that isn't possible right now.

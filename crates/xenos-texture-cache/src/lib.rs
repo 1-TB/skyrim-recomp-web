@@ -1029,7 +1029,8 @@ impl TextureCache {
             return None;
         };
         let frame = self.frame;
-        let reloading = self.textures.contains_key(&key);
+        // (A texture a resolve just dropped is one too: its old contents are gone.)
+        let reloading = self.textures.contains_key(&key) || self.stale.contains_key(&key);
         if let Some(entry) = self.textures.get_mut(&key) {
             let current = entry.validated == frame || {
                 entry.validated = frame;
@@ -1051,8 +1052,10 @@ impl TextureCache {
             return None;
         }
         // New textures wait for a later frame once this one has loaded its share. Reloads go
-        // ahead (their old contents are gone already), and so do textures entirely in the GPU
-        // copy of memory (resolve output: nothing to upload).
+        // ahead (their old contents are gone already), and so do textures with resolve output
+        // (in the GPU copy of memory: little or nothing to upload, and the draws that follow
+        // the resolve are there to read it; shadow maps resolved into part of their texture
+        // were otherwise put off frame after frame, and their draws got the blank fallback).
         let mut gpu = gpu;
         if self.config.max_load_bytes_per_second != u64::MAX && !reloading {
             let rate = self.config.max_load_bytes_per_second as f64;
@@ -1062,13 +1065,13 @@ impl TextureCache {
             // Any allowance left lets a load go (it may go below zero), so large textures load.
             if self.load_allowance <= 0.0 {
                 let ranges = TextureGuestInfo::from_fetch(fetch).memory_ranges();
-                if !gpu.as_deref_mut().is_some_and(|g| g.covers(&ranges)) {
+                if !gpu.as_deref_mut().is_some_and(|g| g.covers_some(&ranges)) {
                     self.stats.deferred += 1;
                     return None;
                 }
             } else {
                 let ranges = TextureGuestInfo::from_fetch(fetch).memory_ranges();
-                if !gpu.as_deref_mut().is_some_and(|g| g.covers(&ranges)) {
+                if !gpu.as_deref_mut().is_some_and(|g| g.covers_some(&ranges)) {
                     self.load_allowance -= ranges.iter().map(|r| f64::from(r.length)).sum::<f64>();
                 }
             }

@@ -533,6 +533,19 @@ impl SharedMemory {
         true
     }
 
+    /// Whether the GPU wrote a page of `ranges` last (as far as the last [`SharedMemory::sync`]
+    /// or [`SharedMemory::gpu_covers`] of it knows).
+    pub fn gpu_covers_some(&self, ranges: &[(u32, u32)]) -> bool {
+        if self.gpu_pages.is_empty() {
+            return false;
+        }
+        ranges.iter().any(|&(addr, len)| {
+            let end = (u64::from(addr) + u64::from(len)).min(PHYSICAL_SIZE);
+            let first = u64::from(addr & !(PAGE - 1));
+            (first..end).step_by(PAGE as usize).any(|page| self.gpu_pages.contains(page as u32 / PAGE))
+        })
+    }
+
     /// The slot buffer and offset `[addr, addr + len)` lies at, if it's mirrored in consecutive
     /// slots of one buffer (an index buffer can then be bound from there).
     pub fn contiguous(&self, addr: u32, len: u32) -> Option<(usize, u64)> {

@@ -99,6 +99,11 @@ impl GpuSource for SharedSource<'_> {
         self.shared.gpu_covers(self.memory, &ranges)
     }
 
+    fn covers_some(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
+        let ranges: Vec<(u32, u32)> = ranges.iter().map(|r| (r.address, r.length)).collect();
+        self.shared.gpu_covers_some(&ranges)
+    }
+
     fn sync(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
         // A page that changed after a recorded draw read it can't be updated before that draw
         // is submitted.
