@@ -20,7 +20,7 @@ const MAX_IDLE_FRAMES: u64 = 600;
 
 /// What a destination is, as far as its copy's layout goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DestKey {
+pub struct DestKey {
     /// Physical address.
     pub base: u32,
     /// Row pitch and height of the (tiled) destination in pixels.
@@ -32,8 +32,8 @@ pub(crate) struct DestKey {
 }
 
 impl DestKey {
-    /// Guest bytes the destination spans (whole 32x32 tiles).
-    fn span(&self) -> (u32, u32) {
+    /// Guest bytes the destination spans (whole 32x32 tiles): start and length.
+    pub fn span(&self) -> (u32, u32) {
         (self.base, self.pitch * self.height.next_multiple_of(32) * self.bytes_per_element)
     }
 }
@@ -61,7 +61,7 @@ pub(crate) struct ScaledCopies {
     frame: u64,
 }
 
-fn overlaps(a: (u32, u32), b: (u32, u32)) -> bool {
+pub fn overlaps(a: (u32, u32), b: (u32, u32)) -> bool {
     u64::from(a.0) < u64::from(b.0) + u64::from(b.1) && u64::from(b.0) < u64::from(a.0) + u64::from(a.1)
 }
 
@@ -154,7 +154,7 @@ impl ScaledCopies {
 /// A resolve into rows further down a destination that has a copy (as with predicated
 /// tiling, where each screen tile is resolved to the address of its first row) as a resolve
 /// into that destination: its key, and the rectangle moved down by those rows.
-fn canonical(copies: impl Iterator<Item = DestKey>, key: DestKey, rect: [u32; 4]) -> (DestKey, [u32; 4]) {
+pub fn canonical(copies: impl Iterator<Item = DestKey>, key: DestKey, rect: [u32; 4]) -> (DestKey, [u32; 4]) {
     let row_bytes = key.pitch * key.bytes_per_element;
     for k in copies {
         if (k.pitch, k.bytes_per_element, k.endian) != (key.pitch, key.bytes_per_element, key.endian)
@@ -177,7 +177,7 @@ fn canonical(copies: impl Iterator<Item = DestKey>, key: DestKey, rect: [u32; 4]
 
 
 /// Whether rectangle `outer` contains `inner` (x, y, width, height).
-fn contains(outer: [u32; 4], inner: [u32; 4]) -> bool {
+pub fn contains(outer: [u32; 4], inner: [u32; 4]) -> bool {
     inner[0] >= outer[0]
         && inner[1] >= outer[1]
         && inner[0] + inner[2] <= outer[0] + outer[2]
@@ -185,7 +185,7 @@ fn contains(outer: [u32; 4], inner: [u32; 4]) -> bool {
 }
 
 /// Whether `rects` together cover `[0, width) x [0, height)`.
-fn covered(rects: &[[u32; 4]], width: u32, height: u32) -> bool {
+pub fn covered(rects: &[[u32; 4]], width: u32, height: u32) -> bool {
     if width == 0 || height == 0 {
         return false;
     }

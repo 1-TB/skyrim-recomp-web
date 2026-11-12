@@ -417,6 +417,21 @@ impl Texture {
     }
 
     pub fn create_view(&self, desc: Option<&TextureViewDescriptor<'_>>) -> TextureView {
+        self.view(desc, None)
+    }
+
+    /// [`Texture::create_view`] for a view that reads the texture's channels reordered:
+    /// component `i` of what a shader samples is the texture's component `swizzle[i]` (0-3: red,
+    /// green, blue, alpha). For sampling only.
+    pub fn create_view_swizzled(
+        &self,
+        desc: Option<&TextureViewDescriptor<'_>>,
+        swizzle: [u8; 4],
+    ) -> Option<TextureView> {
+        Some(self.view(desc, Some(swizzle).filter(|s| *s != [0, 1, 2, 3])))
+    }
+
+    fn view(&self, desc: Option<&TextureViewDescriptor<'_>>, swizzle: Option<[u8; 4]>) -> TextureView {
         crate::counters::add(&crate::counters::count::views, 1);
         let t = &self.inner;
         let d = desc.copied().unwrap_or_default();
@@ -451,16 +466,39 @@ impl Texture {
                 && levels as usize == base.mipmapLevelCount()
                 && d.base_array_layer == 0
                 && slices as usize == base.arrayLength();
-            if whole {
+            if whole && swizzle.is_none() {
                 return Some(base.clone());
             }
+            let levels = objc2_foundation::NSRange::new(d.base_mip_level as usize, levels as usize);
+            let slices = objc2_foundation::NSRange::new(d.base_array_layer as usize, slices as usize);
+            // SAFETY: the ranges lie within the texture (WebGPU's rules for view descriptors).
             let view = unsafe {
-                base.newTextureViewWithPixelFormat_textureType_levels_slices(
-                    pixel_format,
-                    ty,
-                    objc2_foundation::NSRange::new(d.base_mip_level as usize, levels as usize),
-                    objc2_foundation::NSRange::new(d.base_array_layer as usize, slices as usize),
-                )
+                match swizzle {
+                    Some(order) => {
+                        let channel = |c: u8| match c {
+                            0 => MTLTextureSwizzle::Red,
+                            1 => MTLTextureSwizzle::Green,
+                            2 => MTLTextureSwizzle::Blue,
+                            _ => MTLTextureSwizzle::Alpha,
+                        };
+                        let channels = MTLTextureSwizzleChannels {
+                            red: channel(order[0]),
+                            green: channel(order[1]),
+                            blue: channel(order[2]),
+                            alpha: channel(order[3]),
+                        };
+                        base.newTextureViewWithPixelFormat_textureType_levels_slices_swizzle(
+                            pixel_format,
+                            ty,
+                            levels,
+                            slices,
+                            channels,
+                        )
+                    }
+                    None => {
+                        base.newTextureViewWithPixelFormat_textureType_levels_slices(pixel_format, ty, levels, slices)
+                    }
+                }
             };
             if let Some(v) = &view {
                 set_label!(v, d.label);
@@ -477,6 +515,11 @@ impl Texture {
                 texture: self.inner.clone(),
             }),
         }
+    }
+
+    /// Whether `other` is a handle to the same texture.
+    pub fn is(&self, other: &Texture) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
     }
 
     pub fn width(&self) -> u32 {

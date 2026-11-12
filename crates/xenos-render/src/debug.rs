@@ -71,6 +71,12 @@ pub static HASH_PAGES: AtomicBool = AtomicBool::new(false);
 pub(crate) static ALPHA_NO_DEPTH: AtomicBool = AtomicBool::new(false);
 /// `no-carry` (`--gpu d3d`): surfaces sharing an EDRAM base don't inherit each other's contents.
 pub(crate) static NO_CARRY: AtomicBool = AtomicBool::new(false);
+/// `no-resolved-textures` (`--gpu d3d`): every resolve is stored into the GPU copy of guest
+/// memory and its texture loaded from there (see [`crate::resolved`]).
+pub(crate) static NO_RESOLVED_TEXTURES: AtomicBool = AtomicBool::new(false);
+/// `store-resolved` (`--gpu d3d`): resolves kept as textures are never bound as such: each is
+/// stored from its texture when its guest texture is loaded (the picture must not change).
+pub(crate) static STORE_RESOLVED: AtomicBool = AtomicBool::new(false);
 /// `verify-loads`: textures loaded from the GPU copy of guest memory are read back at frame end
 /// and compared with their CPU conversion; differences are logged (slow).
 pub(crate) static VERIFY_LOADS: AtomicBool = AtomicBool::new(false);
@@ -216,6 +222,14 @@ pub fn enable(mode: &str) -> Result<(), String> {
         "hash-pages" => &HASH_PAGES,
         "verify-loads" => &VERIFY_LOADS,
         "no-carry" => &NO_CARRY,
+        "no-resolved-textures" => {
+            NO_RESOLVED_TEXTURES.store(true, Ordering::Relaxed);
+            return Ok(());
+        }
+        "store-resolved" => {
+            STORE_RESOLVED.store(true, Ordering::Relaxed);
+            return Ok(());
+        }
         "alpha-no-depth" => &ALPHA_NO_DEPTH,
         "no-skinned-alpha-test" => &NO_SKINNED_ALPHA_TEST,
         "wait-pipelines" => {
@@ -254,7 +268,7 @@ pub fn enable(mode: &str) -> Result<(), String> {
         }
         other => {
             return Err(format!(
-                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, single-sample, solid, solid-skinned, no-alpha-test, no-skinned-alpha-test, alpha-view, alpha-view-kill, wait-pipelines, hash-pages, verify-loads, no-carry, alpha-no-depth, alpha-depth-bias=N, bias-scale=N, vs-capture=N, ps-probe=FRAME:XxY, texture-mib=N, d3d-surfaces, gpu-time, msl-dump, float32-depth, alpha-mask, alpha-discard, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, unshared-upload, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
+                "--render-debug: unknown mode {other} (scissor, nodraw, nopool, nomemo, cpu-resolve, cpu-texture, no-bc, no-d32s8, no-a2c, single-sample, solid, solid-skinned, no-alpha-test, no-skinned-alpha-test, alpha-view, alpha-view-kill, wait-pipelines, hash-pages, verify-loads, no-carry, no-resolved-textures, store-resolved, alpha-no-depth, alpha-depth-bias=N, bias-scale=N, vs-capture=N, ps-probe=FRAME:XxY, texture-mib=N, d3d-surfaces, gpu-time, msl-dump, float32-depth, alpha-mask, alpha-discard, frames=N, mirror=MIB, load-cap=MIB, upload-cap=MIB, unshared-upload, staging, no-staging, handheld, trace-frame=N, trace-every=K)"
             ));
         }
     };

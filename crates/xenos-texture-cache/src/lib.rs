@@ -27,7 +27,7 @@ mod format;
 mod gpu_load;
 mod hash;
 
-pub use gpu_load::{GpuSource, ScaledSource};
+pub use gpu_load::{GpuSource, ResolvedTexture, ScaledSource};
 
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -188,6 +188,8 @@ pub struct CacheStats {
     pub cpu_loads: u64,
     /// Loads into a reused (pooled) texture instead of a new one.
     pub reused: u64,
+    /// Textures of resolve output bound as the resolves' own texture (see [`ResolvedTexture`]).
+    pub resolved: u64,
 }
 
 /// Views and sampler for one shader texture binding.
@@ -313,18 +315,24 @@ struct Entry {
     bytes: u64,
     last_used: u64,
     validated: u64,
+    /// The texture is a [`ResolvedTexture`]: its owner's, never pooled or destroyed here, and
+    /// bound through views with this swizzle.
+    borrowed: Option<[u8; 4]>,
 }
 
 impl Entry {
-    /// The texture and its views, for the pool.
-    fn pooled(&self) -> Pooled {
-        Pooled {
+    /// The texture and its views, for the pool; `None` for a texture that isn't the cache's.
+    fn pooled(&self) -> Option<Pooled> {
+        if self.borrowed.is_some() {
+            return None;
+        }
+        Some(Pooled {
             key: self.pool_key,
             texture: self.texture.clone(),
             views: self.views.clone(),
             bytes: self.bytes,
             id: self.id,
-        }
+        })
     }
 
     fn supports(&self, kind: ViewKind) -> bool {
@@ -341,8 +349,8 @@ impl Entry {
         }
         let texture = &self.texture;
         let layers = self.depth_or_array_layers;
-        let view = self.views[kind.index()].get_or_insert_with(|| {
-            texture.create_view(Some(&TextureViewDescriptor {
+        if self.views[kind.index()].is_none() {
+            let desc = TextureViewDescriptor {
                 label: "xenos texture view",
                 dimension: kind.dimension(),
                 array_layer_count: Some(match kind {
@@ -352,9 +360,13 @@ impl Entry {
                 }),
                 aspect: TextureAspect::All,
                 ..Default::default()
-            }))
-        });
-        Some(view.clone())
+            };
+            self.views[kind.index()] = match self.borrowed {
+                Some(swizzle) => texture.create_view_swizzled(Some(&desc), swizzle),
+                None => Some(texture.create_view(Some(&desc))),
+            };
+        }
+        self.views[kind.index()].clone()
     }
 }
 
@@ -781,6 +793,12 @@ impl TextureCache {
     /// the same texture this frame may be written into the same texture and views (after that
     /// work, in the same batch).
     pub fn invalidate(&mut self, addr: u32, len: u32) {
+        self.invalidate_except(addr, len, None);
+    }
+
+    /// [`TextureCache::invalidate`] for a resolve that updated the [`ResolvedTexture`] `keep`
+    /// in place: the textures bound as it hold the new contents already and stay.
+    pub fn invalidate_except(&mut self, addr: u32, len: u32, keep: Option<&Texture>) {
         if len == 0 {
             return;
         }
@@ -789,19 +807,22 @@ impl TextureCache {
         let (retired, stale) = (&mut self.retired, &mut self.stale);
         let mut invalidated = 0;
         self.textures.retain(|key, e| {
-            let keep = e.span.0 >= end
+            let untouched = e.span.0 >= end
                 || start >= e.span.1
                 || !e.ranges.iter().any(|r| {
                 let (rs, re) = (u64::from(r.address), u64::from(r.address) + u64::from(r.length));
                 rs < end && start < re
             });
-            if !keep {
-                if let Some(older) = stale.insert(*key, e.pooled()) {
-                    retired.push(older);
-                }
-                invalidated += 1;
+            if untouched || (e.borrowed.is_some() && keep.is_some_and(|t| t.is(&e.texture))) {
+                return true;
             }
-            keep
+            if let Some(pooled) = e.pooled()
+                && let Some(older) = stale.insert(*key, pooled)
+            {
+                retired.push(older);
+            }
+            invalidated += 1;
+            false
         });
         self.stats.invalidated += invalidated;
     }
@@ -919,7 +940,7 @@ impl TextureCache {
             let keep =
                 unused <= config.max_unused_frames && (unused < 2 || clock.age(e.last_used) <= config.max_unused_time);
             if !keep {
-                retired.push(e.pooled());
+                retired.extend(e.pooled());
             }
             keep
         });
@@ -937,7 +958,7 @@ impl TextureCache {
                     break;
                 }
                 if let Some(e) = self.textures.remove(&key) {
-                    self.retired.push(e.pooled());
+                    self.retired.extend(e.pooled());
                 }
                 total -= bytes;
             }
@@ -1043,7 +1064,7 @@ impl TextureCache {
                 return Some(key);
             }
             if let Some(e) = self.textures.remove(&key) {
-                self.retired.push(e.pooled());
+                self.retired.extend(e.pooled());
             }
             self.stats.reloads += 1;
         }
@@ -1145,6 +1166,50 @@ impl TextureCache {
         // (resolve output, also when a texture only partly covers it), and otherwise cheaper
         // than uploading the texture's bytes, as textures are reloaded whole when any of their
         // memory changes while the copy is updated by changed page.
+        let mut gpu = gpu;
+        if let Some(gpu) = gpu.as_deref_mut() {
+            // Resolve output the resolves keep as a texture of this very shape: bound as is.
+            if host_dim == HostDimension::D2
+                && layers == 1
+                && fetch.mip_max_level == 0
+                && fetch.tiled
+                && xenos_texture::host::host_mapping(info.format, false, caps, width, height).is_ok_and(|m| {
+                    m.host_format == xenos_texture::host::HostFormat::Rgba8Unorm
+                        && m.conversion == xenos_texture::host::Conversion::Copy
+                })
+                && let Some(resolved) = gpu.resolved(fetch, width, height)
+            {
+                self.stats.resolved += 1;
+                let pool_key = PoolKey {
+                    width,
+                    height,
+                    layers,
+                    mip_level_count: 1,
+                    is_3d: false,
+                    format: resolved.texture.format(),
+                };
+                return Ok(Entry {
+                    texture: resolved.texture,
+                    is_3d: false,
+                    width,
+                    height,
+                    depth_or_array_layers: layers,
+                    filterable: true,
+                    views: [None, None, None, None],
+                    pool_key,
+                    span: span_of(&ranges),
+                    ranges,
+                    hash,
+                    // The resolves' memory, not the cache's.
+                    bytes: 0,
+                    last_used: self.frame,
+                    validated: self.frame,
+                    id: TextureId(0),
+                    borrowed: Some(resolved.swizzle),
+                });
+            }
+            gpu.settle(&ranges);
+        }
         if let Some(gpu) = gpu
             && (gpu.covers(&ranges) || (self.config.gpu_conversion && gpu.sync(&ranges)))
         {
@@ -1256,6 +1321,7 @@ impl TextureCache {
             last_used: self.frame,
             validated: self.frame,
             id: TextureId(0),
+            borrowed: None,
         })
     }
 
@@ -1350,6 +1416,7 @@ impl TextureCache {
             last_used: self.frame,
             validated: self.frame,
             id: TextureId(0),
+            borrowed: None,
         })
     }
 
@@ -1426,7 +1493,7 @@ impl TextureCache {
             } else if let Some(key) = self
                 .textures
                 .iter()
-                .filter(|(_, e)| e.last_used < self.frame && !self.is_protected(e))
+                .filter(|(_, e)| e.last_used < self.frame && e.borrowed.is_none() && !self.is_protected(e))
                 .min_by_key(|(_, e)| e.last_used)
                 .map(|(k, _)| *k)
             {
@@ -1488,7 +1555,7 @@ impl TextureCache {
             let Some(key) = self
                 .textures
                 .iter()
-                .filter(|(_, e)| !self.is_protected(e))
+                .filter(|(_, e)| e.borrowed.is_none() && !self.is_protected(e))
                 .min_by_key(|(_, e)| e.last_used)
                 .map(|(k, _)| *k)
             else {

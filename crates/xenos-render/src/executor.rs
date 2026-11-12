@@ -146,6 +146,60 @@ impl GpuSource for SharedSource<'_> {
         )?;
         Some(xenos_texture_cache::ScaledSource { buffer: s.buffer, scale: s.scale, pitch: s.pitch })
     }
+
+    fn resolved(
+        &mut self,
+        fetch: &xenos_texture::TextureFetchConstant,
+        width: u32,
+        height: u32,
+    ) -> Option<xenos_texture_cache::ResolvedTexture> {
+        let base = (fetch.base_page << 12) & 0x1FFF_FFFF;
+        let r = self.targets.resolved_texture(base, fetch.pitch_div_32 * 32, width, height)?;
+        // The CPU wrote there since: the texture is loaded the usual way, which merges both.
+        if !self.shared.gpu_covers(self.memory, &[r.extent]) {
+            return None;
+        }
+        let endian = match fetch.endianness {
+            xenos_texture::Endian::None => 0,
+            xenos_texture::Endian::K8in16 => 1,
+            xenos_texture::Endian::K8in32 => 2,
+            xenos_texture::Endian::K16in32 => 3,
+        };
+        Some(xenos_texture_cache::ResolvedTexture {
+            texture: r.texture,
+            swizzle: crate::resolved::swizzle(r.swap, r.endian, endian),
+        })
+    }
+
+    fn settle(&mut self, ranges: &[xenos_texture::GuestRange]) {
+        let Some((start, end)) = self.targets.unstored_resolved_bounds() else { return };
+        for range in ranges {
+            if range.address >= end || range.address.saturating_add(range.length) <= start {
+                continue;
+            }
+            let extents = self.targets.unstored_resolved(range.address, range.length);
+            if extents.is_empty() {
+                continue;
+            }
+            // As for a resolve: the pages are brought up to date, then written and marked. (A
+            // conflict leaves a page the batch already read as it is; the store still goes
+            // after that read.)
+            for &(address, len) in &extents {
+                let _ = self.shared.sync(self.device, self.memory, address, len);
+            }
+            let target = SharedMemoryTarget {
+                chunks: &self.shared.chunks,
+                table: &self.shared.table,
+                block_bytes: SHARED_MEMORY_BLOCK_BYTES,
+                chunk_bytes: SHARED_MEMORY_CHUNK_BYTES,
+            };
+            let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder("xenos"));
+            self.targets.store_resolved(self.device, encoder, &target, range.address, range.length);
+            for &(address, len) in &extents {
+                self.shared.mark_gpu_written(address, len);
+            }
+        }
+    }
 }
 
 /// Guest physical memory for xenos-state.
@@ -484,6 +538,10 @@ pub struct Executor {
     pass: Option<Pass>,
     constant_cache: ConstantCache,
     resolving: bool,
+    /// Where resolves kept as textures only would be in guest memory (first byte and end, see
+    /// [`RenderTargetCache::unstored_resolved_bounds`]), as of the last resolve: memory brought
+    /// up to date inside it has them stored first.
+    unstored_resolved: Option<(u32, u32)>,
     max_texture_dimension: u32,
     warned: HashSet<String>,
     /// Pipelines the device rejected (the first few are logged with their shaders' WGSL).
@@ -804,6 +862,7 @@ impl Executor {
             pass: None,
             constant_cache: ConstantCache::default(),
             resolving: false,
+            unstored_resolved: None,
             max_texture_dimension: limits.maxTextureDimension2D,
             warned: HashSet::new(),
             pipeline_failures: 0,
@@ -978,6 +1037,7 @@ impl Executor {
         let frame = self.frame;
         self.texture_sets.retain(|_, (set, used)| !set.transient && *used + TEXTURE_GROUP_FRAMES >= frame);
         self.textures.destroy_retired();
+        self.drop_resolved();
         self.targets.end_frame();
         self.shared.end_frame();
         self.frames_in_flight.push_back(self.device.queue().on_submitted_work_done());
@@ -1383,7 +1443,9 @@ impl Executor {
         // The destination's pages are synced (and so in the batch's pages: a later CPU write to
         // them can't be uploaded under the resolve output before the batch is submitted).
         let shared = gpu_store.then(|| {
-            self.sync_shared(info.copy_dest_extent_start, info.copy_dest_extent_length);
+            // (Not `sync_shared`: resolves kept as textures that this one writes over are
+            // settled by the resolve itself.)
+            self.sync_shared_pages(info.copy_dest_extent_start, info.copy_dest_extent_length);
         });
         let target = SharedMemoryTarget {
             chunks: &self.shared.chunks,
@@ -1401,10 +1463,14 @@ impl Executor {
 
     fn finish_resolve(&mut self, written: Option<(u32, u32)>, in_gpu_memory: bool) {
         self.resolving = false;
+        self.drop_resolved();
+        self.unstored_resolved = self.targets.unstored_resolved_bounds();
         if let Some((addr, len)) = written {
             // Remembered sets binding a dropped texture are found out when reused (and a texture
-            // reloaded in place keeps its views: sets binding it stay good).
-            self.textures.invalidate(addr, len);
+            // reloaded in place keeps its views: sets binding it stay good). A resolve copied
+            // into the texture bound for its destination leaves that one current.
+            let kept = self.targets.resolved_in_place();
+            self.textures.invalidate_except(addr, len, kept.as_ref());
             if in_gpu_memory {
                 self.stats.gpu_resolves += 1;
                 self.shared.mark_gpu_written(addr, len);
@@ -1423,7 +1489,49 @@ impl Executor {
         self.shaders.get(&self.device, stage, &code.0, code.1, options).ok_or(Skip::NoPipeline)
     }
 
+    /// Drops the textures bound of resolved textures that are gone (see
+    /// [`RenderTargetCache::take_dropped_resolved`]).
+    fn drop_resolved(&mut self) {
+        for (addr, len) in self.targets.take_dropped_resolved() {
+            self.textures.invalidate(addr, len);
+        }
+    }
+
+    /// Brings the GPU copy of `[addr, addr + len)` up to date for the batch, with the resolves
+    /// kept as textures only stored there first where they overlap it.
     fn sync_shared(&mut self, addr: u32, len: u32) {
+        if let Some((start, end)) = self.unstored_resolved
+            && addr < end
+            && addr.saturating_add(len) > start
+        {
+            self.store_resolved(addr, len);
+        }
+        self.sync_shared_pages(addr, len);
+    }
+
+    fn store_resolved(&mut self, addr: u32, len: u32) {
+        let extents = self.targets.unstored_resolved(addr, len);
+        if extents.is_empty() {
+            return;
+        }
+        for &(a, l) in &extents {
+            self.sync_shared_pages(a, l);
+        }
+        let target = SharedMemoryTarget {
+            chunks: &self.shared.chunks,
+            table: &self.shared.table,
+            block_bytes: SHARED_MEMORY_BLOCK_BYTES,
+            chunk_bytes: SHARED_MEMORY_CHUNK_BYTES,
+        };
+        let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder("xenos"));
+        self.targets.store_resolved(&self.device, encoder, &target, addr, len);
+        for &(a, l) in &extents {
+            self.shared.mark_gpu_written(a, l);
+        }
+        self.unstored_resolved = self.targets.unstored_resolved_bounds();
+    }
+
+    fn sync_shared_pages(&mut self, addr: u32, len: u32) {
         let memory = self.memory.clone();
         let uploaded = self.shared.uploaded;
         if self.shared.sync(&self.device, &*memory, addr, len).is_err() {

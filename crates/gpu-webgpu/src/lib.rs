@@ -90,6 +90,9 @@ pub use resource::{
 #[cfg(not(metal_backend))]
 pub use surface::{Surface, SurfaceFrame};
 
+/// Whether [`Texture::create_view_swizzled`] makes views (Metal does; WebGPU has no such view).
+pub const TEXTURE_VIEW_SWIZZLE: bool = cfg!(metal_backend);
+
 // The native Metal backend (Apple targets).
 #[cfg(metal_backend)]
 mod metal;

@@ -19,6 +19,7 @@ mod present;
 mod queue;
 pub mod registers;
 mod renderer;
+pub mod resolved;
 mod ring;
 mod shaders;
 mod shared_memory;

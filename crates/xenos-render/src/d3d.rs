@@ -3,7 +3,9 @@
 //! executor draws into ([`D3dTargets`]); clears clear it; a resolve's copy draw converts and
 //! stores the surface into the GPU copy of guest memory in the destination's format, where
 //! textures (and the front buffer the swap shows) are loaded from, and does the clears the
-//! resolve asks for.
+//! resolve asks for. A resolve that only copies (8-bit RGBA into a texture of the same) is
+//! copied into a texture kept for its destination instead, which is bound as the guest texture
+//! (see [`crate::resolved`]).
 //!
 //! Predicated tiling isn't emulated: a surface the title renders in tiles is as tall as the
 //! screen here, each draw runs once over all of it (see the command processor), and each tile's
@@ -128,6 +130,8 @@ pub(crate) struct D3dRenderer {
     /// Host pixels per guest pixel along each axis (`--resolution-scale`): surface textures are
     /// this much larger, and resolves average each guest pixel's host pixels.
     scale: u32,
+    /// Resolves that are plain copies, kept as the textures the title samples.
+    resolved: crate::resolved::ResolvedTextures,
 }
 
 #[derive(Clone, Copy)]
@@ -244,6 +248,7 @@ impl D3dRenderer {
             mosaic: None,
             pending_clears: Vec::new(),
             scale: crate::RESOLUTION_SCALE.load(std::sync::atomic::Ordering::Relaxed).clamp(1, 3),
+            resolved: Default::default(),
         }
     }
 
@@ -253,6 +258,7 @@ impl D3dRenderer {
     pub(crate) fn reconfigure(&mut self, device: &Device) {
         self.scale = crate::RESOLUTION_SCALE.load(std::sync::atomic::Ordering::Relaxed).clamp(1, 3);
         self.edram = None;
+        self.resolved.clear();
         let surfaces: Vec<Surface> = self
             .surfaces
             .iter()
@@ -546,11 +552,13 @@ impl D3dRenderer {
         if self.logging() {
             let bytes: u64 = self.textures.keys().map(texture_bytes).sum();
             log::info!(
-                "d3d renderer: {} surfaces in {} textures, {} MiB; EDRAM aliasing {:?}",
+                "d3d renderer: {} surfaces in {} textures, {} MiB; EDRAM aliasing {:?}; {} resolve destinations kept as textures, {:?}",
                 self.surfaces.len(),
                 self.textures.len(),
                 bytes >> 20,
-                self.aliasing
+                self.aliasing,
+                self.resolved.count(),
+                self.resolved.stats
             );
         }
     }
@@ -904,16 +912,45 @@ impl crate::targets::RenderTargetCache for D3dTargets {
             return none;
         };
         let mut r = self.0.borrow_mut();
+        let r = &mut *r;
         r.do_clears(encoder);
         // The cache is taken out while it runs (the surfaces stay borrowed from `r`).
         let mut edram = r.edram.take().unwrap_or_else(|| r.edram_cache(device));
+        if r.resolved.has_idle() {
+            r.resolved.trim(device, encoder, &mut edram, shared);
+        }
         // With predicated tiling the resolve covers one tile, whose screen origin the window
         // offset moved to the EDRAM origin; the surfaces hold the whole screen.
         let offset = info.window_offset.map(|v| (-v).max(0) as u32);
+        let source = r.targets[(info.copy_control.copy_src_select & 3) as usize];
+        // A plain copy of a surface as it is (one host pixel per guest pixel) goes into the
+        // destination's texture instead of guest memory (see `resolved`).
+        let copy = (r.scale == 1
+            && gpu_webgpu::TEXTURE_VIEW_SWIZZLE
+            && !crate::debug::NO_RESOLVED_TEXTURES.load(std::sync::atomic::Ordering::Relaxed))
+        .then(|| source.and_then(|k| r.surfaces.get(&k)))
+        .flatten()
+        .filter(|s| !s.depth && s.samples == 1 && s.format == TextureFormat::RGBA8Unorm)
+        .and_then(|s| Some((crate::resolved::plan(info, (s.width, s.height), offset)?, s.texture.clone())));
         let external = |key: Option<SurfaceKey>| key.and_then(|k| r.surfaces.get(&k)).map(|s| s.external(offset));
-        let color = external(r.targets[(info.copy_control.copy_src_select & 3) as usize]);
+        let color = external(source);
         let depth = external(r.depth);
-        let result = edram.resolve_external(device, encoder, info, shared, color.as_ref(), depth.as_ref());
+        let extent = (info.copy_dest_extent_start & 0x1FFF_FFFF, info.copy_dest_extent_length);
+        let copied = copy.is_some_and(|(plan, surface)| {
+            r.resolved.resolve(device, encoder, &mut edram, shared, info, plan, &surface)
+        });
+        let result = if copied {
+            edram.clear_external(device, encoder, info, color.as_ref(), depth.as_ref()).map(|mut cleared| {
+                cleared.written = Some(extent);
+                cleared
+            })
+        } else {
+            r.resolved.resolved_elsewhere();
+            if extent.1 != 0 {
+                r.resolved.drop_overlapping(device, encoder, &mut edram, Some(shared), extent, None);
+            }
+            edram.resolve_external(device, encoder, info, shared, color.as_ref(), depth.as_ref())
+        };
         r.edram = Some(edram);
         match result {
             Ok(result) => crate::targets::ResolveStatus::Done { written: result.written, in_gpu_memory: true },
@@ -937,6 +974,7 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         if let Some(edram) = r.edram.as_mut() {
             edram.end_external_frame();
         }
+        r.resolved.end_frame();
     }
 
     fn flush_uploads(&mut self, device: &Device) {
@@ -960,5 +998,49 @@ impl crate::targets::RenderTargetCache for D3dTargets {
     ) -> Option<xenos_edram::ScaledResolve> {
         let mut r = self.0.borrow_mut();
         r.edram.as_mut()?.scaled_resolve(base, pitch, width, height, bytes_per_element, endian)
+    }
+
+    fn resolved_texture(
+        &mut self,
+        base: u32,
+        pitch: u32,
+        width: u32,
+        height: u32,
+    ) -> Option<crate::resolved::Resolved> {
+        if crate::debug::STORE_RESOLVED.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        self.0.borrow_mut().resolved.lookup(base, pitch, width, height)
+    }
+
+    fn resolved_in_place(&self) -> Option<Texture> {
+        self.0.borrow().resolved.last()
+    }
+
+    fn take_dropped_resolved(&mut self) -> Vec<(u32, u32)> {
+        self.0.borrow_mut().resolved.take_dropped()
+    }
+
+    fn unstored_resolved(&self, address: u32, len: u32) -> Vec<(u32, u32)> {
+        self.0.borrow().resolved.unstored(address, len)
+    }
+
+    fn unstored_resolved_bounds(&self) -> Option<(u32, u32)> {
+        self.0.borrow().resolved.unstored_bounds()
+    }
+
+    fn store_resolved(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        shared: &crate::targets::SharedMemoryTarget<'_>,
+        address: u32,
+        len: u32,
+    ) {
+        let mut r = self.0.borrow_mut();
+        let r = &mut *r;
+        let mut edram = r.edram.take().unwrap_or_else(|| r.edram_cache(device));
+        r.resolved.store(device, encoder, &mut edram, shared, address, len);
+        r.edram = Some(edram);
     }
 }

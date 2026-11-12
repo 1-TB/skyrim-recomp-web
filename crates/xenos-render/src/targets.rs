@@ -2,6 +2,8 @@
 
 use gpu_webgpu::{CommandEncoder, Device, TextureFormat, TextureView};
 pub use xenos_edram::SharedMemoryTarget;
+
+pub use crate::resolved::Resolved;
 use xenos_state::edram::RenderTargetSetup;
 use xenos_state::resolve::ResolveInfo;
 
@@ -111,5 +113,51 @@ pub trait RenderTargetCache {
         _endian: u32,
     ) -> Option<xenos_edram::ScaledResolve> {
         None
+    }
+
+    /// The texture resolves keep in place of the 8-bit RGBA 2D texture of `width` x `height`
+    /// pixels at physical address `base` with rows of `pitch` pixels, when they keep one (see
+    /// [`crate::resolved`]). The caller checks that the guest memory it stands for is still
+    /// marked as written by the GPU.
+    fn resolved_texture(&mut self, _base: u32, _pitch: u32, _width: u32, _height: u32) -> Option<Resolved> {
+        None
+    }
+
+    /// The texture the last [`RenderTargetCache::resolve`] copied into instead of storing into
+    /// the GPU copy of guest memory: what is bound of it holds the resolve's output already.
+    fn resolved_in_place(&self) -> Option<gpu_webgpu::Texture> {
+        None
+    }
+
+    /// The guest memory (start, length) of resolved textures dropped or replaced since the last
+    /// call: textures bound of them must be dropped before the frame ends (they are destroyed
+    /// after the next one).
+    fn take_dropped_resolved(&mut self) -> Vec<(u32, u32)> {
+        Vec::new()
+    }
+
+    /// The guest memory (start, length) of the destinations overlapping `[address, address +
+    /// len)` whose resolves are kept as textures only: [`RenderTargetCache::store_resolved`]
+    /// stores them, into pages the caller brings up to date first.
+    fn unstored_resolved(&self, _address: u32, _len: u32) -> Vec<(u32, u32)> {
+        Vec::new()
+    }
+
+    /// The first byte and the end of all the guest memory [`RenderTargetCache::unstored_resolved`]
+    /// may name.
+    fn unstored_resolved_bounds(&self) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Stores the resolves kept as textures only that overlap `[address, address + len)` into
+    /// the GPU copy of guest memory, recorded into `encoder`.
+    fn store_resolved(
+        &mut self,
+        _device: &Device,
+        _encoder: &mut CommandEncoder,
+        _shared: &SharedMemoryTarget<'_>,
+        _address: u32,
+        _len: u32,
+    ) {
     }
 }

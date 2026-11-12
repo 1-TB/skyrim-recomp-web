@@ -1536,6 +1536,25 @@ impl EdramCache {
                 }
             }
         }
+        let cleared = self.clear_external(device, encoder, info, color, depth)?;
+        (result.cleared_depth, result.cleared_color) = (cleared.cleared_depth, cleared.cleared_color);
+        Ok(result)
+    }
+
+    /// The clears of [`EdramCache::resolve_external`] alone, for a resolve whose copy is done
+    /// elsewhere.
+    pub fn clear_external(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        info: &ResolveInfo,
+        color: Option<&ExternalSource<'_>>,
+        depth: Option<&ExternalSource<'_>>,
+    ) -> Result<ResolveResult, EdramError> {
+        let mut result = ResolveResult { written: None, cleared_depth: false, cleared_color: false };
+        if info.rect.is_empty() {
+            return Ok(result);
+        }
         for clear in self.plan_clears(info)? {
             let target = if clear.key.is_depth { depth } else { color };
             let Some(target) = target else { continue };

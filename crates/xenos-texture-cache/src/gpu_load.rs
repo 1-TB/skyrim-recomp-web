@@ -55,6 +55,26 @@ pub trait GpuSource {
     fn scaled(&mut self, _fetch: &TextureFetchConstant) -> Option<ScaledSource> {
         None
     }
+    /// The texture resolves keep of the single-level 2D texture `fetch` describes (`width` x
+    /// `height` texels of an 8-bit RGBA format), when one holds exactly what a load from the GPU
+    /// copy would give: the cache then binds that texture instead of loading one, and later
+    /// resolves update it in place (see [`ResolvedTexture`]).
+    fn resolved(&mut self, _fetch: &TextureFetchConstant, _width: u32, _height: u32) -> Option<ResolvedTexture> {
+        None
+    }
+    /// Resolve output kept only in such textures and not stored in the GPU copy yet is stored
+    /// there for `ranges`: called before anything is loaded from the GPU copy.
+    fn settle(&mut self, _ranges: &[GuestRange]) {}
+}
+
+/// A texture a [`GpuSource`] keeps of resolve output, standing for a guest texture: the
+/// source owns it (and destroys it, after telling the cache to drop what reads its memory),
+/// the cache only binds it.
+pub struct ResolvedTexture {
+    pub texture: Texture,
+    /// The guest texture's host components in terms of the texture's: component `i` is the
+    /// texture's component `swizzle[i]` (see `Texture::create_view_swizzled`).
+    pub swizzle: [u8; 4],
 }
 
 /// A full-resolution copy of a texture's data: its texels `scale` times along each axis,

@@ -39,7 +39,10 @@ pub use format::{
     linear_to_pwl_gamma, pwl_gamma_to_linear,
 };
 pub use ownership::OwnedRange;
-pub use scaled::ScaledResolve;
+pub use scaled::{
+    DestKey, ScaledResolve, canonical as canonical_dest, contains as rect_contains, covered as rects_cover,
+    overlaps as spans_overlap,
+};
 pub use xenos_state::edram::RenderTargetKey;
 
 /// Guest physical memory as seen by the GPU (byte order as in memory).

@@ -381,6 +381,21 @@ impl Device {
 }
 
 impl Texture {
+    /// A view reading the texture's channels reordered: WebGPU has none, so always `None` here
+    /// (see [`crate::TEXTURE_VIEW_SWIZZLE`]).
+    pub fn create_view_swizzled(
+        &self,
+        _desc: Option<&TextureViewDescriptor<'_>>,
+        _swizzle: [u8; 4],
+    ) -> Option<TextureView> {
+        None
+    }
+
+    /// Whether `other` is a handle to the same texture.
+    pub fn is(&self, other: &Texture) -> bool {
+        self.raw() == other.raw()
+    }
+
     pub fn create_view(&self, desc: Option<&TextureViewDescriptor<'_>>) -> TextureView {
         crate::counters::add(&crate::counters::count::views, 1);
         let raw = desc.map(|d| ffi::WGPUTextureViewDescriptor {
