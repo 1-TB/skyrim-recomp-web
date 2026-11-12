@@ -84,7 +84,10 @@
 #define PPC_JOIN(x, y) x##y
 #define PPC_XSTRINGIFY(x) #x
 #define PPC_STRINGIFY(x) PPC_XSTRINGIFY(x)
-#define PPC_FUNC(x) void x(PPCContext& __restrict ctx, uint8_t* base)
+// `__restrict__`, not XenonRecomp's `__restrict`: Apple's <sys/cdefs.h> defines the latter away
+// in C++, and without it every guest memory access might be one to the context (its fields
+// were stored at every write and loaded again after every guest store).
+#define PPC_FUNC(x) void x(PPCContext& __restrict__ ctx, uint8_t* base)
 #define PPC_FUNC_IMPL(x) extern "C" PPC_FUNC(x)
 #define PPC_EXTERN_FUNC(x) extern PPC_FUNC(x)
 #define PPC_WEAK_FUNC(x) __attribute__((weak,noinline)) PPC_FUNC(x)
@@ -898,7 +901,7 @@ static inline __attribute__((always_inline)) uint8_t* skyrt_gpr_fields(PPCContex
 
 // The save area straddles two 1 MiB frames, which needn't be adjacent in linear memory: the
 // recompiled helper's own sequence.
-[[gnu::noinline]] inline void skyrt_savegprlr_split(PPCContext& __restrict ctx, uint8_t* base, uint32_t first)
+[[gnu::noinline]] inline void skyrt_savegprlr_split(PPCContext& __restrict__ ctx, uint8_t* base, uint32_t first)
 {
     const uint8_t* fields = skyrt_gpr_fields(ctx, first);
     for (uint32_t i = 0; i < 32 - first; i++)
@@ -910,7 +913,7 @@ static inline __attribute__((always_inline)) uint8_t* skyrt_gpr_fields(PPCContex
     PPC_STORE_U32(ctx.r1.u32 - 8, ctx.r12.u32);
 }
 
-[[gnu::noinline]] inline void skyrt_restgprlr_split(PPCContext& __restrict ctx, uint8_t* base, uint32_t first)
+[[gnu::noinline]] inline void skyrt_restgprlr_split(PPCContext& __restrict__ ctx, uint8_t* base, uint32_t first)
 {
     uint8_t* fields = skyrt_gpr_fields(ctx, first);
     for (uint32_t i = 0; i < 32 - first; i++)
@@ -923,7 +926,7 @@ static inline __attribute__((always_inline)) uint8_t* skyrt_gpr_fields(PPCContex
 }
 
 // std rN..r31 at -8*(33-N)..-16(r1), then stw r12,-8(r1) (the caller moved LR to r12).
-static inline __attribute__((always_inline)) void skyrt_savegprlr(PPCContext& __restrict ctx, uint8_t* base, uint32_t first)
+static inline __attribute__((always_inline)) void skyrt_savegprlr(PPCContext& __restrict__ ctx, uint8_t* base, uint32_t first)
 {
     const uint32_t count = 32 - first;
     // First and last byte of the save area. In one frame also means it doesn't wrap around.
@@ -948,7 +951,7 @@ static inline __attribute__((always_inline)) void skyrt_savegprlr(PPCContext& __
 }
 
 // ld rN..r31 from the same slots, then lwz r12,-8(r1); mtlr r12.
-static inline __attribute__((always_inline)) void skyrt_restgprlr(PPCContext& __restrict ctx, uint8_t* base, uint32_t first)
+static inline __attribute__((always_inline)) void skyrt_restgprlr(PPCContext& __restrict__ ctx, uint8_t* base, uint32_t first)
 {
     const uint32_t count = 32 - first;
     const uint32_t low = ctx.r1.u32 - 8 * (count + 1), high = ctx.r1.u32 - 5;

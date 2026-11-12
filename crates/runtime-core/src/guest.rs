@@ -7,7 +7,7 @@
 use crate::address_space::{AddressSpace, AllocResult};
 use crate::context::PPCContext;
 
-/// `void f(PPCContext& __restrict ctx, uint8_t* base)`. "C-unwind" because guest
+/// `void f(PPCContext& __restrict__ ctx, uint8_t* base)`. "C-unwind" because guest
 /// thread termination unwinds through recompiled frames.
 pub type PPCFunc = unsafe extern "C-unwind" fn(ctx: *mut PPCContext, base: *mut u8);
 

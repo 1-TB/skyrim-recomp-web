@@ -388,13 +388,13 @@ fn direct_calls(declared: &HashSet<String>, overridden: &HashSet<&str>, gpr_help
         .collect();
     names.sort_unstable();
     let mut text = String::from(
-        "\n// Added by crates/guest-sys/build.rs (fn direct_calls).\n#undef PPC_WEAK_FUNC\n#define PPC_WEAK_FUNC(x) [[maybe_unused]] static inline void skyrt_unused_##x(PPCContext& __restrict ctx, uint8_t* base)\n",
+        "\n// Added by crates/guest-sys/build.rs (fn direct_calls).\n#undef PPC_WEAK_FUNC\n#define PPC_WEAK_FUNC(x) [[maybe_unused]] static inline void skyrt_unused_##x(PPCContext& __restrict__ ctx, uint8_t* base)\n",
     );
     for name in names {
         match gpr_helpers.iter().find(|(helper, ..)| helper == name) {
             Some((_, function, first)) => writeln!(
                 text,
-                "[[gnu::noinline]] inline void {function}_{first}(PPCContext& __restrict ctx, uint8_t* base) {{ {function}(ctx, base, {first}); }}\n#define {name} {function}_{first}"
+                "[[gnu::noinline]] inline void {function}_{first}(PPCContext& __restrict__ ctx, uint8_t* base) {{ {function}(ctx, base, {first}); }}\n#define {name} {function}_{first}"
             ),
             None => writeln!(text, "extern \"C\" PPC_FUNC(__imp__{name});\n#define {name} __imp__{name}"),
         }
@@ -560,7 +560,7 @@ fn dispatch(recomp_out: &Path) -> String {
     for (group, chunk) in functions.chunks(GROUP).enumerate() {
         writeln!(
             cpp,
-            "__attribute__((noinline)) static void skyrt_call_group_{group}(uint32_t id, PPCContext& __restrict ctx, uint8_t* base) {{\n    switch (id) {{"
+            "__attribute__((noinline)) static void skyrt_call_group_{group}(uint32_t id, PPCContext& __restrict__ ctx, uint8_t* base) {{\n    switch (id) {{"
         )
         .unwrap();
         for (i, (_, name)) in chunk.iter().enumerate() {
@@ -581,7 +581,7 @@ fn dispatch(recomp_out: &Path) -> String {
         cpp,
         r#"extern "C" [[noreturn]] void skyrt_missing_function(uint32_t addr, const PPCContext* ctx);
 
-extern "C" void skyrt_call_func(uint32_t addr, PPCContext& __restrict ctx, uint8_t* base) {{
+extern "C" void skyrt_call_func(uint32_t addr, PPCContext& __restrict__ ctx, uint8_t* base) {{
     uint32_t index = (addr - {code_base:#X}u) >> 2;
     if ((addr & 3) == 0 && index < {limit}u) {{
         uint64_t starts = skyrt_func_starts[index >> 6];
