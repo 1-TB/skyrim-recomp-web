@@ -56,10 +56,17 @@ pub trait GpuSource {
         None
     }
     /// The texture resolves keep of the single-level 2D texture `fetch` describes (`width` x
-    /// `height` texels of an 8-bit RGBA format), when one holds exactly what a load from the GPU
-    /// copy would give: the cache then binds that texture instead of loading one, and later
-    /// resolves update it in place (see [`ResolvedTexture`]).
-    fn resolved(&mut self, _fetch: &TextureFetchConstant, _width: u32, _height: u32) -> Option<ResolvedTexture> {
+    /// `height` texels; of an 8-bit RGBA format, or with `depth` a 24:8 depth format loaded as
+    /// 32-bit float depth, floating-point if the flag is set), when one holds exactly what a
+    /// load from the GPU copy would give: the cache then binds that texture instead of loading
+    /// one, and later resolves update it in place (see [`ResolvedTexture`]).
+    fn resolved(
+        &mut self,
+        _fetch: &TextureFetchConstant,
+        _width: u32,
+        _height: u32,
+        _depth: Option<bool>,
+    ) -> Option<ResolvedTexture> {
         None
     }
     /// Resolve output kept only in such textures and not stored in the GPU copy yet is stored

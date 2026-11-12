@@ -371,6 +371,70 @@ fn src_load(kind: SrcKind) -> String {
     )
 }
 
+/// Copies a depth surface as the textures of a depth resolve's destination (`--gpu d3d`, see
+/// `EdramCache::copy_depth_external`): entry points `vs` and `fs`, which writes each pixel's
+/// EDRAM word as four unorm bytes (lowest first) to target 0 and the depth a texture load of
+/// that word gives to target 1.
+pub(crate) fn depth_copy_module() -> String {
+    let src = SrcKind::Depth { multisampled: false };
+    format!("{}{}{}{DEPTH_COPY_BODY}", common(1), src_decl(src), src_load(src))
+}
+
+const DEPTH_COPY_BODY: &str = r#"
+struct DepthCopyParams {
+    // Added to a destination pixel for its place in the surface.
+    offset: vec2<i32>,
+    // The depth format: 1 for D24FS8.
+    format: u32,
+}
+
+@group(0) @binding(0) var<uniform> p: DepthCopyParams;
+
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    return fullscreen(i);
+}
+
+// The texture cache's conversions of a 24-bit depth (its GPU loader's `f20e4` and 24-bit unorm).
+fn loaded_float24(bits: u32) -> f32 {
+    let v = bits & 0xFFFFFFu;
+    if (v == 0u) { return 0.0; }
+    var mantissa = v & 0xFFFFFu;
+    var exponent = v >> 20u;
+    if (exponent == 0u) {
+        let lz = 20u - (31u - countLeadingZeros(mantissa));
+        exponent = 1u - lz;
+        mantissa = (mantissa << lz) & 0xFFFFFu;
+    }
+    return bitcast<f32>(((exponent + 112u) << 23u) | (mantissa << 3u));
+}
+
+fn loaded_unorm24(n: u32) -> f32 {
+    return f32(n + (n >> 23u)) * (1.0 / 16777216.0);
+}
+
+struct DepthCopy {
+    @location(0) bytes: vec4<f32>,
+    @location(1) depth: vec4<f32>,
+}
+
+@fragment
+fn fs(@builtin(position) pos: vec4<f32>) -> DepthCopy {
+    let px = vec2<u32>(vec2<i32>(pos.xy) + p.offset);
+    let word = load_src_packed(px, 0u, 16u + p.format).x;
+    var out: DepthCopy;
+    out.bytes = vec4<f32>(vec4<u32>(word, word >> 8u, word >> 16u, word >> 24u) & vec4<u32>(0xFFu)) / 255.0;
+    var depth: f32;
+    if (p.format == 1u) {
+        depth = loaded_float24(word >> 8u);
+    } else {
+        depth = loaded_unorm24(word >> 8u);
+    }
+    out.depth = vec4<f32>(depth, 0.0, 0.0, 1.0);
+    return out;
+}
+"#;
+
 /// Ownership transfer: entry points `vs`, `fs_color`, and `fs_depth_scratch` (depth, plus the
 /// stencil byte | 0x100 in a `u32` color output for [`stencil_bits_module`]).
 pub(crate) fn transfer_module(src: SrcKind, dest_multisampled: bool, scale: u32) -> String {

@@ -793,12 +793,12 @@ impl TextureCache {
     /// the same texture this frame may be written into the same texture and views (after that
     /// work, in the same batch).
     pub fn invalidate(&mut self, addr: u32, len: u32) {
-        self.invalidate_except(addr, len, None);
+        self.invalidate_except(addr, len, &[]);
     }
 
-    /// [`TextureCache::invalidate`] for a resolve that updated the [`ResolvedTexture`] `keep`
-    /// in place: the textures bound as it hold the new contents already and stay.
-    pub fn invalidate_except(&mut self, addr: u32, len: u32, keep: Option<&Texture>) {
+    /// [`TextureCache::invalidate`] for a resolve that updated the [`ResolvedTexture`]s `keep`
+    /// in place: the textures bound as them hold the new contents already and stay.
+    pub fn invalidate_except(&mut self, addr: u32, len: u32, keep: &[Texture]) {
         if len == 0 {
             return;
         }
@@ -813,7 +813,7 @@ impl TextureCache {
                 let (rs, re) = (u64::from(r.address), u64::from(r.address) + u64::from(r.length));
                 rs < end && start < re
             });
-            if untouched || (e.borrowed.is_some() && keep.is_some_and(|t| t.is(&e.texture))) {
+            if untouched || (e.borrowed.is_some() && keep.iter().any(|t| t.is(&e.texture))) {
                 return true;
             }
             if let Some(pooled) = e.pooled()
@@ -1169,15 +1169,22 @@ impl TextureCache {
         let mut gpu = gpu;
         if let Some(gpu) = gpu.as_deref_mut() {
             // Resolve output the resolves keep as a texture of this very shape: bound as is.
+            use xenos_texture::host::{Conversion, HostFormat};
+            let mapping = xenos_texture::host::host_mapping(info.format, false, caps, width, height).ok();
+            let kept = mapping.and_then(|m| match (m.host_format, m.conversion) {
+                (HostFormat::Rgba8Unorm, Conversion::Copy) => Some((None, true)),
+                (HostFormat::R32Float, Conversion::Depth20e4ToFloat32) => Some((Some(true), self.float32_filterable)),
+                (HostFormat::R32Float, Conversion::Depth24UnormToFloat32) => {
+                    Some((Some(false), self.float32_filterable))
+                }
+                _ => None,
+            });
             if host_dim == HostDimension::D2
                 && layers == 1
                 && fetch.mip_max_level == 0
                 && fetch.tiled
-                && xenos_texture::host::host_mapping(info.format, false, caps, width, height).is_ok_and(|m| {
-                    m.host_format == xenos_texture::host::HostFormat::Rgba8Unorm
-                        && m.conversion == xenos_texture::host::Conversion::Copy
-                })
-                && let Some(resolved) = gpu.resolved(fetch, width, height)
+                && let Some((depth, filterable)) = kept
+                && let Some(resolved) = gpu.resolved(fetch, width, height, depth)
             {
                 self.stats.resolved += 1;
                 let pool_key = PoolKey {
@@ -1194,7 +1201,7 @@ impl TextureCache {
                     width,
                     height,
                     depth_or_array_layers: layers,
-                    filterable: true,
+                    filterable,
                     views: [None, None, None, None],
                     pool_key,
                     span: span_of(&ranges),

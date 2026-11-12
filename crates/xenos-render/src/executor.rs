@@ -152,6 +152,7 @@ impl GpuSource for SharedSource<'_> {
         fetch: &xenos_texture::TextureFetchConstant,
         width: u32,
         height: u32,
+        depth: Option<bool>,
     ) -> Option<xenos_texture_cache::ResolvedTexture> {
         let base = (fetch.base_page << 12) & 0x1FFF_FFFF;
         let r = self.targets.resolved_texture(base, fetch.pitch_div_32 * 32, width, height)?;
@@ -165,10 +166,13 @@ impl GpuSource for SharedSource<'_> {
             xenos_texture::Endian::K8in32 => 2,
             xenos_texture::Endian::K16in32 => 3,
         };
-        Some(xenos_texture_cache::ResolvedTexture {
-            texture: r.texture,
-            swizzle: crate::resolved::swizzle(r.swap, r.endian, endian),
-        })
+        let (texture, swizzle) = match depth {
+            None => (r.texture, crate::resolved::swizzle(r.swap, r.endian, endian)),
+            // The depth texture holds what a texture reading the words as the resolves stored
+            // them loads.
+            Some(float24) => (r.depth.filter(|(_, f)| *f == float24 && endian == r.endian)?.0, [0, 1, 2, 3]),
+        };
+        Some(xenos_texture_cache::ResolvedTexture { texture, swizzle })
     }
 
     fn settle(&mut self, ranges: &[xenos_texture::GuestRange]) {
@@ -1470,7 +1474,7 @@ impl Executor {
             // reloaded in place keeps its views: sets binding it stay good). A resolve copied
             // into the texture bound for its destination leaves that one current.
             let kept = self.targets.resolved_in_place();
-            self.textures.invalidate_except(addr, len, kept.as_ref());
+            self.textures.invalidate_except(addr, len, &kept);
             if in_gpu_memory {
                 self.stats.gpu_resolves += 1;
                 self.shared.mark_gpu_written(addr, len);

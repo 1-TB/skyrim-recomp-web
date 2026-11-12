@@ -12,6 +12,11 @@
 //! and the texture disagree on only permute the components, which the view's swizzle does.
 //! Later resolves into the destination update the texture in place, so the texture stays bound.
 //!
+//! Depth resolves (the depth buffer as a 24:8 texture) are kept the same way, as two textures a
+//! small pass fills from the depth surface: the texels' words as bytes, for textures reading
+//! that memory as 8-bit RGBA (Skyrim draws its depth texture into a color surface over the depth
+//! buffer's EDRAM to restore the depth buffer), and the depth a 24:8 texture of it loads as.
+//!
 //! The GPU copy of guest memory isn't written, only marked as if it were. What else would read
 //! it there (a texture of another shape or format over the same memory, a resolve that overlaps
 //! it) first has the kept resolves stored the usual way, from the texture
@@ -19,8 +24,11 @@
 
 use gpu_webgpu::*;
 use xenos_edram::{DestKey, EdramCache, ExternalSource, ExternalViews, SharedMemoryTarget};
+use xenos_state::resolve::ResolveEdramInfo;
 use xenos_state::resolve::ResolveInfo;
-use xenos_state::xenos::{CopyCommand, SurfaceNumberFormat, TextureFormat as GuestFormat};
+use xenos_state::xenos::{
+    CopyCommand, CopySampleSelect, MsaaSamples, SurfaceNumberFormat, TextureFormat as GuestFormat,
+};
 
 /// Frames a destination is kept without being resolved to or bound.
 const MAX_IDLE_FRAMES: u64 = 600;
@@ -29,14 +37,24 @@ const MAX_IDLE_FRAMES: u64 = 600;
 /// path (two textures of different sizes over the same memory would replace it every frame).
 const MAX_RESIZES: u32 = 4;
 
-/// A resolve [`ResolvedTextures::resolve`] can do, from [`plan`].
+/// What a destination's textures hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// A color surface's pixels as they are; the resolves swap red and blue storing them.
+    Color { swap: bool },
+    /// A depth surface's EDRAM words as bytes, and the depth a texture of them loads as
+    /// (`float24`: D24FS8, else D24S8).
+    Depth { float24: bool },
+}
+
+/// A resolve [`ResolvedTextures::resolve`] can do, from [`plan`] or [`plan_depth`].
 pub(crate) struct Plan {
     key: DestKey,
     /// Where the pixels go in the destination (x, y, width, height).
     rect: [u32; 4],
     /// The rectangle's origin in the surface (host pixels).
     source: [u32; 2],
-    swap: bool,
+    kind: Kind,
 }
 
 /// `info` as a copy into a destination's texture, if it is one: the whole rectangle of a
@@ -74,16 +92,55 @@ pub(crate) fn plan(info: &ResolveInfo, surface: (u32, u32), offset: [u32; 2]) ->
         && from[1] + rect[3] <= surface.1
         && rect[0] + rect[2] <= key.pitch
         && rect[1] + rect[3] <= key.height;
-    fits.then_some(Plan { key, rect, source: from, swap: dest.copy_dest_swap })
+    fits.then_some(Plan { key, rect, source: from, kind: Kind::Color { swap: dest.copy_dest_swap } })
 }
 
-/// A destination's texture for the texture cache.
+/// `info` as a copy of a depth surface into a destination's textures, if it is one: the whole
+/// rectangle of a single-sampled depth surface `surface` (its size; `float24`: D24FS8) into a
+/// 24:8 2D destination of its format. `offset` as for [`plan`].
+pub(crate) fn plan_depth(info: &ResolveInfo, surface: (u32, u32), offset: [u32; 2], float24: bool) -> Option<Plan> {
+    let source = info.source_edram()?;
+    let dest = info.copy_dest_info;
+    let endian = dest.copy_dest_endian.raw();
+    let format = if float24 { GuestFormat::K248Float } else { GuestFormat::K248 };
+    let plain = info.is_copying_depth()
+        && source.format == u32::from(float24)
+        && info.copy_control.copy_command == CopyCommand::Raw
+        && info.dest_format == format
+        && !dest.copy_dest_array
+        && endian <= 3
+        && info.copy_dest_extent_length != 0
+        && !info.rect.is_empty();
+    if !plain {
+        return None;
+    }
+    let rect = [info.dest_offset_x_div_8 << 3, info.dest_offset_y_div_8 << 3, info.rect.width, info.rect.height];
+    let from = [(info.edram_offset_x_div_8 << 3) + offset[0], (info.edram_offset_y_div_8 << 3) + offset[1]];
+    let key = DestKey {
+        base: info.copy_dest_base & 0x1FFF_FFFF,
+        pitch: info.dest_pitch_aligned,
+        height: info.dest_height_aligned,
+        bytes_per_element: 4,
+        endian,
+    };
+    let fits = from[0] + rect[2] <= surface.0
+        && from[1] + rect[3] <= surface.1
+        && rect[0] + rect[2] <= key.pitch
+        && rect[1] + rect[3] <= key.height;
+    fits.then_some(Plan { key, rect, source: from, kind: Kind::Depth { float24 } })
+}
+
+/// A destination's textures for the texture cache.
 pub struct Resolved {
+    /// The destination's texels as 8-bit RGBA.
     pub texture: Texture,
     /// The resolves' red/blue swap and byte order (`Endian128`), which with the texture's own
     /// byte order give the order its components are read in (see [`swizzle`]).
     pub swap: bool,
     pub endian: u32,
+    /// For a depth destination: the depth a 24:8 texture (floating-point if the flag is set)
+    /// with the resolves' byte order loads, as a 32-bit float texture.
+    pub depth: Option<(Texture, bool)>,
     /// The guest memory the resolves were to write (start, length): the texture stands for it
     /// only while that is still marked as written by the GPU.
     pub extent: (u32, u32),
@@ -107,12 +164,14 @@ pub fn swizzle(swap: bool, endian: u32, fetch_endian: u32) -> [u8; 4] {
 
 struct Dest {
     key: DestKey,
-    swap: bool,
+    kind: Kind,
     /// What textures bind: as large as the texture last asked for (`wanted`), or as the first
-    /// resolve's rectangle until one is.
+    /// resolve's rectangle (the whole destination for depth) until one is.
     texture: Texture,
     width: u32,
     height: u32,
+    /// A depth destination's depth texture and the two as the copy pass's targets.
+    depth: Option<(Texture, [TextureView; 2])>,
     /// The whole destination, kept as well once a resolve writes outside `texture`: what
     /// [`ResolvedTextures::store`] then reads.
     full: Option<Texture>,
@@ -152,6 +211,23 @@ fn texture(device: &Device, width: u32, height: u32) -> Texture {
     })
 }
 
+/// A depth destination's textures: the bytes (as [`texture`]), and the depth with both as the
+/// copy pass's targets.
+fn depth_textures(device: &Device, width: u32, height: u32) -> (Texture, (Texture, [TextureView; 2])) {
+    let make = |format| {
+        device.create_texture(&TextureDescriptor {
+            label: "d3d resolved depth",
+            size: extent(width, height, 1),
+            format,
+            usage: TextureUsage::TextureBinding | TextureUsage::RenderAttachment,
+            ..Default::default()
+        })
+    };
+    let [bytes, depth] = xenos_edram::DEPTH_COPY_FORMATS.map(make);
+    let views = [bytes.create_view(None), depth.create_view(None)];
+    (bytes, (depth, views))
+}
+
 fn inside(rect: [u32; 4], width: u32, height: u32) -> bool {
     rect[0] + rect[2] <= width && rect[1] + rect[3] <= height
 }
@@ -180,16 +256,16 @@ pub(crate) struct ResolvedTextures {
     /// Guest memory (start, length) of the textures dropped or replaced since
     /// [`ResolvedTextures::take_dropped`]: what the texture cache bound of them must go.
     dropped: Vec<(u32, u32)>,
-    /// The texture the last resolve was copied into, if it was done here.
-    last: Option<Texture>,
+    /// The textures the last resolve was copied into, if it was done here.
+    last: Vec<Texture>,
     frame: u64,
     pub stats: ResolvedStats,
 }
 
 impl ResolvedTextures {
-    /// Does the copy `plan` describes for `info`, from `surface`. `false` (nothing done) for a
-    /// destination left to the usual path. Other destinations it writes over are stored and
-    /// dropped first.
+    /// Does the copy `plan` describes for `info`, from `surface` (the source of a depth copy
+    /// as the EDRAM shaders take it). `false` (nothing done) for a destination left to the
+    /// usual path. Other destinations it writes over are stored and dropped first.
     #[allow(clippy::too_many_arguments)]
     pub fn resolve(
         &mut self,
@@ -199,27 +275,41 @@ impl ResolvedTextures {
         shared: &SharedMemoryTarget<'_>,
         info: &ResolveInfo,
         plan: Plan,
-        surface: &Texture,
+        surface: &ExternalSource<'_>,
     ) -> bool {
-        self.last = None;
-        let same = self.dests.iter().filter(|d| d.swap == plan.swap).map(|d| d.key);
+        self.last.clear();
+        let same = self.dests.iter().filter(|d| d.kind == plan.kind).map(|d| d.key);
         let (key, rect) = xenos_edram::canonical_dest(same, plan.key, plan.rect);
         if self.unsuited.contains(&key) {
             return false;
         }
-        self.drop_overlapping(device, encoder, edram, Some(shared), key.span(), Some((key, plan.swap)));
+        self.drop_overlapping(device, encoder, edram, Some(shared), key.span(), Some((key, plan.kind)));
         let frame = self.frame;
-        let index = match self.dests.iter().position(|d| d.key == key && d.swap == plan.swap) {
+        let is_depth = matches!(plan.kind, Kind::Depth { .. });
+        let make = |device: &Device, width: u32, height: u32| {
+            if is_depth {
+                let (bytes, depth) = depth_textures(device, width, height);
+                (bytes, Some(depth))
+            } else {
+                (texture(device, width, height), None)
+            }
+        };
+        let index = match self.dests.iter().position(|d| d.key == key && d.kind == plan.kind) {
             Some(i) => i,
             None => {
-                let (width, height) = (rect[0] + rect[2], rect[1] + rect[3]);
+                // (A depth destination's has no second texture for what doesn't fit: it starts
+                // out whole.)
+                let (width, height) =
+                    if is_depth { (key.pitch, key.height) } else { (rect[0] + rect[2], rect[1] + rect[3]) };
+                let (texture, depth) = make(device, width, height);
                 self.stats.textures += 1;
                 self.dests.push(Dest {
                     key,
-                    swap: plan.swap,
-                    texture: texture(device, width, height),
+                    kind: plan.kind,
+                    texture,
                     width,
                     height,
+                    depth,
                     full: None,
                     views: [None, None],
                     rects: Vec::new(),
@@ -247,13 +337,35 @@ impl ResolvedTextures {
                 return false;
             }
             self.dropped.push(d.extent());
-            self.retired[0].push(std::mem::replace(&mut d.texture, texture(device, width, height)));
+            let (texture, depth) = make(device, width, height);
+            self.retired[0].push(std::mem::replace(&mut d.texture, texture));
+            self.retired[0].extend(std::mem::replace(&mut d.depth, depth).map(|(texture, _)| texture));
             (d.width, d.height, d.views[0]) = (width, height, None);
             d.rects.clear();
             self.stats.textures += 1;
         }
         let d = &mut self.dests[index];
         d.last_used = frame;
+        if let (Kind::Depth { float24 }, Some((_, targets))) = (plan.kind, &d.depth) {
+            if !inside(rect, d.width, d.height) {
+                // Textures smaller than what is resolved read it: not kept as textures.
+                self.store_dest(device, encoder, edram, shared, index);
+                self.unsuited.push(key);
+                self.remove(index);
+                return false;
+            }
+            edram.copy_depth_external(device, encoder, surface, plan.source, float24, &targets[0], &targets[1], rect);
+            self.stats.copies += 1;
+            d.rects.retain(|r| !xenos_edram::rect_contains(rect, *r));
+            d.rects.push(rect);
+            d.unstored.retain(|(_, r)| !xenos_edram::rect_contains(rect, *r));
+            d.unstored.push((info.clone(), rect));
+            let start = info.copy_dest_extent_start & 0x1FFF_FFFF;
+            d.extent = (d.extent.0.min(start), d.extent.1.max(start + info.copy_dest_extent_length));
+            self.last.push(d.texture.clone());
+            self.last.extend(d.depth.as_ref().map(|(texture, _)| texture.clone()));
+            return true;
+        }
         if !inside(rect, d.width, d.height) && d.full.is_none() {
             // What is unstored so far lies inside the texture, which keeps holding it.
             d.full = Some(texture(device, key.pitch, key.height));
@@ -266,7 +378,7 @@ impl ResolvedTextures {
             }
             encoder.copy_texture_to_texture(
                 &TexelCopyTextureInfo {
-                    texture: surface,
+                    texture: surface.texture,
                     mip_level: 0,
                     origin: origin(plan.source[0], plan.source[1], 0),
                     aspect: TextureAspect::All,
@@ -296,18 +408,18 @@ impl ResolvedTextures {
         d.unstored.push((info.clone(), rect));
         let start = info.copy_dest_extent_start & 0x1FFF_FFFF;
         d.extent = (d.extent.0.min(start), d.extent.1.max(start + info.copy_dest_extent_length));
-        self.last = Some(d.texture.clone());
+        self.last.push(d.texture.clone());
         true
     }
 
-    /// The texture of the last [`ResolvedTextures::resolve`] done here.
-    pub fn last(&self) -> Option<Texture> {
+    /// The textures of the last [`ResolvedTextures::resolve`] done here.
+    pub fn last(&self) -> Vec<Texture> {
         self.last.clone()
     }
 
     /// A resolve is done the usual way: it isn't one into a texture here.
     pub fn resolved_elsewhere(&mut self) {
-        self.last = None;
+        self.last.clear();
     }
 
     /// The texture standing for the 2D texture of `width` x `height` pixels at physical address
@@ -326,7 +438,17 @@ impl ResolvedTextures {
             return None;
         }
         d.last_used = frame;
-        Some(Resolved { texture: d.texture.clone(), swap: d.swap, endian: d.key.endian, extent: d.extent() })
+        let (swap, float24) = match d.kind {
+            Kind::Color { swap } => (swap, false),
+            Kind::Depth { float24 } => (false, float24),
+        };
+        Some(Resolved {
+            texture: d.texture.clone(),
+            swap,
+            endian: d.key.endian,
+            depth: d.depth.as_ref().map(|(texture, _)| (texture.clone(), float24)),
+            extent: d.extent(),
+        })
     }
 
     /// The guest memory (start, length) of the destinations with resolves not stored yet that
@@ -367,7 +489,9 @@ impl ResolvedTextures {
     }
 
     /// Stores destination `index`'s unstored resolves: each is done again as recorded, with the
-    /// destination's texture, where its pixels are, as the surface.
+    /// destination's texture, where its pixels are, as the surface. A depth resolve is done
+    /// again as a color resolve of the bytes texture into 8-bit RGBA without a swap, which
+    /// stores the same words.
     fn store_dest(
         &mut self,
         device: &Device,
@@ -389,6 +513,24 @@ impl ResolvedTextures {
             info.copy_control.color_clear_enable = false;
             info.copy_control.depth_clear_enable = false;
             (info.edram_offset_x_div_8, info.edram_offset_y_div_8) = (0, 0);
+            if matches!(d.kind, Kind::Depth { .. }) {
+                info.copy_control.copy_src_select = 0;
+                info.copy_control.copy_command = CopyCommand::Raw;
+                info.copy_control.copy_sample_select = CopySampleSelect::S0;
+                info.copy_sample_select = CopySampleSelect::S0;
+                info.depth_edram = None;
+                info.color_edram = Some(ResolveEdramInfo {
+                    pitch_tiles: width.div_ceil(80),
+                    msaa_samples: MsaaSamples::X1,
+                    ..Default::default()
+                });
+                info.color_original_base = 0;
+                info.dest_format = GuestFormat::K8888;
+                info.copy_dest_info.copy_dest_format = GuestFormat::K8888;
+                info.copy_dest_info.copy_dest_number = SurfaceNumberFormat::UnsignedRepeatingFraction;
+                info.copy_dest_info.copy_dest_exp_bias = 0;
+                info.copy_dest_info.copy_dest_swap = false;
+            }
             let external = ExternalSource {
                 texture: source,
                 views,
@@ -408,7 +550,7 @@ impl ResolvedTextures {
     }
 
     /// Guest memory `span` (start, length) is written by something other than a resolve into
-    /// `except` (a destination's key and swap): the destinations it overlaps are stored (with
+    /// `except` (a destination's key and kind): the destinations it overlaps are stored (with
     /// `shared`) and dropped.
     pub fn drop_overlapping(
         &mut self,
@@ -417,12 +559,12 @@ impl ResolvedTextures {
         edram: &mut EdramCache,
         shared: Option<&SharedMemoryTarget<'_>>,
         span: (u32, u32),
-        except: Option<(DestKey, bool)>,
+        except: Option<(DestKey, Kind)>,
     ) {
         let mut i = 0;
         while i < self.dests.len() {
             let d = &self.dests[i];
-            if Some((d.key, d.swap)) == except || !d.overlaps(span) {
+            if Some((d.key, d.kind)) == except || !d.overlaps(span) {
                 i += 1;
                 continue;
             }
@@ -438,6 +580,7 @@ impl ResolvedTextures {
         self.dropped.push(d.extent());
         self.retired[0].push(d.texture);
         self.retired[0].extend(d.full);
+        self.retired[0].extend(d.depth.map(|(texture, _)| texture));
         self.stats.dropped += 1;
     }
 
@@ -473,7 +616,7 @@ impl ResolvedTextures {
             self.remove(0);
         }
         self.unsuited.clear();
-        self.last = None;
+        self.last.clear();
     }
 
     /// The guest memory of the textures dropped or replaced since the last call.

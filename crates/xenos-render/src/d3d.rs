@@ -923,22 +923,31 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         // offset moved to the EDRAM origin; the surfaces hold the whole screen.
         let offset = info.window_offset.map(|v| (-v).max(0) as u32);
         let source = r.targets[(info.copy_control.copy_src_select & 3) as usize];
-        // A plain copy of a surface as it is (one host pixel per guest pixel) goes into the
-        // destination's texture instead of guest memory (see `resolved`).
-        let copy = (r.scale == 1
-            && gpu_webgpu::TEXTURE_VIEW_SWIZZLE
-            && !crate::debug::NO_RESOLVED_TEXTURES.load(std::sync::atomic::Ordering::Relaxed))
-        .then(|| source.and_then(|k| r.surfaces.get(&k)))
-        .flatten()
-        .filter(|s| !s.depth && s.samples == 1 && s.format == TextureFormat::RGBA8Unorm)
-        .and_then(|s| Some((crate::resolved::plan(info, (s.width, s.height), offset)?, s.texture.clone())));
         let external = |key: Option<SurfaceKey>| key.and_then(|k| r.surfaces.get(&k)).map(|s| s.external(offset));
         let color = external(source);
         let depth = external(r.depth);
         let extent = (info.copy_dest_extent_start & 0x1FFF_FFFF, info.copy_dest_extent_length);
-        let copied = copy.is_some_and(|(plan, surface)| {
-            r.resolved.resolve(device, encoder, &mut edram, shared, info, plan, &surface)
-        });
+        // A plain copy of a surface as it is (one host pixel per guest pixel) goes into the
+        // destination's textures instead of guest memory (see `resolved`).
+        let kept = r.scale == 1
+            && gpu_webgpu::TEXTURE_VIEW_SWIZZLE
+            && !crate::debug::NO_RESOLVED_TEXTURES.load(std::sync::atomic::Ordering::Relaxed);
+        let single = |key: Option<SurfaceKey>| key.and_then(|k| r.surfaces.get(&k)).filter(|s| kept && s.samples == 1);
+        let (plan, from) = if info.is_copying_depth() {
+            let plan = single(r.depth)
+                .filter(|s| s.depth && s.format == TextureFormat::Depth32FloatStencil8)
+                .and_then(|s| crate::resolved::plan_depth(info, (s.width, s.height), offset, s.float24));
+            (plan, depth.as_ref())
+        } else {
+            let plan = single(source)
+                .filter(|s| !s.depth && s.format == TextureFormat::RGBA8Unorm)
+                .and_then(|s| crate::resolved::plan(info, (s.width, s.height), offset));
+            (plan, color.as_ref())
+        };
+        let copied = match (plan, from) {
+            (Some(plan), Some(from)) => r.resolved.resolve(device, encoder, &mut edram, shared, info, plan, from),
+            _ => false,
+        };
         let result = if copied {
             edram.clear_external(device, encoder, info, color.as_ref(), depth.as_ref()).map(|mut cleared| {
                 cleared.written = Some(extent);
@@ -1013,7 +1022,7 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         self.0.borrow_mut().resolved.lookup(base, pitch, width, height)
     }
 
-    fn resolved_in_place(&self) -> Option<Texture> {
+    fn resolved_in_place(&self) -> Vec<Texture> {
         self.0.borrow().resolved.last()
     }
 

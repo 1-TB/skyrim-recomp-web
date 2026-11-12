@@ -32,7 +32,8 @@ mod scaled;
 mod shaders;
 
 pub use cache::{
-    DrawTargets, EdramCache, ExternalSource, ExternalViews, PendingResolve, ResolveResult, SharedMemoryTarget,
+    DEPTH_COPY_FORMATS, DrawTargets, EdramCache, ExternalSource, ExternalViews, PendingResolve, ResolveResult,
+    SharedMemoryTarget,
 };
 pub use format::{
     ColorTargetInfo, DepthTargetInfo, EdramOptions, WGSL_LINEAR_TO_PWL_GAMMA, host_color_format, host_depth_format,

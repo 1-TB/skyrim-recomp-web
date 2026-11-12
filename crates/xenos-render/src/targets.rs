@@ -123,10 +123,10 @@ pub trait RenderTargetCache {
         None
     }
 
-    /// The texture the last [`RenderTargetCache::resolve`] copied into instead of storing into
-    /// the GPU copy of guest memory: what is bound of it holds the resolve's output already.
-    fn resolved_in_place(&self) -> Option<gpu_webgpu::Texture> {
-        None
+    /// The textures the last [`RenderTargetCache::resolve`] copied into instead of storing into
+    /// the GPU copy of guest memory: what is bound of them holds the resolve's output already.
+    fn resolved_in_place(&self) -> Vec<gpu_webgpu::Texture> {
+        Vec::new()
     }
 
     /// The guest memory (start, length) of resolved textures dropped or replaced since the last

@@ -201,7 +201,13 @@ struct Pipelines {
     /// By multisampling: the stencil bit layout, pipeline layout and module.
     stencil_bit_modules: [Option<(BindGroupLayout, PipelineLayout, ShaderModule)>; 2],
     stencil_bits: HashMap<(TextureFormat, u32, u32), RenderPipeline>,
+    /// See `EdramCache::copy_depth_external`.
+    depth_copy: Option<RenderPipeline>,
 }
+
+/// Formats of the textures `EdramCache::copy_depth_external` writes: the EDRAM words as bytes,
+/// and the depth.
+pub const DEPTH_COPY_FORMATS: [TextureFormat; 2] = [TextureFormat::RGBA8Unorm, TextureFormat::R32Float];
 
 fn uniform_entry(visibility: ShaderStage) -> BindGroupLayoutEntry {
     BindGroupLayoutEntry {
@@ -301,6 +307,30 @@ impl Pipelines {
             fragment: Some(FragmentState { stage: ProgrammableStage::new(&module, entry), targets }),
         });
         self.transfers.insert((kind, format, samples, output), pipeline.clone());
+        pipeline
+    }
+
+    /// The pipeline of `EdramCache::copy_depth_external`.
+    fn depth_copy(&mut self, device: &Device) -> RenderPipeline {
+        if let Some(p) = &self.depth_copy {
+            return p.clone();
+        }
+        let layout = self.transfer_layout(device, SrcKind::Depth { multisampled: false }).1.clone();
+        let module = device.create_shader_module_wgsl("edram depth copy", &shaders::depth_copy_module());
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "edram depth copy",
+            layout: Some(&layout),
+            vertex: ProgrammableStage::new(&module, "vs"),
+            vertex_buffers: &[],
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                stage: ProgrammableStage::new(&module, "fs"),
+                targets: &[ColorTargetState::new(DEPTH_COPY_FORMATS[0]), ColorTargetState::new(DEPTH_COPY_FORMATS[1])],
+            }),
+        });
+        self.depth_copy = Some(pipeline.clone());
         pipeline
     }
 
@@ -1567,6 +1597,51 @@ impl EdramCache {
             }
         }
         Ok(result)
+    }
+
+    /// Copies rectangle `rect` (x, y, width, height) of a single-sampled depth surface at
+    /// resolution scale 1, from `origin` in it, into two textures at `rect`: the pixels' EDRAM
+    /// words (depth in `float24` or unorm 24 bits, and stencil) as bytes in `bytes`
+    /// ([`DEPTH_COPY_FORMATS`]`[0]`), and in `depth` (`[1]`) the depth a texture of those words
+    /// loads as. What a resolve of the surface stores and the texture cache then loads, for a
+    /// destination kept as textures (see xenos-render's `resolved`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn copy_depth_external(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        source: &ExternalSource<'_>,
+        origin: [u32; 2],
+        float24: bool,
+        bytes: &TextureView,
+        depth: &TextureView,
+        rect: [u32; 4],
+    ) {
+        let params = uniform(
+            &self.params,
+            device,
+            &[origin[0].wrapping_sub(rect[0]), origin[1].wrapping_sub(rect[1]), u32::from(float24)],
+        );
+        let pipeline = self.pipelines.depth_copy(device);
+        let layout = &self.pipelines.transfer_layout(device, SrcKind::Depth { multisampled: false }).0;
+        let mut entries = vec![
+            BindGroupEntry { binding: 0, resource: params.binding() },
+            BindGroupEntry { binding: 1, resource: BindingResource::TextureView(&source.views.read) },
+        ];
+        if let Some(stencil) = &source.views.stencil {
+            entries.push(BindGroupEntry { binding: 2, resource: BindingResource::TextureView(stencil) });
+        }
+        let group = cached_bind_group(&self.groups, device, "edram depth copy", layout, &entries);
+        // The rest of the textures (other screen tiles' rows) stays.
+        let colors = [Some(RenderPassColorAttachment::load(bytes)), Some(RenderPassColorAttachment::load(depth))];
+        let area = (rect[0] + rect[2], rect[1] + rect[3]);
+        let mut pass = encoder.begin_render_pass_within("edram depth copy", &colors, None, area);
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &params.dynamic_offset());
+        pass.set_viewport(0.0, 0.0, (rect[0] + rect[2]) as f32, (rect[1] + rect[3]) as f32, 0.0, 1.0);
+        pass.set_scissor_rect(rect[0], rect[1], rect[2], rect[3]);
+        pass.draw(3, 1, 0, 0);
+        pass.end();
     }
 
     /// Copies `src`'s contents into `dst` as EDRAM would see them when both surfaces cover the
