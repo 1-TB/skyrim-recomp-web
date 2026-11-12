@@ -704,6 +704,26 @@ impl D3dRenderer {
         };
     }
 
+    /// `info` as a copy into its destination's kept textures (see `resolved`), if it is one: a
+    /// plain copy of a single-sampled surface as it is (one host pixel per guest pixel).
+    fn resolve_plan(&self, info: &xenos_state::resolve::ResolveInfo) -> Option<crate::resolved::Plan> {
+        let kept = self.scale == 1
+            && gpu_webgpu::TEXTURE_VIEW_SWIZZLE
+            && !crate::debug::NO_RESOLVED_TEXTURES.load(std::sync::atomic::Ordering::Relaxed);
+        let offset = info.window_offset.map(|v| (-v).max(0) as u32);
+        let single =
+            |key: Option<SurfaceKey>| key.and_then(|k| self.surfaces.get(&k)).filter(|s| kept && s.samples == 1);
+        if info.is_copying_depth() {
+            single(self.depth)
+                .filter(|s| s.depth && s.format == TextureFormat::Depth32FloatStencil8)
+                .and_then(|s| crate::resolved::plan_depth(info, (s.width, s.height), offset, s.float24))
+        } else {
+            single(self.targets[(info.copy_control.copy_src_select & 3) as usize])
+                .filter(|s| !s.depth && s.format == TextureFormat::RGBA8Unorm)
+                .and_then(|s| crate::resolved::plan(info, (s.width, s.height), offset))
+        }
+    }
+
     /// Records the pending clears, each as a pass of its own.
     fn do_clears(&mut self, encoder: &mut CommandEncoder) {
         for (_, view, clear) in self.pending_clears.drain(..) {
@@ -903,7 +923,7 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         &mut self,
         device: &Device,
         info: &xenos_state::resolve::ResolveInfo,
-        _memory: &dyn crate::PhysicalMemory,
+        memory: &dyn crate::PhysicalMemory,
         shared: Option<&crate::targets::SharedMemoryTarget<'_>>,
         encoder: Option<&mut CommandEncoder>,
     ) -> crate::targets::ResolveStatus {
@@ -927,28 +947,16 @@ impl crate::targets::RenderTargetCache for D3dTargets {
         let color = external(source);
         let depth = external(r.depth);
         let extent = (info.copy_dest_extent_start & 0x1FFF_FFFF, info.copy_dest_extent_length);
-        // A plain copy of a surface as it is (one host pixel per guest pixel) goes into the
-        // destination's textures instead of guest memory (see `resolved`).
-        let kept = r.scale == 1
-            && gpu_webgpu::TEXTURE_VIEW_SWIZZLE
-            && !crate::debug::NO_RESOLVED_TEXTURES.load(std::sync::atomic::Ordering::Relaxed);
-        let single = |key: Option<SurfaceKey>| key.and_then(|k| r.surfaces.get(&k)).filter(|s| kept && s.samples == 1);
-        let (plan, from) = if info.is_copying_depth() {
-            let plan = single(r.depth)
-                .filter(|s| s.depth && s.format == TextureFormat::Depth32FloatStencil8)
-                .and_then(|s| crate::resolved::plan_depth(info, (s.width, s.height), offset, s.float24));
-            (plan, depth.as_ref())
-        } else {
-            let plan = single(source)
-                .filter(|s| !s.depth && s.format == TextureFormat::RGBA8Unorm)
-                .and_then(|s| crate::resolved::plan(info, (s.width, s.height), offset));
-            (plan, color.as_ref())
-        };
+        let plan = r.resolve_plan(info);
+        let from = if info.is_copying_depth() { depth.as_ref() } else { color.as_ref() };
         let copied = match (plan, from) {
             (Some(plan), Some(from)) => r.resolved.resolve(device, encoder, &mut edram, shared, info, plan, from),
             _ => false,
         };
         let result = if copied {
+            // Its textures stand for the destination's memory until the CPU writes there.
+            let version = r.resolved.last_extent().and_then(|(address, len)| memory.version(address, len));
+            r.resolved.set_last_version(version);
             edram.clear_external(device, encoder, info, color.as_ref(), depth.as_ref()).map(|mut cleared| {
                 cleared.written = Some(extent);
                 cleared
@@ -1036,6 +1044,21 @@ impl crate::targets::RenderTargetCache for D3dTargets {
 
     fn unstored_resolved_bounds(&self) -> Option<(u32, u32)> {
         self.0.borrow().resolved.unstored_bounds()
+    }
+
+    fn resolves_in_place(&self, info: &xenos_state::resolve::ResolveInfo) -> bool {
+        let r = self.0.borrow();
+        r.resolve_plan(info).is_some_and(|plan| r.resolved.accepts(&plan))
+    }
+
+    fn resolved_stored_by(&self, info: &xenos_state::resolve::ResolveInfo) -> Vec<(u32, u32)> {
+        let r = self.0.borrow();
+        let extent = (info.copy_dest_extent_start & 0x1FFF_FFFF, info.copy_dest_extent_length);
+        r.resolved.stored_by(r.resolve_plan(info).as_ref(), extent)
+    }
+
+    fn keeps_resolved(&self, address: u32, len: u32) -> bool {
+        self.0.borrow().resolved.keeps(address, len)
     }
 
     fn store_resolved(

@@ -100,8 +100,9 @@ impl GpuSource for SharedSource<'_> {
     }
 
     fn covers_some(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
+        // (Resolves kept as textures leave no mark in the GPU copy.)
         let ranges: Vec<(u32, u32)> = ranges.iter().map(|r| (r.address, r.length)).collect();
-        self.shared.gpu_covers_some(&ranges)
+        self.shared.gpu_covers_some(&ranges) || ranges.iter().any(|&(a, l)| self.targets.keeps_resolved(a, l))
     }
 
     fn sync(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
@@ -156,8 +157,9 @@ impl GpuSource for SharedSource<'_> {
     ) -> Option<xenos_texture_cache::ResolvedTexture> {
         let base = (fetch.base_page << 12) & 0x1FFF_FFFF;
         let r = self.targets.resolved_texture(base, fetch.pitch_div_32 * 32, width, height)?;
-        // The CPU wrote there since: the texture is loaded the usual way, which merges both.
-        if !self.shared.gpu_covers(self.memory, &[r.extent]) {
+        // The CPU wrote there since (or writes aren't tracked): the texture is loaded the usual
+        // way, from the GPU copy of guest memory with the resolves stored into it.
+        if r.version.is_none() || self.memory.version(r.extent.0, r.extent.1) != r.version {
             return None;
         }
         let endian = match fetch.endianness {
@@ -1446,10 +1448,21 @@ impl Executor {
         }
         // The destination's pages are synced (and so in the batch's pages: a later CPU write to
         // them can't be uploaded under the resolve output before the batch is submitted).
+        // Resolves kept as textures that this one has stored first (see
+        // `RenderTargetCache::resolved_stored_by`) are stored into current pages; one kept as
+        // textures itself writes no page.
+        let (stored_first, in_place) = if gpu_store {
+            (self.targets.resolved_stored_by(&info), self.targets.resolves_in_place(&info))
+        } else {
+            (Vec::new(), false)
+        };
+        for &(addr, len) in &stored_first {
+            self.sync_shared_pages(addr, len);
+        }
         let shared = gpu_store.then(|| {
-            // (Not `sync_shared`: resolves kept as textures that this one writes over are
-            // settled by the resolve itself.)
-            self.sync_shared_pages(info.copy_dest_extent_start, info.copy_dest_extent_length);
+            if !in_place {
+                self.sync_shared_pages(info.copy_dest_extent_start, info.copy_dest_extent_length);
+            }
         });
         let target = SharedMemoryTarget {
             chunks: &self.shared.chunks,
@@ -1459,7 +1472,11 @@ impl Executor {
         };
         let encoder =
             gpu_store.then(|| self.encoder.get_or_insert_with(|| self.device.create_command_encoder("xenos")));
-        match self.targets.resolve(&self.device, &info, &*memory, shared.map(|()| &target), encoder) {
+        let status = self.targets.resolve(&self.device, &info, &*memory, shared.map(|()| &target), encoder);
+        for &(addr, len) in &stored_first {
+            self.shared.mark_gpu_written(addr, len);
+        }
+        match status {
             ResolveStatus::Pending => self.resolving = true,
             ResolveStatus::Done { written, in_gpu_memory } => self.finish_resolve(written, in_gpu_memory),
         }
@@ -1475,7 +1492,9 @@ impl Executor {
             // into the texture bound for its destination leaves that one current.
             let kept = self.targets.resolved_in_place();
             self.textures.invalidate_except(addr, len, &kept);
-            if in_gpu_memory {
+            if !kept.is_empty() {
+                // Kept as textures: the GPU copy of guest memory is as it was.
+            } else if in_gpu_memory {
                 self.stats.gpu_resolves += 1;
                 self.shared.mark_gpu_written(addr, len);
             } else {

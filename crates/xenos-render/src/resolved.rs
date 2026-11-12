@@ -17,10 +17,12 @@
 //! that memory as 8-bit RGBA (Skyrim draws its depth texture into a color surface over the depth
 //! buffer's EDRAM to restore the depth buffer), and the depth a 24:8 texture of it loads as.
 //!
-//! The GPU copy of guest memory isn't written, only marked as if it were. What else would read
-//! it there (a texture of another shape or format over the same memory, a resolve that overlaps
-//! it) first has the kept resolves stored the usual way, from the texture
-//! ([`ResolvedTextures::store`]), so it sees what it would have without any of this.
+//! The GPU copy of guest memory isn't written. What else would read it there (a texture of
+//! another shape or format over the same memory, a resolve that overlaps it) first has the kept
+//! resolves stored the usual way, from the texture ([`ResolvedTextures::store`]), so it sees
+//! what it would have without any of this. A destination's texture stands for its guest memory
+//! as long as the CPU hasn't written there since the last resolve (by the memory's write
+//! versions, see [`Resolved::version`]).
 
 use gpu_webgpu::*;
 use xenos_edram::{DestKey, EdramCache, ExternalSource, ExternalViews, SharedMemoryTarget};
@@ -141,9 +143,11 @@ pub struct Resolved {
     /// For a depth destination: the depth a 24:8 texture (floating-point if the flag is set)
     /// with the resolves' byte order loads, as a 32-bit float texture.
     pub depth: Option<(Texture, bool)>,
-    /// The guest memory the resolves were to write (start, length): the texture stands for it
-    /// only while that is still marked as written by the GPU.
+    /// The guest memory the resolves were to write (start, length), and its write version (see
+    /// `PhysicalMemory::version`) when the last one was done: the textures stand for it only
+    /// while that is its version.
     pub extent: (u32, u32),
+    pub version: Option<u64>,
 }
 
 /// The components a texture of byte order `fetch_endian` (0-3: none, 8 in 16, 8 in 32, 16 in
@@ -184,6 +188,8 @@ struct Dest {
     unstored: Vec<(ResolveInfo, [u32; 4])>,
     /// Guest memory the resolves were to write: first and last byte's end.
     extent: (u32, u32),
+    /// Its write version after the last resolve (see [`Resolved::version`]).
+    version: Option<u64>,
     /// The size of the texture last looked up, when not `texture`'s: the next resolve makes
     /// `texture` that size.
     wanted: Option<(u32, u32)>,
@@ -256,8 +262,9 @@ pub(crate) struct ResolvedTextures {
     /// Guest memory (start, length) of the textures dropped or replaced since
     /// [`ResolvedTextures::take_dropped`]: what the texture cache bound of them must go.
     dropped: Vec<(u32, u32)>,
-    /// The textures the last resolve was copied into, if it was done here.
+    /// The textures the last resolve was copied into, if it was done here, and its destination.
     last: Vec<Texture>,
+    last_dest: Option<(DestKey, Kind)>,
     frame: u64,
     pub stats: ResolvedStats,
 }
@@ -278,9 +285,15 @@ impl ResolvedTextures {
         surface: &ExternalSource<'_>,
     ) -> bool {
         self.last.clear();
-        let same = self.dests.iter().filter(|d| d.kind == plan.kind).map(|d| d.key);
-        let (key, rect) = xenos_edram::canonical_dest(same, plan.key, plan.rect);
-        if self.unsuited.contains(&key) {
+        self.last_dest = None;
+        let (key, rect) = self.canonical(&plan);
+        if !self.accepts(&plan) {
+            // Textures of several sizes read it, or smaller ones than a depth resolve writes:
+            // left to the usual path from now on (the caller stores and drops what is kept).
+            if !self.unsuited.contains(&key) {
+                log::info!("d3d renderer: resolves to {:#010X} are stored again", key.base);
+                self.unsuited.push(key);
+            }
             return false;
         }
         self.drop_overlapping(device, encoder, edram, Some(shared), key.span(), Some((key, plan.kind)));
@@ -315,6 +328,7 @@ impl ResolvedTextures {
                     rects: Vec::new(),
                     unstored: Vec::new(),
                     extent: (info.copy_dest_extent_start & 0x1FFF_FFFF, info.copy_dest_extent_start & 0x1FFF_FFFF),
+                    version: None,
                     wanted: None,
                     resizes: 0,
                     last_used: frame,
@@ -327,15 +341,6 @@ impl ResolvedTextures {
             self.store_dest(device, encoder, edram, shared, index);
             let d = &mut self.dests[index];
             d.resizes += 1;
-            if d.resizes > MAX_RESIZES {
-                log::info!(
-                    "d3d renderer: resolves to {:#010X} are stored again (textures of several sizes read them)",
-                    key.base
-                );
-                self.unsuited.push(key);
-                self.remove(index);
-                return false;
-            }
             self.dropped.push(d.extent());
             let (texture, depth) = make(device, width, height);
             self.retired[0].push(std::mem::replace(&mut d.texture, texture));
@@ -346,14 +351,8 @@ impl ResolvedTextures {
         }
         let d = &mut self.dests[index];
         d.last_used = frame;
+        self.last_dest = Some((key, plan.kind));
         if let (Kind::Depth { float24 }, Some((_, targets))) = (plan.kind, &d.depth) {
-            if !inside(rect, d.width, d.height) {
-                // Textures smaller than what is resolved read it: not kept as textures.
-                self.store_dest(device, encoder, edram, shared, index);
-                self.unsuited.push(key);
-                self.remove(index);
-                return false;
-            }
             edram.copy_depth_external(device, encoder, surface, plan.source, float24, &targets[0], &targets[1], rect);
             self.stats.copies += 1;
             d.rects.retain(|r| !xenos_edram::rect_contains(rect, *r));
@@ -417,9 +416,76 @@ impl ResolvedTextures {
         self.last.clone()
     }
 
+    /// The guest memory (start, length) the destination of the last resolve done here stands
+    /// for.
+    pub fn last_extent(&self) -> Option<(u32, u32)> {
+        let last = self.last_dest?;
+        self.dests.iter().find(|d| (d.key, d.kind) == last).map(Dest::extent)
+    }
+
+    /// The write version of that memory now that the resolve is done.
+    pub fn set_last_version(&mut self, version: Option<u64>) {
+        if let Some(last) = self.last_dest
+            && let Some(d) = self.dests.iter_mut().find(|d| (d.key, d.kind) == last)
+        {
+            d.version = version;
+        }
+    }
+
+    /// `plan`'s destination among those kept (a screen tile's resolve joins the screen's), and
+    /// its rectangle there.
+    fn canonical(&self, plan: &Plan) -> (DestKey, [u32; 4]) {
+        let same = self.dests.iter().filter(|d| d.kind == plan.kind).map(|d| d.key);
+        xenos_edram::canonical_dest(same, plan.key, plan.rect)
+    }
+
+    /// Whether [`ResolvedTextures::resolve`] does `plan`'s copy.
+    pub fn accepts(&self, plan: &Plan) -> bool {
+        let (key, rect) = self.canonical(plan);
+        if self.unsuited.contains(&key) {
+            return false;
+        }
+        let Some(d) = self.dests.iter().find(|d| d.key == key && d.kind == plan.kind) else { return true };
+        // The size its texture has once the resolve made it the size last asked for.
+        let (width, height) = d.wanted.unwrap_or((d.width, d.height));
+        let resized_too_often = d.wanted.is_some() && d.resizes >= MAX_RESIZES;
+        // (A depth destination has no second texture for what its texture is too small for.)
+        let fits = !matches!(plan.kind, Kind::Depth { .. }) || inside(rect, width, height);
+        !resized_too_often && fits
+    }
+
+    /// The guest memory (start, length) of the destinations with resolves not stored yet that
+    /// a resolve stores first: one done here (`plan`, when [`ResolvedTextures::accepts`] it)
+    /// those it writes over and its own when its texture changes size; another, writing
+    /// `extent`, all it overlaps; either, those idle too long. The caller brings those pages up
+    /// to date before the resolve and marks them written by the GPU after.
+    pub fn stored_by(&self, plan: Option<&Plan>, extent: (u32, u32)) -> Vec<(u32, u32)> {
+        let own = plan.filter(|p| self.accepts(p)).map(|p| (self.canonical(p).0, p.kind));
+        let frame = self.frame;
+        self.dests
+            .iter()
+            .filter(|d| !d.unstored.is_empty())
+            .filter(|d| {
+                frame - d.last_used > MAX_IDLE_FRAMES
+                    || match own {
+                        Some(own) if (d.key, d.kind) == own => d.wanted.is_some(),
+                        Some((key, _)) => d.overlaps(key.span()),
+                        None => d.overlaps(extent),
+                    }
+            })
+            .map(Dest::extent)
+            .collect()
+    }
+
+    /// Whether a destination kept here overlaps guest memory `[address, address + len)`.
+    pub fn keeps(&self, address: u32, len: u32) -> bool {
+        self.dests.iter().any(|d| xenos_edram::spans_overlap(d.extent(), (address, len)))
+    }
+
     /// A resolve is done the usual way: it isn't one into a texture here.
     pub fn resolved_elsewhere(&mut self) {
         self.last.clear();
+        self.last_dest = None;
     }
 
     /// The texture standing for the 2D texture of `width` x `height` pixels at physical address
@@ -448,6 +514,7 @@ impl ResolvedTextures {
             endian: d.key.endian,
             depth: d.depth.as_ref().map(|(texture, _)| (texture.clone(), float24)),
             extent: d.extent(),
+            version: d.version,
         })
     }
 
@@ -617,6 +684,7 @@ impl ResolvedTextures {
         }
         self.unsuited.clear();
         self.last.clear();
+        self.last_dest = None;
     }
 
     /// The guest memory of the textures dropped or replaced since the last call.

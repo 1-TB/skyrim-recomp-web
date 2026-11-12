@@ -149,6 +149,27 @@ pub trait RenderTargetCache {
         None
     }
 
+    /// Whether [`RenderTargetCache::resolve`] will keep `info`'s copy as textures instead of
+    /// storing it into the GPU copy of guest memory: the destination's pages needn't be brought
+    /// up to date for it then.
+    fn resolves_in_place(&self, _info: &ResolveInfo) -> bool {
+        false
+    }
+
+    /// The guest memory (start, length) of destinations kept as textures only that
+    /// [`RenderTargetCache::resolve`] of `info` stores first (it writes over them, or they went
+    /// unused): the caller brings their pages up to date before it and marks them written by
+    /// the GPU after.
+    fn resolved_stored_by(&self, _info: &ResolveInfo) -> Vec<(u32, u32)> {
+        Vec::new()
+    }
+
+    /// Whether resolves into guest memory overlapping `[address, address + len)` are kept as
+    /// textures.
+    fn keeps_resolved(&self, _address: u32, _len: u32) -> bool {
+        false
+    }
+
     /// Stores the resolves kept as textures only that overlap `[address, address + len)` into
     /// the GPU copy of guest memory, recorded into `encoder`.
     fn store_resolved(
